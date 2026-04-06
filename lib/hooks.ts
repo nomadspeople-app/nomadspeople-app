@@ -1,0 +1,1848 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { supabase } from './supabase';
+import { trackEvent } from './tracking';
+
+/* ─── Unique ID generator for Realtime channels ─── */
+let _chId = 0;
+const nextChannelId = () => `${++_chId}-${Date.now()}`;
+import type {
+  AppProfile, AppCheckin, AppEvent, AppConversation,
+  AppMessage, AppFollow, AppPost, AppComment,
+} from './types';
+
+/* ═══════════════════════════════════════════
+   HOME — active checkins + profiles
+   ═══════════════════════════════════════════ */
+
+export interface CheckinWithProfile extends AppCheckin {
+  profile: Pick<AppProfile, 'full_name' | 'username' | 'avatar_url' | 'job_type' | 'bio' | 'interests'>;
+}
+
+/** Calculate age from a date string */
+export function calcAge(birthDate: string | null | undefined): number | null {
+  if (!birthDate) return null;
+  const birth = new Date(birthDate);
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  const m = now.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+const ZODIAC_SIGNS: [number, number, string, string][] = [
+  [1, 20, '♑', 'capricorn'], [2, 19, '♒', 'aquarius'], [3, 20, '♓', 'pisces'],
+  [4, 20, '♈', 'aries'], [5, 21, '♉', 'taurus'], [6, 21, '♊', 'gemini'],
+  [7, 22, '♋', 'cancer'], [8, 23, '♌', 'leo'], [9, 23, '♍', 'virgo'],
+  [10, 23, '♎', 'libra'], [11, 22, '♏', 'scorpio'], [12, 22, '♐', 'sagittarius'],
+  [12, 31, '♑', 'capricorn'],
+];
+
+export function getZodiac(birthDate: string | null | undefined): { symbol: string; name: string } | null {
+  if (!birthDate) return null;
+  const d = new Date(birthDate);
+  const month = d.getMonth() + 1;
+  const day = d.getDate();
+  for (const [m, cutoff, symbol, name] of ZODIAC_SIGNS) {
+    if (month === m && day <= cutoff) return { symbol, name };
+  }
+  // fallback for edge (e.g. Jan 21+ is Aquarius, caught by month=2,day<=19 won't work)
+  // Re-check: the list is ordered so we find first match
+  return { symbol: '♑', name: 'capricorn' };
+}
+
+/* Cached viewer age — avoids extra DB query on every city switch */
+let _cachedViewerAge: { userId: string; age: number | null } | null = null;
+
+export function useActiveCheckins(city: string, viewerUserId?: string | null) {
+  const [checkins, setCheckins] = useState<CheckinWithProfile[]>([]);
+  const [count, setCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const prevIdsRef = useRef<string>('');
+
+  const fetch = async () => {
+    // 1. Get viewer age (cached — only fetches once per user)
+    let viewerAge: number | null = null;
+    if (viewerUserId) {
+      if (_cachedViewerAge && _cachedViewerAge.userId === viewerUserId) {
+        viewerAge = _cachedViewerAge.age;
+      } else {
+        const { data: viewerProfile } = await supabase
+          .from('app_profiles')
+          .select('birth_date')
+          .eq('user_id', viewerUserId)
+          .limit(1)
+          .maybeSingle();
+        viewerAge = calcAge(viewerProfile?.birth_date);
+        _cachedViewerAge = { userId: viewerUserId, age: viewerAge };
+      }
+    }
+
+    // 2. Fetch all active checkins (include visibility fields from profile)
+    const { data, error } = await supabase
+      .from('app_checkins')
+      .select('*, profile:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type, bio, interests, show_on_map, snooze_mode, hide_distance)')
+      .eq('is_active', true)
+      .ilike('city', city)
+      .eq('visibility', 'public');
+
+    if (data) {
+      // 3a. Filter out expired checkins + users who disabled "show on map" or enabled snooze mode
+      const now = new Date();
+      const visible = (data as any[]).filter((c: any) => {
+        // Hide expired checkins (timer or status past their expires_at)
+        if (c.expires_at && new Date(c.expires_at) < now) return false;
+        const profile = c.profile;
+        if (profile?.show_on_map === false) return false;
+        if (profile?.snooze_mode === true) return false;
+        return true;
+      });
+
+      // 3b. Filter by age range: only show checkins where viewer's age is within [age_min, age_max]
+      const filtered = viewerAge
+        ? visible.filter((c: any) => {
+            const min = c.age_min ?? 18;
+            const max = c.age_max ?? 80;
+            return viewerAge! >= min && viewerAge! <= max;
+          })
+        : visible;
+
+      // 3c. Skip state update if same checkins (prevents marker flicker)
+      const newIds = filtered.map((c: any) => c.id).sort().join(',');
+      if (newIds !== prevIdsRef.current) {
+        prevIdsRef.current = newIds;
+        setCheckins(filtered as unknown as CheckinWithProfile[]);
+        setCount(filtered.length);
+      }
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    setLoading(true);
+    fetch();
+
+    // Polling fallback — ensures freshness even if Realtime is slow
+    const pollInterval = setInterval(() => { fetch(); }, 10000); // every 10s
+
+    // Realtime subscription — globally unique channel name
+    const channelName = `checkins-${nextChannelId()}`;
+    console.log(`[Realtime] Subscribing to checkins in "${city}" (channel: ${channelName})`);
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'app_checkins',
+        filter: `city=eq.${city}`,
+      }, (payload) => {
+        console.log(`[Realtime] ✅ checkin event received:`, payload.eventType, (payload.new as any)?.id || (payload.old as any)?.id);
+        fetch(); // refetch on any change
+      })
+      .subscribe((status, err) => {
+        console.log(`[Realtime] checkins subscription status: ${status}`, err || '');
+      });
+
+    return () => {
+      clearInterval(pollInterval);
+      console.log(`[Realtime] Unsubscribing checkins channel: ${channelName}`);
+      supabase.removeChannel(channel);
+    };
+  }, [city]);
+
+  // Optimistic add — inject a new checkin into state instantly (before DB roundtrip)
+  const addOptimistic = (checkin: CheckinWithProfile) => {
+    setCheckins(prev => {
+      // Remove any existing checkin from same user + same type to avoid duplicates
+      const cleaned = prev.filter(c =>
+        !(c.user_id === checkin.user_id && c.checkin_type === checkin.checkin_type)
+      );
+      return [checkin, ...cleaned];
+    });
+    setCount(prev => prev + 1);
+  };
+
+  return { checkins, count, loading, refetch: fetch, addOptimistic };
+}
+
+/* ═══════════════════════════════════════════
+   NOMADS IN CITY — profiles with current_city
+   ═══════════════════════════════════════════ */
+export interface NomadInCity {
+  user_id: string;
+  full_name: string | null;
+  display_name: string | null;
+  username: string | null;
+  avatar_url: string | null;
+  bio: string | null;
+  job_type: string | null;
+  current_city: string | null;
+  home_country: string | null;
+}
+
+export function useNomadsInCity(city: string) {
+  const [nomads, setNomads] = useState<NomadInCity[]>([]);
+  const [count, setCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = async () => {
+    const { data, error } = await supabase
+      .from('app_profiles')
+      .select('user_id, full_name, display_name, username, avatar_url, bio, job_type, current_city, home_country, snooze_mode, show_on_map')
+      .ilike('current_city', city)
+      .eq('show_on_map', true)
+      .limit(200);
+
+    if (data) {
+      // Filter out snoozed users
+      const visible = (data as any[]).filter((p: any) => p.snooze_mode !== true);
+      setNomads(visible as NomadInCity[]);
+      setCount(visible.length);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetch(); }, [city]);
+
+  return { nomads, count, loading, refetch: fetch };
+}
+
+/* ═══════════════════════════════════════════
+   PEOPLE — events + member counts
+   ═══════════════════════════════════════════ */
+
+export interface EventWithMembers extends AppEvent {
+  member_count: number;
+  members: { user_id: string; profile: Pick<AppProfile, 'full_name' | 'avatar_url'> }[];
+}
+
+export function useCityEvents(city: string, creatorId?: string | null) {
+  const [events, setEvents] = useState<EventWithMembers[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = async () => {
+    setLoading(true);
+    let query = supabase
+      .from('app_events')
+      .select('*, members:app_event_members(user_id, profile:app_profiles!user_id(full_name, display_name, avatar_url))')
+      .eq('city', city)
+      .eq('is_active', true)
+      .order('event_date', { ascending: true });
+    if (creatorId) query = query.eq('creator_id', creatorId);
+    const { data } = await query;
+
+    if (data) {
+      setEvents(data.map((e: any) => ({
+        ...e,
+        member_count: e.members?.length ?? 0,
+      })) as EventWithMembers[]);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetch();
+  }, [city]);
+
+  return { events, loading, refetch: fetch };
+}
+
+export function useJoinEvent() {
+  const join = async (eventId: string, userId: string) => {
+    const { error } = await supabase
+      .from('app_event_members')
+      .insert({ event_id: eventId, user_id: userId });
+    return { error };
+  };
+
+  const leave = async (eventId: string, userId: string) => {
+    const { error } = await supabase
+      .from('app_event_members')
+      .delete()
+      .eq('event_id', eventId)
+      .eq('user_id', userId);
+    return { error };
+  };
+
+  return { join, leave };
+}
+
+/* ═══════════════════════════════════════════
+   PULSE — conversations
+   ═══════════════════════════════════════════ */
+
+export interface ConversationWithPreview extends AppConversation {
+  last_message?: Pick<AppMessage, 'content' | 'sent_at' | 'sender_id'>;
+  members: { user_id: string; profile: Pick<AppProfile, 'full_name' | 'avatar_url'> }[];
+  unread_count: number;
+  is_expired?: boolean;  // linked checkin expired or inactive
+  is_muted?: boolean;    // user muted this conversation
+  is_request?: boolean;  // pending DM request (not yet accepted)
+}
+
+export function useConversations(userId: string | null) {
+  const [conversations, setConversations] = useState<ConversationWithPreview[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!userId) { setLoading(false); return; }
+
+    // 1. Get conversation IDs where user is a member (active or pending)
+    const { data: memberData, error: memErr } = await supabase
+      .from('app_conversation_members')
+      .select('conversation_id, status')
+      .eq('user_id', userId)
+      .in('status', ['active', 'request']);
+
+    if (memErr) console.warn('[useConversations] member query error:', memErr);
+
+    if (!memberData?.length) {
+      setConversations([]);
+      setLoading(false);
+      return;
+    }
+
+    const convIds = memberData.map(m => m.conversation_id);
+    const pendingSet = new Set(memberData.filter((m: any) => m.status === 'request').map(m => m.conversation_id));
+
+    // 2. Fetch conversations (simple query, no nested joins)
+    const { data: convData, error: convErr } = await supabase
+      .from('app_conversations')
+      .select('*')
+      .in('id', convIds)
+      .order('last_message_at', { ascending: false });
+
+    if (convErr) console.warn('[useConversations] conv query error:', convErr);
+    if (!convData) { setLoading(false); return; }
+
+    // 3. Fetch all member rows + profiles separately (avoids fragile nested joins)
+    const { data: allMembers } = await supabase
+      .from('app_conversation_members')
+      .select('conversation_id, user_id')
+      .in('conversation_id', convIds);
+
+    const memberUserIds = [...new Set((allMembers || []).map(m => m.user_id))];
+    const { data: profiles } = memberUserIds.length > 0
+      ? await supabase.from('app_profiles').select('user_id, full_name, display_name, avatar_url').in('user_id', memberUserIds)
+      : { data: [] };
+    const profileMap = new Map((profiles || []).map(p => [p.user_id, p]));
+
+    // Attach members with profiles to conversations
+    const convWithMembers = convData.map((conv: any) => ({
+      ...conv,
+      members: (allMembers || [])
+        .filter(m => m.conversation_id === conv.id)
+        .map(m => ({ user_id: m.user_id, profile: profileMap.get(m.user_id) || null })),
+    }));
+
+    // 4. Get user's last_read_at + muted_at for all conversations in one batch
+    const { data: memberRows } = await supabase
+      .from('app_conversation_members')
+      .select('conversation_id, last_read_at, muted_at')
+      .eq('user_id', userId)
+      .in('conversation_id', convIds);
+    const lastReadMap: Record<string, string> = {};
+    const mutedSet = new Set<string>();
+    (memberRows || []).forEach((m: any) => {
+      if (m.last_read_at) lastReadMap[m.conversation_id] = m.last_read_at;
+      if (m.muted_at) mutedSet.add(m.conversation_id);
+    });
+
+    // System message patterns — these are NOT real human messages
+    const isSystemMsg = (content: string) =>
+      /^Created "/.test(content) ||
+      /^Joined the activity/.test(content) ||
+      /^.{0,30} left the group$/.test(content) ||
+      /^.{0,30} joined the group$/.test(content);
+
+    // 5. Fetch last REAL message + linked checkin expiry + unread count for each conversation
+    const withMessages = await Promise.all(convWithMembers.map(async (conv: any) => {
+      const lastRead = lastReadMap[conv.id] || '1970-01-01T00:00:00Z';
+
+      const [{ data: recentMsgs }, { count: unreadCount }, checkinResult] = await Promise.all([
+        // Get last few messages so we can skip system ones for preview
+        supabase.from('app_messages')
+          .select('content, sent_at, sender_id')
+          .eq('conversation_id', conv.id)
+          .order('sent_at', { ascending: false })
+          .limit(10),
+        // Unread count — only real messages (not from self)
+        supabase.from('app_messages')
+          .select('*', { count: 'exact', head: true })
+          .eq('conversation_id', conv.id)
+          .neq('sender_id', userId)
+          .gt('sent_at', lastRead),
+        conv.checkin_id
+          ? supabase.from('app_checkins').select('is_active, expires_at').eq('id', conv.checkin_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+
+      // Find the first real (non-system) message for preview
+      const realMsg = (recentMsgs || []).find(m => !isSystemMsg(m.content));
+      // Check if there are ANY real messages in this conversation
+      const hasRealMessages = (recentMsgs || []).some(m => !isSystemMsg(m.content));
+
+      // Count only real unread messages
+      const realUnread = Math.max(0, (unreadCount ?? 0));
+
+      let isExpired = false;
+      if (conv.checkin_id) {
+        const checkin = checkinResult.data;
+        if (!checkin) {
+          isExpired = true;
+        } else {
+          isExpired = !checkin.is_active || (checkin.expires_at && new Date(checkin.expires_at) < new Date());
+        }
+      }
+
+      return {
+        ...conv,
+        last_message: realMsg ?? null,
+        unread_count: realUnread,
+        is_expired: isExpired,
+        is_muted: mutedSet.has(conv.id),
+        is_request: pendingSet.has(conv.id),
+        _hasRealMessages: hasRealMessages,
+      };
+    }));
+
+    // Filter: groups always show (user explicitly joined); DMs only if they have real messages
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const filtered = withMessages.filter((c: any) => {
+      // DMs: only show if they have real messages
+      if (c.type === 'dm') return c._hasRealMessages;
+      // Groups: always show, UNLESS expired for more than 7 days
+      if (c.type === 'group' && c.is_expired && c.last_message_at < sevenDaysAgo) return false;
+      return true;
+    });
+
+    setConversations(filtered as ConversationWithPreview[]);
+    setLoading(false);
+  }, [userId]);
+
+  useEffect(() => {
+    fetch();
+
+    if (!userId) return;
+
+    // Realtime: listen for BOTH new messages AND new memberships
+    const chName = `conversations-${nextChannelId()}`;
+    const channel = supabase
+      .channel(chName)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'app_messages',
+      }, (payload) => {
+        console.log(`[Realtime] ✅ new message:`, payload.new?.id);
+        fetch();
+      })
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'app_conversation_members',
+      }, (payload) => {
+        console.log(`[Realtime] ✅ new membership:`, payload.new);
+        fetch();
+      })
+      .subscribe((status, err) => {
+        console.log(`[Realtime] conversations sub: ${status}`, err || '');
+      });
+
+    return () => { supabase.removeChannel(channel); };
+  }, [userId, fetch]);
+
+  return { conversations, loading, refetch: fetch };
+}
+
+/** Mark a conversation as read — updates last_read_at to now */
+export async function markConversationRead(conversationId: string, userId: string): Promise<void> {
+  await supabase
+    .from('app_conversation_members')
+    .update({ last_read_at: new Date().toISOString() })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId);
+}
+
+/** Global unread count — total across all conversations */
+export function useUnreadTotal(userId: string | null) {
+  const [total, setTotal] = useState(0);
+
+  const fetch = useCallback(async () => {
+    if (!userId) { setTotal(0); return; }
+
+    // Get all active, non-muted memberships with last_read_at
+    const { data: members } = await supabase
+      .from('app_conversation_members')
+      .select('conversation_id, last_read_at, muted_at')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .is('muted_at', null);
+
+    if (!members?.length) { setTotal(0); return; }
+
+    // Count unread messages across all conversations
+    let sum = 0;
+    await Promise.all(members.map(async (m: any) => {
+      const lastRead = m.last_read_at || '1970-01-01T00:00:00Z';
+      const { count } = await supabase
+        .from('app_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('conversation_id', m.conversation_id)
+        .neq('sender_id', userId)
+        .gt('sent_at', lastRead);
+      sum += (count ?? 0);
+    }));
+
+    setTotal(sum);
+  }, [userId]);
+
+  useEffect(() => {
+    fetch();
+
+    // Poll every 15 seconds for unread updates
+    const interval = setInterval(fetch, 15000);
+
+    // Also listen to Realtime for new messages
+    if (!userId) return;
+    const channel = supabase
+      .channel(`unread-total-${nextChannelId()}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'app_messages',
+      }, () => {
+        fetch();
+      })
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
+  }, [userId, fetch]);
+
+  return { total, refetch: fetch };
+}
+
+/** Delete a conversation for the current user — removes their membership */
+export async function deleteConversation(conversationId: string, userId: string): Promise<{ error: any }> {
+  // Remove user from conversation members
+  const { error } = await supabase
+    .from('app_conversation_members')
+    .delete()
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId);
+  return { error };
+}
+
+/** Lock a conversation (creator only) — blocks new messages, keeps history */
+export async function lockConversation(conversationId: string): Promise<{ error: any }> {
+  const { error } = await supabase
+    .from('app_conversations')
+    .update({ is_locked: true })
+    .eq('id', conversationId);
+  return { error };
+}
+
+/* ═══════════════════════════════════════════
+   CHAT — messages for a conversation
+   ═══════════════════════════════════════════ */
+
+export function useMessages(conversationId: string) {
+  const [messages, setMessages] = useState<(AppMessage & { sender?: Pick<AppProfile, 'full_name' | 'avatar_url'> })[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = async () => {
+    const { data } = await supabase
+      .from('app_messages')
+      .select('*, sender:app_profiles!sender_id(full_name, display_name, avatar_url)')
+      .eq('conversation_id', conversationId)
+      .is('deleted_at', null)
+      .order('sent_at', { ascending: true });
+
+    if (data) setMessages(data as any);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetch();
+
+    const msgChannelName = `messages-${nextChannelId()}`;
+    const channel = supabase
+      .channel(msgChannelName)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'app_messages',
+        filter: `conversation_id=eq.${conversationId}`,
+      }, (payload) => {
+        console.log(`[Realtime] ✅ chat message received:`, payload.new?.id);
+        setMessages(prev => [...prev, payload.new as any]);
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'app_messages',
+        filter: `conversation_id=eq.${conversationId}`,
+      }, (payload) => {
+        const updated = payload.new as any;
+        if (updated.deleted_at) {
+          // Remove deleted message from list
+          setMessages(prev => prev.filter(m => m.id !== updated.id));
+        }
+      })
+      .subscribe((status, err) => {
+        console.log(`[Realtime] chat messages subscription status: ${status}`, err || '');
+      });
+
+    return () => { supabase.removeChannel(channel); };
+  }, [conversationId]);
+
+  const send = async (userId: string, content: string, replyToId?: string, imageUrl?: string) => {
+    const { error } = await supabase
+      .from('app_messages')
+      .insert({
+        conversation_id: conversationId,
+        sender_id: userId,
+        content,
+        ...(replyToId ? { reply_to_id: replyToId } : {}),
+        ...(imageUrl ? { image_url: imageUrl } : {}),
+      });
+
+    if (!error) {
+      await supabase
+        .from('app_conversations')
+        .update({ last_message_at: new Date().toISOString() })
+        .eq('id', conversationId);
+    }
+
+    return { error };
+  };
+
+  return { messages, loading, send, refetch: fetch };
+}
+
+/** Delete a message (soft delete). Only sender can delete, within 1 hour. */
+export async function deleteMessage(messageId: string, userId: string): Promise<{ success: boolean; error?: string }> {
+  // Verify ownership + time window
+  const { data: msg } = await supabase
+    .from('app_messages')
+    .select('sender_id, sent_at')
+    .eq('id', messageId)
+    .maybeSingle();
+
+  if (!msg) return { success: false, error: 'Message not found' };
+  if (msg.sender_id !== userId) return { success: false, error: 'Not your message' };
+
+  const ageMs = Date.now() - new Date(msg.sent_at).getTime();
+  const ONE_HOUR = 60 * 60 * 1000;
+  if (ageMs > ONE_HOUR) return { success: false, error: 'Delete window expired (1 hour)' };
+
+  const { error } = await supabase
+    .from('app_messages')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', messageId);
+
+  return error ? { success: false, error: error.message } : { success: true };
+}
+
+/** Report a message */
+export async function reportMessage(messageId: string, reporterId: string, reason: string = 'inappropriate'): Promise<{ success: boolean }> {
+  const { error } = await supabase
+    .from('app_message_reports')
+    .insert({ message_id: messageId, reporter_id: reporterId, reason });
+  return { success: !error };
+}
+
+/* ═══════════════════════════════════════════
+   PROFILE — user profile + stats
+   ═══════════════════════════════════════════ */
+
+export interface FollowerPreview {
+  user_id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  username: string | null;
+}
+
+export function useProfile(userId: string | null) {
+  const [profile, setProfile] = useState<AppProfile | null>(null);
+  const [stats, setStats] = useState({ events: 0, followers: 0, following: 0 });
+  const [followerPreviews, setFollowerPreviews] = useState<FollowerPreview[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchProfile = useCallback(async () => {
+    if (!userId) { setLoading(false); return; }
+
+    // Profile
+    const { data: p } = await supabase
+      .from('app_profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (p) setProfile(p as unknown as AppProfile);
+
+    // Stats
+    const [
+      { count: evCount },
+      { count: followerCount },
+      { count: followingCount },
+    ] = await Promise.all([
+      supabase.from('app_event_members').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+      supabase.from('app_follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
+      supabase.from('app_follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
+    ]);
+
+    const followerTotal = followerCount ?? 0;
+
+    setStats({
+      events: evCount ?? 0,
+      followers: followerTotal,
+      following: followingCount ?? 0,
+    });
+
+    // Fetch up to 3 follower previews for "Followed by" display
+    if (followerTotal > 0) {
+      const { data: followerRows } = await supabase
+        .from('app_follows')
+        .select('follower_id')
+        .eq('following_id', userId)
+        .limit(3);
+      if (followerRows && followerRows.length > 0) {
+        const ids = followerRows.map(r => r.follower_id);
+        const { data: profiles } = await supabase
+          .from('app_profiles')
+          .select('user_id, full_name, display_name, avatar_url, username')
+          .in('user_id', ids);
+        if (profiles) setFollowerPreviews(profiles as FollowerPreview[]);
+      }
+    }
+
+    setLoading(false);
+  }, [userId]);
+
+  useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
+
+  return { profile, stats, followerPreviews, loading, refetch: fetchProfile };
+}
+
+export function useFollow(myUserId: string | null) {
+  const [following, setFollowing] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!myUserId) return;
+    (async () => {
+      const { data } = await supabase
+        .from('app_follows')
+        .select('following_id')
+        .eq('follower_id', myUserId);
+      if (data) setFollowing(new Set(data.map(f => f.following_id)));
+    })();
+  }, [myUserId]);
+
+  const toggle = async (targetId: string) => {
+    if (!myUserId) return;
+    if (following.has(targetId)) {
+      await supabase.from('app_follows').delete()
+        .eq('follower_id', myUserId).eq('following_id', targetId);
+      trackEvent(myUserId, 'unfollow_user', 'profile', targetId);
+      setFollowing(prev => { const n = new Set(prev); n.delete(targetId); return n; });
+    } else {
+      await supabase.from('app_follows').insert({ follower_id: myUserId, following_id: targetId });
+      trackEvent(myUserId, 'follow_user', 'profile', targetId);
+      setFollowing(prev => new Set(prev).add(targetId));
+      // NOTE: Follow notification handled by DB trigger `trg_notify_follow`
+      // DO NOT insert into app_notifications directly (causes duplicates).
+    }
+  };
+
+  const isFollowing = (targetId: string) => following.has(targetId);
+
+  return { toggle, isFollowing };
+}
+
+/* ═══════════════════════════════════════════
+   CHECK-IN — create / expire
+   ═══════════════════════════════════════════ */
+
+export function useCheckIn() {
+  const checkIn = async (userId: string, city: string, neighborhood?: string, statusText?: string) => {
+    // Expire any existing active checkin
+    await supabase
+      .from('app_checkins')
+      .update({ is_active: false })
+      .eq('user_id', userId)
+      .eq('is_active', true);
+
+    // Check user's show_on_map preference to set visibility
+    const { data: prof } = await supabase
+      .from('app_profiles')
+      .select('show_on_map')
+      .eq('user_id', userId)
+      .maybeSingle();
+    const vis = prof?.show_on_map === false ? 'invisible' : 'public';
+
+    // Create new checkin
+    const { data, error } = await supabase
+      .from('app_checkins')
+      .insert({
+        user_id: userId,
+        city,
+        neighborhood: neighborhood ?? null,
+        status_text: statusText ?? null,
+        visibility: vis,
+        checked_in_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+        is_active: true,
+      })
+      .select()
+      .single();
+
+    return { data, error };
+  };
+
+  const checkOut = async (userId: string) => {
+    const { error } = await supabase
+      .from('app_checkins')
+      .update({ is_active: false })
+      .eq('user_id', userId)
+      .eq('is_active', true);
+    return { error };
+  };
+
+  return { checkIn, checkOut };
+}
+
+/* ═══════════════════════════════════════════
+   POST FEED — posts + likes + comments
+   ═══════════════════════════════════════════ */
+
+export interface PostWithAuthor extends AppPost {
+  author: Pick<AppProfile, 'full_name' | 'username' | 'avatar_url' | 'job_type'>;
+  comment_count: number;
+  liked_by_me: boolean;
+}
+
+export function usePosts(city?: string) {
+  const [posts, setPosts] = useState<PostWithAuthor[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = async (myUserId?: string) => {
+    let query = supabase
+      .from('app_posts')
+      .select('*, author:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type)')
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false });
+
+    if (city) query = query.eq('city', city);
+
+    const { data } = await query;
+
+    if (data) {
+      // Get comment counts + my likes in parallel
+      const enriched = await Promise.all(data.map(async (post: any) => {
+        const [{ count: commentCount }, { data: likeData }] = await Promise.all([
+          supabase.from('app_comments').select('*', { count: 'exact', head: true }).eq('post_id', post.id),
+          myUserId
+            ? supabase.from('app_post_likes').select('user_id').eq('post_id', post.id).eq('user_id', myUserId)
+            : Promise.resolve({ data: [] }),
+        ]);
+
+        return {
+          ...post,
+          comment_count: commentCount ?? 0,
+          liked_by_me: (likeData?.length ?? 0) > 0,
+        };
+      }));
+
+      setPosts(enriched as PostWithAuthor[]);
+    }
+    setLoading(false);
+  };
+
+  return { posts, loading, fetch };
+}
+
+export function useLikePost() {
+  const toggle = async (postId: string, userId: string, isLiked: boolean) => {
+    if (isLiked) {
+      await supabase.from('app_post_likes').delete()
+        .eq('post_id', postId).eq('user_id', userId);
+      // Decrement likes_count via direct update
+      const { data } = await supabase.from('app_posts').select('likes_count').eq('id', postId).single();
+      if (data) {
+        await supabase.from('app_posts').update({ likes_count: Math.max(0, (data.likes_count ?? 1) - 1) }).eq('id', postId);
+      }
+    } else {
+      await supabase.from('app_post_likes').insert({ post_id: postId, user_id: userId });
+      // Increment likes_count via direct update
+      const { data } = await supabase.from('app_posts').select('likes_count').eq('id', postId).single();
+      if (data) {
+        await supabase.from('app_posts').update({ likes_count: (data.likes_count ?? 0) + 1 }).eq('id', postId);
+      }
+    }
+  };
+
+  return { toggle };
+}
+
+export function useComments(postId: string) {
+  const [comments, setComments] = useState<(AppComment & { author: Pick<AppProfile, 'full_name' | 'avatar_url'> })[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = async () => {
+    const { data } = await supabase
+      .from('app_comments')
+      .select('*, author:app_profiles!user_id(full_name, display_name, avatar_url)')
+      .eq('post_id', postId)
+      .order('created_at', { ascending: true });
+
+    if (data) setComments(data as any);
+    setLoading(false);
+  };
+
+  useEffect(() => { fetch(); }, [postId]);
+
+  const addComment = async (userId: string, content: string) => {
+    const { error } = await supabase
+      .from('app_comments')
+      .insert({ post_id: postId, user_id: userId, content });
+    if (!error) fetch();
+    return { error };
+  };
+
+  return { comments, loading, addComment, refetch: fetch };
+}
+
+export function useCreatePost() {
+  const create = async (userId: string, type: string, content: string, city?: string, tags?: string[]) => {
+    const { data, error } = await supabase
+      .from('app_posts')
+      .insert({
+        user_id: userId,
+        type,
+        content,
+        city: city ?? null,
+        tags: tags ?? [],
+        likes_count: 0,
+        is_deleted: false,
+      })
+      .select()
+      .single();
+
+    return { data, error };
+  };
+
+  return { create };
+}
+
+/* ═══════════════════════════════════════════
+   PHOTO POSTS — gallery on profile
+   ═══════════════════════════════════════════ */
+
+export interface PhotoPost {
+  id: string;
+  user_id: string;
+  caption: string | null;
+  city: string | null;
+  created_at: string;
+  photos: { id: string; image_url: string; sort_order: number }[];
+  likes_count: number;
+  comment_count: number;
+  liked_by_me: boolean;
+}
+
+export function usePhotoPosts(userId: string | null, myUserId?: string | null) {
+  const [posts, setPosts] = useState<PhotoPost[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = async () => {
+    if (!userId) { setLoading(false); return; }
+
+    const { data } = await supabase
+      .from('app_photo_posts')
+      .select('*, photos:app_photos(id, image_url, sort_order)')
+      .eq('user_id', userId)
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false });
+
+    if (data) {
+      const enriched = await Promise.all(data.map(async (post: any) => {
+        const [{ count: likesCount }, { count: commentCount }, { data: likeData }] = await Promise.all([
+          supabase.from('app_photo_likes').select('*', { count: 'exact', head: true }).eq('post_id', post.id),
+          supabase.from('app_photo_comments').select('*', { count: 'exact', head: true }).eq('post_id', post.id),
+          myUserId
+            ? supabase.from('app_photo_likes').select('user_id').eq('post_id', post.id).eq('user_id', myUserId)
+            : Promise.resolve({ data: [] }),
+        ]);
+
+        return {
+          ...post,
+          photos: (post.photos || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
+          likes_count: likesCount ?? 0,
+          comment_count: commentCount ?? 0,
+          liked_by_me: (likeData?.length ?? 0) > 0,
+        };
+      }));
+
+      setPosts(enriched as PhotoPost[]);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetch(); }, [userId]);
+
+  return { posts, loading, refetch: fetch };
+}
+
+export function usePhotoLike() {
+  const toggle = async (postId: string, userId: string, isLiked: boolean) => {
+    if (isLiked) {
+      await supabase.from('app_photo_likes').delete().eq('post_id', postId).eq('user_id', userId);
+    } else {
+      await supabase.from('app_photo_likes').insert({ post_id: postId, user_id: userId });
+    }
+  };
+  return { toggle };
+}
+
+export function usePhotoComments(postId: string) {
+  const [comments, setComments] = useState<{ id: string; user_id: string; content: string; created_at: string; author: Pick<AppProfile, 'full_name' | 'avatar_url'> }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = async () => {
+    const { data } = await supabase
+      .from('app_photo_comments')
+      .select('*, author:app_profiles!user_id(full_name, display_name, avatar_url)')
+      .eq('post_id', postId)
+      .order('created_at', { ascending: true });
+
+    if (data) setComments(data as any);
+    setLoading(false);
+  };
+
+  useEffect(() => { fetch(); }, [postId]);
+
+  const addComment = async (userId: string, content: string) => {
+    const { error } = await supabase
+      .from('app_photo_comments')
+      .insert({ post_id: postId, user_id: userId, content });
+    if (!error) fetch();
+    return { error };
+  };
+
+  return { comments, loading, addComment, refetch: fetch };
+}
+
+/* ═══════════════════════════════════════════
+   DM — create or find a direct conversation
+   ═══════════════════════════════════════════ */
+
+/**
+ * Creates or finds a DM conversation between two users.
+ * If sender doesn't follow recipient, recipient's membership is set to 'request'.
+ */
+export async function createOrFindDM(
+  myUserId: string,
+  otherUserId: string,
+): Promise<{ conversationId: string; isRequest: boolean; error: any }> {
+  try {
+    // ── Run block check + existing conversation check in parallel ──
+    const [blockResult, existingResult] = await Promise.all([
+      supabase
+        .from('app_blocks')
+        .select('id')
+        .or(`and(blocker_id.eq.${otherUserId},blocked_id.eq.${myUserId}),and(blocker_id.eq.${myUserId},blocked_id.eq.${otherUserId})`)
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('app_conversations')
+        .select('id')
+        .eq('type', 'dm')
+        .or(`and(user_a.eq.${myUserId},user_b.eq.${otherUserId}),and(user_a.eq.${otherUserId},user_b.eq.${myUserId})`)
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    const { data: blockRow, error: blockErr } = blockResult;
+    if (blockErr) console.warn('[createOrFindDM] block check error (ignoring):', blockErr.message);
+    if (blockRow) {
+      return { conversationId: '', isRequest: false, error: 'blocked' };
+    }
+
+    const { data: existing } = existingResult;
+
+    if (existing) {
+      // Conversation exists — check both members in parallel
+      const [otherMemberResult, myMemberResult] = await Promise.all([
+        supabase
+          .from('app_conversation_members')
+          .select('id, status')
+          .eq('conversation_id', existing.id)
+          .eq('user_id', otherUserId)
+          .maybeSingle(),
+        supabase
+          .from('app_conversation_members')
+          .select('id')
+          .eq('conversation_id', existing.id)
+          .eq('user_id', myUserId)
+          .maybeSingle(),
+      ]);
+
+      const { data: otherMember } = otherMemberResult;
+      const { data: myMember } = myMemberResult;
+
+      // Re-add missing members in parallel
+      const reAddTasks: PromiseLike<any>[] = [];
+      if (!otherMember) {
+        reAddTasks.push(
+          supabase.from('app_conversation_members')
+            .insert({ conversation_id: existing.id, user_id: otherUserId, role: 'member', status: 'request' })
+            .then(({ error }) => { if (error) console.warn('[createOrFindDM] re-add recipient failed:', JSON.stringify(error)); })
+        );
+      }
+      if (!myMember) {
+        reAddTasks.push(
+          supabase.from('app_conversation_members')
+            .insert({ conversation_id: existing.id, user_id: myUserId, role: 'member', status: 'active' })
+            .then(({ error }) => { if (error) console.warn('[createOrFindDM] re-add sender failed:', JSON.stringify(error)); })
+        );
+      }
+      if (reAddTasks.length > 0) await Promise.all(reAddTasks);
+
+      return { conversationId: existing.id, isRequest: !otherMember ? true : otherMember.status === 'request', error: null };
+    }
+
+    // Check follow + create conversation in parallel
+    const [followResult, convResult] = await Promise.all([
+      supabase
+        .from('app_follows')
+        .select('id')
+        .eq('follower_id', otherUserId)
+        .eq('following_id', myUserId)
+        .maybeSingle(),
+      supabase
+        .from('app_conversations')
+        .insert({
+          type: 'dm',
+          user_a: myUserId,
+          user_b: otherUserId,
+          created_by: myUserId,
+          last_message_at: new Date().toISOString(),
+        })
+        .select()
+        .single(),
+    ]);
+
+    const { data: followRow } = followResult;
+    const isRequest = !followRow;
+    const { data: newConv, error: convError } = convResult;
+
+    if (convError || !newConv) {
+      return { conversationId: '', isRequest: false, error: convError };
+    }
+
+    // Add both users as members in parallel
+    const [mem1, mem2] = await Promise.all([
+      supabase.from('app_conversation_members')
+        .insert({ conversation_id: newConv.id, user_id: myUserId, role: 'member', status: 'active' }),
+      supabase.from('app_conversation_members')
+        .insert({ conversation_id: newConv.id, user_id: otherUserId, role: 'member', status: isRequest ? 'request' : 'active' }),
+    ]);
+    if (mem1.error) console.warn('[createOrFindDM] member1 insert failed:', JSON.stringify(mem1.error));
+    if (mem2.error) console.warn('[createOrFindDM] member2 insert failed:', JSON.stringify(mem2.error));
+
+    // Return conversationId even if member inserts had issues — conversation is valid
+    return { conversationId: newConv.id, isRequest, error: null };
+  } catch (err) {
+    return { conversationId: '', isRequest: false, error: err };
+  }
+}
+
+/** Accept a DM request — change member status from pending to active */
+export async function acceptDMRequest(conversationId: string, userId: string): Promise<void> {
+  await supabase
+    .from('app_conversation_members')
+    .update({ status: 'active' })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId);
+}
+
+/** Decline a DM request — remove the membership */
+export async function declineDMRequest(conversationId: string, userId: string): Promise<void> {
+  await supabase
+    .from('app_conversation_members')
+    .update({ status: 'declined' })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId);
+}
+
+/** Block a user — removes DM membership + prevents future messages */
+export async function blockUser(myUserId: string, blockedUserId: string): Promise<{ error: any }> {
+  // 1. Insert block row
+  const { error: blockErr } = await supabase
+    .from('app_blocks')
+    .insert({ blocker_id: myUserId, blocked_id: blockedUserId });
+  if (blockErr) return { error: blockErr };
+
+  // 2. Find any DM between us and remove my membership
+  const { data: conv } = await supabase
+    .from('app_conversations')
+    .select('id')
+    .eq('type', 'dm')
+    .or(`and(user_a.eq.${myUserId},user_b.eq.${blockedUserId}),and(user_a.eq.${blockedUserId},user_b.eq.${myUserId})`)
+    .maybeSingle();
+  if (conv) {
+    await supabase.from('app_conversation_members').delete()
+      .eq('conversation_id', conv.id).eq('user_id', myUserId);
+  }
+  return { error: null };
+}
+
+/** Unblock a user */
+export async function unblockUser(myUserId: string, blockedUserId: string): Promise<{ error: any }> {
+  const { error } = await supabase
+    .from('app_blocks')
+    .delete()
+    .eq('blocker_id', myUserId)
+    .eq('blocked_id', blockedUserId);
+  return { error };
+}
+
+/** Check if a user is blocked (either direction) */
+export async function isBlocked(userA: string, userB: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('app_blocks')
+    .select('id')
+    .or(`and(blocker_id.eq.${userA},blocked_id.eq.${userB}),and(blocker_id.eq.${userB},blocked_id.eq.${userA})`)
+    .limit(1)
+    .maybeSingle();
+  return !!data;
+}
+
+/* ═══════════════════════════════════════════
+   STATUS → GROUP CHAT — join someone's status activity
+   ═══════════════════════════════════════════ */
+
+/**
+ * Creates or finds a group conversation for a status activity.
+ * When a nomad sets a status like "Working at Mindspace", others can Join
+ * and a group chat is created in Pulse where they can coordinate.
+ */
+export interface GroupMetadata {
+  emoji?: string;
+  category?: string;
+  activityText?: string;
+  locationName?: string;
+  latitude?: number;
+  longitude?: number;
+  isGeneralArea?: boolean;
+  scheduledFor?: string | null;
+  isOpen?: boolean;
+  checkinId?: string;
+}
+
+export async function createOrJoinStatusChat(
+  myUserId: string,
+  statusOwnerId: string,
+  statusText: string,
+  metadata?: GroupMetadata,
+): Promise<{ conversationId: string; error: any }> {
+  try {
+    const groupName = statusText || 'Activity';
+
+    // Look for an existing group conversation with this name created by the status owner
+    const { data: existingConvs } = await supabase
+      .from('app_conversations')
+      .select('id')
+      .eq('type', 'group')
+      .eq('name', groupName)
+      .eq('created_by', statusOwnerId);
+
+    const foundConvId = existingConvs?.[0]?.id ?? null;
+
+    if (foundConvId) {
+      // Join existing group if not already a member
+      const { data: alreadyMember } = await supabase
+        .from('app_conversation_members')
+        .select('conversation_id')
+        .eq('conversation_id', foundConvId)
+        .eq('user_id', myUserId)
+        .maybeSingle();
+
+      if (!alreadyMember) {
+        await supabase
+          .from('app_conversation_members')
+          .insert({ conversation_id: foundConvId, user_id: myUserId, role: 'member', status: 'active' });
+
+        // Send a join message
+        await supabase.from('app_messages').insert({
+          conversation_id: foundConvId,
+          sender_id: myUserId,
+          content: `Joined the activity 🤙`,
+        });
+
+        // NOTE: Notification is handled by DB trigger `notify_on_activity_join`
+        // on app_conversation_members INSERT → calls create_notification()
+        // which checks self-action, user prefs, and snooze mode.
+        // DO NOT insert into app_notifications directly (causes duplicates).
+
+        // Increment member_count on the checkin
+        const { data: checkin } = await supabase
+          .from('app_checkins')
+          .select('member_count')
+          .eq('user_id', statusOwnerId)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (checkin) {
+          await supabase
+            .from('app_checkins')
+            .update({ member_count: (checkin.member_count ?? 1) + 1 })
+            .eq('user_id', statusOwnerId)
+            .eq('is_active', true);
+        }
+      }
+
+      return { conversationId: foundConvId, error: null };
+    }
+
+    // No existing group — create a new one (with activity metadata)
+    const { data: newConv, error: convError } = await supabase
+      .from('app_conversations')
+      .insert({
+        type: 'group',
+        name: groupName,
+        created_by: statusOwnerId,
+        last_message_at: new Date().toISOString(),
+        ...(metadata ? {
+          emoji: metadata.emoji || null,
+          category: metadata.category || null,
+          activity_text: metadata.activityText || null,
+          location_name: metadata.locationName || null,
+          latitude: metadata.latitude || null,
+          longitude: metadata.longitude || null,
+          is_general_area: metadata.isGeneralArea ?? true,
+          scheduled_for: metadata.scheduledFor || null,
+          is_open: metadata.isOpen ?? true,
+          checkin_id: metadata.checkinId || null,
+        } : {}),
+      })
+      .select()
+      .single();
+
+    if (convError || !newConv) {
+      console.warn('[createOrJoinStatusChat] conv create failed:', convError);
+      return { conversationId: '', error: convError };
+    }
+
+    // Add both users as members
+    const members = [
+      { conversation_id: newConv.id, user_id: statusOwnerId, role: 'admin', status: 'active' },
+    ];
+    // Add joiner as separate member (avoid duplicate if joining own status)
+    if (statusOwnerId !== myUserId) {
+      members.push({ conversation_id: newConv.id, user_id: myUserId, role: 'member', status: 'active' });
+    }
+
+    const { error: memError } = await supabase
+      .from('app_conversation_members')
+      .insert(members);
+
+    if (memError) {
+      console.warn('[createOrJoinStatusChat] member insert failed, retrying with upsert:', memError);
+      // Retry one-by-one with upsert to handle edge cases
+      for (const m of members) {
+        await supabase
+          .from('app_conversation_members')
+          .upsert(m, { onConflict: 'conversation_id,user_id' });
+      }
+    }
+
+    // Send a first message
+    await supabase.from('app_messages').insert({
+      conversation_id: newConv.id,
+      sender_id: myUserId,
+      content: `Created "${groupName}" 🎉`,
+    });
+
+    // NOTE: Notification handled by DB trigger `notify_on_activity_join`
+    // DO NOT insert into app_notifications directly (causes duplicates).
+
+    // Increment member_count on the source checkin
+    if (statusOwnerId !== myUserId) {
+      const { data: checkinData } = await supabase
+        .from('app_checkins')
+        .select('member_count')
+        .eq('user_id', statusOwnerId)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (checkinData) {
+        await supabase
+          .from('app_checkins')
+          .update({ member_count: (checkinData.member_count ?? 1) + 1 })
+          .eq('user_id', statusOwnerId)
+          .eq('is_active', true);
+      }
+    }
+
+    return { conversationId: newConv.id, error: null };
+  } catch (err) {
+    console.warn('[createOrJoinStatusChat] error:', err);
+    return { conversationId: '', error: err };
+  }
+}
+
+/* ═══════════════════════════════════════════
+   NOTIFICATIONS — in-app alerts
+   ═══════════════════════════════════════════ */
+
+export interface AppNotification {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  icon: string | null;
+  color: string | null;
+  is_read: boolean;
+  entity_type: string | null;
+  entity_id: string | null;
+  actor_id: string | null;
+  metadata: Record<string, any>;
+  created_at: string;
+  read_at: string | null;
+  actor?: Pick<AppProfile, 'full_name' | 'avatar_url' | 'username'>;
+}
+
+export function useNotifications(userId: string | null) {
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  const fetch = useCallback(async () => {
+    if (!userId) { setLoading(false); return; }
+
+    const { data } = await supabase
+      .from('app_notifications')
+      .select('*, actor:app_profiles!actor_id(full_name, display_name, avatar_url, username)')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (data) {
+      setNotifications(data as AppNotification[]);
+      setUnreadCount(data.filter((n: any) => !n.is_read).length);
+    }
+    setLoading(false);
+  }, [userId]);
+
+  useEffect(() => {
+    fetch();
+    const interval = setInterval(fetch, 30000); // poll every 30s
+    return () => clearInterval(interval);
+  }, [fetch]);
+
+  const markAllRead = useCallback(async () => {
+    if (!userId) return;
+    await supabase
+      .from('app_notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('is_read', false);
+    setUnreadCount(0);
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true, read_at: new Date().toISOString() })));
+  }, [userId]);
+
+  return { notifications, unreadCount, loading, refetch: fetch, markAllRead };
+}
+
+/* ═══════════════════════════════════════════
+   SETTINGS — update profile settings
+   ═══════════════════════════════════════════ */
+
+export function useUpdateSettings() {
+  const update = async (userId: string, fields: Record<string, any>) => {
+    const { error } = await supabase
+      .from('app_profiles')
+      .update(fields)
+      .eq('user_id', userId);
+    return { error };
+  };
+
+  const deleteAccount = async (userId: string) => {
+    const { error } = await supabase
+      .from('app_profiles')
+      .update({ visibility: 'invisible', full_name: 'Deleted User', bio: null, avatar_url: null })
+      .eq('user_id', userId);
+    return { error };
+  };
+
+  return { update, deleteAccount };
+}
+
+/* ═══════════════════════════════════════════
+   FLIGHT GROUPS — Incoming Flights feature
+   ═══════════════════════════════════════════ */
+
+export interface FlightSubGroup {
+  id: string;
+  flight_group_id: string;
+  origin_country: string;
+  origin_flag: string;
+  conversation_id: string | null;
+  member_count: number;
+  min_arrival: string | null;
+  max_departure: string | null;
+}
+
+export interface FlightGroupDetail {
+  id: string;
+  country: string;
+  country_flag: string;
+  conversation_id: string | null;
+  member_count: number;
+  min_arrival: string | null;
+  max_departure: string | null;
+  sub_groups: FlightSubGroup[];
+  joinedMainGroup: boolean;
+  joinedSubGroups: Set<string>;
+}
+
+export interface FlightGroup {
+  id: string;
+  country: string;
+  country_flag: string;
+  conversation_id: string | null;
+  member_count: number;
+  created_at: string;
+  /* joined via query */
+  members?: FlightMember[];
+  earliest_arrival?: string | null;
+  latest_arrival?: string | null;
+}
+
+export interface FlightMember {
+  id: string;
+  user_id: string;
+  arrival_date: string | null;
+  departure_date: string | null;
+  profile?: {
+    full_name: string;
+    avatar_url: string | null;
+  };
+}
+
+/** Fetch all flight groups with member previews */
+export function useFlightGroups() {
+  const [groups, setGroups] = useState<FlightGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchGroups = async () => {
+    // 1. Get all flight groups
+    const { data: groupData, error: gErr } = await supabase
+      .from('flight_groups')
+      .select('*')
+      .gt('member_count', 0)
+      .order('member_count', { ascending: false });
+
+    if (!groupData || gErr) { setLoading(false); return; }
+
+    // 2. Get all flight members
+    const groupIds = groupData.map(g => g.id);
+    const { data: memberData } = await supabase
+      .from('flight_members')
+      .select('id, user_id, flight_group_id, arrival_date, departure_date')
+      .in('flight_group_id', groupIds);
+
+    // 3. Get profiles for all member user_ids
+    const memberUserIds = [...new Set((memberData || []).map(m => m.user_id))];
+    const { data: profileData } = memberUserIds.length > 0
+      ? await supabase
+          .from('app_profiles')
+          .select('user_id, full_name, display_name, avatar_url')
+          .in('user_id', memberUserIds)
+      : { data: [] };
+
+    const profileMap = new Map((profileData || []).map(p => [p.user_id, p]));
+
+    // 4. Assemble: attach members with profiles to each group
+    const enriched = groupData.map(g => {
+      const members = (memberData || [])
+        .filter(m => m.flight_group_id === g.id)
+        .map(m => ({ ...m, profile: profileMap.get(m.user_id) || null }));
+
+      return {
+        ...g,
+        members,
+        earliest_arrival: members.reduce((min: string | null, m: any) =>
+          m.arrival_date && (!min || m.arrival_date < min) ? m.arrival_date : min, null),
+        latest_arrival: members.reduce((max: string | null, m: any) =>
+          m.arrival_date && (!max || m.arrival_date > max) ? m.arrival_date : max, null),
+      };
+    });
+
+    setGroups(enriched);
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchGroups(); }, []);
+
+  return { groups, loading, refetch: fetchGroups };
+}
+
+/** Join or create a flight group — returns group_id + conversation_id */
+export async function joinFlightGroup(
+  userId: string,
+  country: string,
+  countryFlag: string,
+  arrivalDate?: string | null,
+  departureDate?: string | null,
+): Promise<{ groupId: string | null; conversationId: string | null; error: any }> {
+  try {
+    // 1. Call DB function to join/create group
+    const { data, error } = await supabase.rpc('join_flight_group', {
+      p_user_id: userId,
+      p_country: country,
+      p_country_flag: countryFlag,
+      p_arrival: arrivalDate || null,
+      p_departure: departureDate || null,
+    });
+
+    if (error) return { groupId: null, conversationId: null, error };
+
+    const row = Array.isArray(data) ? data[0] : data;
+    const groupId = row?.group_id;
+    let convId = row?.conv_id;
+
+    // 2. If no conversation yet, create one (flight group chat)
+    if (!convId && groupId) {
+      const groupName = `✈️ Flying to ${country}`;
+      const { data: newConv, error: convErr } = await supabase
+        .from('app_conversations')
+        .insert({
+          type: 'group',
+          name: groupName,
+          created_by: userId,
+          is_open: true,
+        })
+        .select('id')
+        .single();
+
+      if (newConv && !convErr) {
+        convId = newConv.id;
+        // Link conversation to flight group
+        await supabase.from('flight_groups').update({ conversation_id: convId }).eq('id', groupId);
+        // Add creator as member
+        await supabase.from('app_conversation_members').insert({
+          conversation_id: convId,
+          user_id: userId,
+          role: 'admin',
+          status: 'active',
+        });
+        // Welcome message
+        await supabase.from('app_messages').insert({
+          conversation_id: convId,
+          sender_id: userId,
+          content: `✈️ Flight group to ${country} created! Who's coming?`,
+        });
+      }
+    } else if (convId) {
+      // Ensure user is member of the existing chat
+      const { data: isMember } = await supabase
+        .from('app_conversation_members')
+        .select('conversation_id')
+        .eq('conversation_id', convId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (!isMember) {
+        await supabase.from('app_conversation_members').insert({
+          conversation_id: convId,
+          user_id: userId,
+          role: 'member',
+          status: 'active',
+        });
+        await supabase.from('app_messages').insert({
+          conversation_id: convId,
+          sender_id: userId,
+          content: `Joined the flight group ✈️`,
+        });
+      }
+    }
+
+    return { groupId, conversationId: convId, error: null };
+  } catch (err) {
+    return { groupId: null, conversationId: null, error: err };
+  }
+}
+
+/** Fetch a single flight group with sub-groups and join status */
+export function useFlightGroupDetail(flightGroupId: string, userId: string | null) {
+  const [detail, setDetail] = useState<FlightGroupDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchDetail = useCallback(async () => {
+    if (!flightGroupId || !userId) { setLoading(false); return; }
+
+    // 1. Get the flight group
+    const { data: group } = await supabase
+      .from('flight_groups')
+      .select('*')
+      .eq('id', flightGroupId)
+      .single();
+
+    if (!group) { setLoading(false); return; }
+
+    // 2. Get sub-groups
+    const { data: subGroups } = await supabase
+      .from('flight_sub_groups')
+      .select('*')
+      .eq('flight_group_id', flightGroupId)
+      .order('member_count', { ascending: false });
+
+    // 3. Compute overall date range from sub-groups
+    const subs = subGroups || [];
+    const allArrivals = subs.map(s => s.min_arrival).filter(Boolean) as string[];
+    const allDepartures = subs.map(s => s.max_departure).filter(Boolean) as string[];
+    const minArrival = allArrivals.length ? allArrivals.sort()[0] : null;
+    const maxDeparture = allDepartures.length ? allDepartures.sort().reverse()[0] : null;
+
+    // 4. Check which conversations user has already joined
+    const convIds = [group.conversation_id, ...subs.map(s => s.conversation_id)].filter(Boolean) as string[];
+    const { data: memberships } = convIds.length > 0
+      ? await supabase
+          .from('app_conversation_members')
+          .select('conversation_id')
+          .eq('user_id', userId)
+          .in('conversation_id', convIds)
+      : { data: [] };
+
+    const joinedSet = new Set((memberships || []).map(m => m.conversation_id));
+
+    setDetail({
+      id: group.id,
+      country: group.country,
+      country_flag: group.country_flag,
+      conversation_id: group.conversation_id,
+      member_count: group.member_count,
+      min_arrival: minArrival,
+      max_departure: maxDeparture,
+      sub_groups: subs,
+      joinedMainGroup: !!group.conversation_id && joinedSet.has(group.conversation_id),
+      joinedSubGroups: joinedSet,
+    });
+    setLoading(false);
+  }, [flightGroupId, userId]);
+
+  useEffect(() => { fetchDetail(); }, [fetchDetail]);
+
+  return { detail, loading, refetch: fetchDetail };
+}
+
+/** Join a specific flight conversation (main group or sub-group) */
+export async function joinFlightChat(
+  userId: string,
+  conversationId: string,
+): Promise<{ success: boolean; error: any }> {
+  try {
+    // Check if already a member
+    const { data: existing } = await supabase
+      .from('app_conversation_members')
+      .select('conversation_id')
+      .eq('conversation_id', conversationId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (existing) return { success: true, error: null };
+
+    // Join the conversation
+    const { error } = await supabase
+      .from('app_conversation_members')
+      .insert({
+        conversation_id: conversationId,
+        user_id: userId,
+        role: 'member',
+        status: 'active',
+      });
+
+    if (error) return { success: false, error };
+
+    // Send join message
+    await supabase.from('app_messages').insert({
+      conversation_id: conversationId,
+      sender_id: userId,
+      content: 'joined the group ✈️',
+    });
+
+    return { success: true, error: null };
+  } catch (err) {
+    return { success: false, error: err };
+  }
+}
+
+/* ═══════════════════════════════════════════
+   LEAVE GROUP — single unified function
+   ═══════════════════════════════════════════
+   What it does:
+   1. Remove user from app_conversation_members
+   2. Send "left the group" message (so others see)
+   3. Decrement member_count on the source checkin (if exists)
+   4. Conversation disappears from Messages tab automatically
+      (useConversations filters by membership)
+*/
+export async function leaveGroupChat(
+  userId: string,
+  conversationId: string,
+): Promise<{ success: boolean; error: any }> {
+  try {
+    // 1. Remove membership
+    const { error: delErr } = await supabase
+      .from('app_conversation_members')
+      .delete()
+      .eq('conversation_id', conversationId)
+      .eq('user_id', userId);
+
+    if (delErr) {
+      console.warn('[leaveGroupChat] delete membership failed:', delErr);
+      return { success: false, error: delErr };
+    }
+
+    // 2. Post "left" message (fire & forget — user is already removed)
+    await supabase.from('app_messages').insert({
+      conversation_id: conversationId,
+      sender_id: userId,
+      content: 'left the group 👋',
+    }).then(() => {}, () => {});
+
+    // 3. Find the related checkin and decrement member_count
+    const { data: conv } = await supabase
+      .from('app_conversations')
+      .select('created_by, name')
+      .eq('id', conversationId)
+      .maybeSingle();
+
+    if (conv?.created_by) {
+      const { data: checkin } = await supabase
+        .from('app_checkins')
+        .select('id, member_count')
+        .eq('user_id', conv.created_by)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (checkin && (checkin.member_count ?? 0) > 0) {
+        await supabase
+          .from('app_checkins')
+          .update({ member_count: Math.max(0, (checkin.member_count ?? 1) - 1) })
+          .eq('id', checkin.id);
+      }
+    }
+
+    return { success: true, error: null };
+  } catch (err) {
+    console.warn('[leaveGroupChat] error:', err);
+    return { success: false, error: err };
+  }
+}

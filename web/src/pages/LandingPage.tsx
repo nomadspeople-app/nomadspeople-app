@@ -1,0 +1,246 @@
+import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabase'
+import {
+  MapPin, Users, MessageCircle, Globe, Zap, Shield,
+  ArrowRight, Plane, Star, Download
+} from 'lucide-react'
+
+export default function LandingPage() {
+  const [userCount, setUserCount] = useState(0)
+  const [cityCount, setCityCount] = useState(0)
+
+  useEffect(() => {
+    // Fetch real stats
+    supabase.from('app_profiles').select('id', { count: 'exact', head: true })
+      .then(({ count }) => setUserCount(count || 0))
+    supabase.from('app_checkins').select('city', { count: 'exact', head: true })
+      .eq('is_active', true)
+      .then(({ count }) => setCityCount(count || 0))
+  }, [])
+
+  return (
+    <div style={{ fontFamily: "'Inter', -apple-system, sans-serif", color: '#1A1A1A', background: '#FAFAF8' }}>
+      {/* ── Nav ── */}
+      <nav style={styles.nav}>
+        <div style={styles.navInner}>
+          <span style={styles.logo}>nomadspeople</span>
+          <div style={styles.navLinks}>
+            <a href="#features" style={styles.navLink}>Features</a>
+            <a href="#community" style={styles.navLink}>Community</a>
+            <a href="#download" style={styles.navBtn}>Get the App</a>
+          </div>
+        </div>
+      </nav>
+
+      {/* ── Hero ── */}
+      <section style={styles.hero}>
+        <div style={styles.heroContent}>
+          <div style={styles.badge}>
+            <Plane size={14} /> Now in 5 cities
+          </div>
+          <h1 style={styles.heroTitle}>
+            Find your people,<br />
+            <span style={{ color: '#E8614D' }}>anywhere.</span>
+          </h1>
+          <p style={styles.heroSub}>
+            The social map for digital nomads. See who's around you,
+            join spontaneous meetups, and build real connections
+            on the road.
+          </p>
+          <div style={styles.heroCtas}>
+            <a href="#download" style={styles.ctaPrimary}>
+              <Download size={18} /> Download Free
+            </a>
+            <a href="#features" style={styles.ctaSecondary}>
+              Learn More <ArrowRight size={16} />
+            </a>
+          </div>
+          <div style={styles.heroStats}>
+            <div style={styles.stat}>
+              <span style={styles.statNum}>{userCount || '19'}+</span>
+              <span style={styles.statLabel}>Nomads</span>
+            </div>
+            <div style={styles.statDivider} />
+            <div style={styles.stat}>
+              <span style={styles.statNum}>{cityCount || '5'}+</span>
+              <span style={styles.statLabel}>Active Now</span>
+            </div>
+            <div style={styles.statDivider} />
+            <div style={styles.stat}>
+              <span style={styles.statNum}>5</span>
+              <span style={styles.statLabel}>Cities</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Phone mockup placeholder */}
+        <div style={styles.heroPhone}>
+          <div style={styles.phoneMockup}>
+            <div style={styles.phoneScreen}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🗺️</div>
+              <p style={{ color: '#666', fontSize: 14 }}>Live Map</p>
+              <div style={styles.fakePins}>
+                <span style={styles.fakePin}>📍 Tel Aviv</span>
+                <span style={styles.fakePin}>📍 Bangkok</span>
+                <span style={styles.fakePin}>📍 Canggu</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Features ── */}
+      <section id="features" style={styles.features}>
+        <h2 style={styles.sectionTitle}>Why Nomads Love Us</h2>
+        <p style={styles.sectionSub}>Built by nomads, for nomads. Every feature solves a real problem.</p>
+
+        <div style={styles.featureGrid}>
+          {[
+            { icon: <MapPin size={24} />, title: 'Live Map', desc: 'See who is around you right now. Real people, real locations, real-time.' },
+            { icon: <Users size={24} />, title: 'Spontaneous Groups', desc: 'Someone nearby wants coffee? Join with one tap. No planning needed.' },
+            { icon: <MessageCircle size={24} />, title: 'Instant Chat', desc: 'Join a group and start chatting immediately. Groups auto-expire, keeping things fresh.' },
+            { icon: <Globe size={24} />, title: 'City Intelligence', desc: 'Know where the nomads are before you fly. Real-time city data from the community.' },
+            { icon: <Zap size={24} />, title: 'Smart Matching', desc: 'We learn who you want to meet and surface the right people at the right time.' },
+            { icon: <Shield size={24} />, title: 'Privacy First', desc: 'Go invisible anytime. Control who sees you, when, and where. Your data stays yours.' },
+          ].map((f, i) => (
+            <div key={i} style={styles.featureCard}>
+              <div style={styles.featureIcon}>{f.icon}</div>
+              <h3 style={styles.featureTitle}>{f.title}</h3>
+              <p style={styles.featureDesc}>{f.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Social Proof ── */}
+      <section id="community" style={styles.social}>
+        <h2 style={styles.sectionTitle}>Built for the Nomad Lifestyle</h2>
+        <div style={styles.testimonials}>
+          {[
+            { name: 'Jake M.', city: 'Bangkok', text: "Found 3 people to cowork with within 10 minutes of landing. This is what I needed.", stars: 5 },
+            { name: 'Clara D.', city: 'Tel Aviv', text: "Finally an app that understands nomads aren't tourists. The spontaneous groups are genius.", stars: 5 },
+            { name: 'Liv S.', city: 'Ko Pha Ngan', text: "Met my best travel buddy here. The vibe is so different from other social apps.", stars: 5 },
+          ].map((t, i) => (
+            <div key={i} style={styles.testimonialCard}>
+              <div style={styles.stars}>
+                {Array(t.stars).fill(0).map((_, j) => <Star key={j} size={14} fill="#F59E0B" color="#F59E0B" />)}
+              </div>
+              <p style={styles.testimonialText}>"{t.text}"</p>
+              <div style={styles.testimonialAuthor}>
+                <span style={styles.authorName}>{t.name}</span>
+                <span style={styles.authorCity}>{t.city}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Download CTA ── */}
+      <section id="download" style={styles.downloadSection}>
+        <div style={styles.downloadInner}>
+          <h2 style={styles.downloadTitle}>Ready to find your people?</h2>
+          <p style={styles.downloadSub}>
+            Join the community of digital nomads who stopped traveling alone.
+          </p>
+          <div style={styles.downloadBtns}>
+            <a href="#" style={styles.storeBtn}>
+              <span style={{ fontSize: 24 }}>🍎</span>
+              <div>
+                <div style={{ fontSize: 10, opacity: 0.8 }}>Download on the</div>
+                <div style={{ fontSize: 16, fontWeight: 700 }}>App Store</div>
+              </div>
+            </a>
+            <a href="#" style={styles.storeBtn}>
+              <span style={{ fontSize: 24 }}>▶️</span>
+              <div>
+                <div style={{ fontSize: 10, opacity: 0.8 }}>Get it on</div>
+                <div style={{ fontSize: 16, fontWeight: 700 }}>Google Play</div>
+              </div>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Footer ── */}
+      <footer style={styles.footer}>
+        <div style={styles.footerInner}>
+          <span style={styles.footerLogo}>nomadspeople</span>
+          <div style={styles.footerLinks}>
+            <a href="#" style={styles.footerLink}>Privacy</a>
+            <a href="#" style={styles.footerLink}>Terms</a>
+            <a href="#" style={styles.footerLink}>Contact</a>
+          </div>
+          <span style={styles.footerCopy}>&copy; {new Date().getFullYear()} NomadsPeople</span>
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  // Nav
+  nav: { position: 'fixed', top: 0, left: 0, right: 0, background: 'rgba(250,250,248,0.9)', backdropFilter: 'blur(20px)', zIndex: 100, borderBottom: '1px solid #eee' },
+  navInner: { maxWidth: 1100, margin: '0 auto', padding: '14px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  logo: { fontSize: 20, fontWeight: 800, letterSpacing: -0.5, color: '#1A1A1A' },
+  navLinks: { display: 'flex', alignItems: 'center', gap: 24 },
+  navLink: { color: '#666', textDecoration: 'none', fontSize: 14, fontWeight: 500 },
+  navBtn: { background: '#1A1A1A', color: '#fff', padding: '8px 20px', borderRadius: 24, fontSize: 14, fontWeight: 600, textDecoration: 'none' },
+
+  // Hero
+  hero: { maxWidth: 1100, margin: '0 auto', padding: '140px 24px 80px', display: 'flex', alignItems: 'center', gap: 60 },
+  heroContent: { flex: 1 },
+  badge: { display: 'inline-flex', alignItems: 'center', gap: 6, background: '#FFF0EE', color: '#E8614D', padding: '6px 14px', borderRadius: 20, fontSize: 13, fontWeight: 600, marginBottom: 24 },
+  heroTitle: { fontSize: 56, fontWeight: 800, lineHeight: 1.1, letterSpacing: -1.5, marginBottom: 20 },
+  heroSub: { fontSize: 18, color: '#666', lineHeight: 1.6, maxWidth: 480, marginBottom: 32 },
+  heroCtas: { display: 'flex', gap: 16, marginBottom: 48 },
+  ctaPrimary: { display: 'inline-flex', alignItems: 'center', gap: 8, background: '#E8614D', color: '#fff', padding: '14px 28px', borderRadius: 28, fontSize: 16, fontWeight: 700, textDecoration: 'none' },
+  ctaSecondary: { display: 'inline-flex', alignItems: 'center', gap: 6, color: '#1A1A1A', padding: '14px 20px', fontSize: 16, fontWeight: 600, textDecoration: 'none' },
+  heroStats: { display: 'flex', alignItems: 'center', gap: 32 },
+  stat: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
+  statNum: { fontSize: 28, fontWeight: 800, color: '#1A1A1A' },
+  statLabel: { fontSize: 13, color: '#999', fontWeight: 500, marginTop: 2 },
+  statDivider: { width: 1, height: 40, background: '#ddd' },
+
+  // Phone mockup
+  heroPhone: { flex: '0 0 320px' },
+  phoneMockup: { width: 280, height: 500, background: '#fff', borderRadius: 36, border: '8px solid #1A1A1A', overflow: 'hidden', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' },
+  phoneScreen: { height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(180deg, #f8f8f6 0%, #fff 100%)' },
+  fakePins: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 },
+  fakePin: { background: '#FFF0EE', color: '#E8614D', padding: '6px 12px', borderRadius: 12, fontSize: 13, fontWeight: 600 },
+
+  // Features
+  features: { maxWidth: 1100, margin: '0 auto', padding: '80px 24px' },
+  sectionTitle: { fontSize: 36, fontWeight: 800, textAlign: 'center', marginBottom: 12, letterSpacing: -0.5 },
+  sectionSub: { fontSize: 16, color: '#888', textAlign: 'center', marginBottom: 48 },
+  featureGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 },
+  featureCard: { background: '#fff', borderRadius: 16, padding: 28, border: '1px solid #eee' },
+  featureIcon: { width: 48, height: 48, borderRadius: 12, background: '#FFF0EE', color: '#E8614D', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  featureTitle: { fontSize: 18, fontWeight: 700, marginBottom: 8 },
+  featureDesc: { fontSize: 14, color: '#666', lineHeight: 1.6 },
+
+  // Social proof
+  social: { maxWidth: 1100, margin: '0 auto', padding: '80px 24px' },
+  testimonials: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 },
+  testimonialCard: { background: '#fff', borderRadius: 16, padding: 28, border: '1px solid #eee' },
+  stars: { display: 'flex', gap: 2, marginBottom: 12 },
+  testimonialText: { fontSize: 15, color: '#444', lineHeight: 1.6, marginBottom: 16, fontStyle: 'italic' },
+  testimonialAuthor: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  authorName: { fontSize: 14, fontWeight: 700 },
+  authorCity: { fontSize: 13, color: '#999' },
+
+  // Download
+  downloadSection: { padding: '80px 24px', background: '#1A1A1A' },
+  downloadInner: { maxWidth: 600, margin: '0 auto', textAlign: 'center' },
+  downloadTitle: { fontSize: 36, fontWeight: 800, color: '#fff', marginBottom: 12, letterSpacing: -0.5 },
+  downloadSub: { fontSize: 16, color: '#aaa', marginBottom: 32 },
+  downloadBtns: { display: 'flex', justifyContent: 'center', gap: 16 },
+  storeBtn: { display: 'flex', alignItems: 'center', gap: 10, background: '#333', color: '#fff', padding: '12px 24px', borderRadius: 12, textDecoration: 'none', border: '1px solid #555' },
+
+  // Footer
+  footer: { padding: '32px 24px', borderTop: '1px solid #eee' },
+  footerInner: { maxWidth: 1100, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  footerLogo: { fontSize: 16, fontWeight: 800, letterSpacing: -0.5, color: '#999' },
+  footerLinks: { display: 'flex', gap: 20 },
+  footerLink: { color: '#999', textDecoration: 'none', fontSize: 13 },
+  footerCopy: { fontSize: 13, color: '#ccc' },
+}
