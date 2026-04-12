@@ -50,8 +50,11 @@ export function getZodiac(birthDate: string | null | undefined): { symbol: strin
   return { symbol: '♑', name: 'capricorn' };
 }
 
-/* Cached viewer age — avoids extra DB query on every city switch */
-let _cachedViewerAge: { userId: string; age: number | null } | null = null;
+/* Cached viewer age + age prefs — avoids extra DB query on every city switch */
+let _cachedViewer: { userId: string; age: number | null; ageMin: number; ageMax: number } | null = null;
+
+/** Call after the user changes their age-range preferences so the map refreshes */
+export function bustViewerAgeCache() { _cachedViewer = null; }
 
 export function useActiveCheckins(city: string, viewerUserId?: string | null) {
   const [checkins, setCheckins] = useState<CheckinWithProfile[]>([]);
@@ -60,56 +63,69 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
   const prevIdsRef = useRef<string>('');
 
   const fetch = async () => {
-    // 1. Get viewer age (cached — only fetches once per user)
+    // 1. Get viewer age + age preferences (cached — only fetches once per user)
     let viewerAge: number | null = null;
+    let viewerAgeMin = 18;
+    let viewerAgeMax = 100;
     if (viewerUserId) {
-      if (_cachedViewerAge && _cachedViewerAge.userId === viewerUserId) {
-        viewerAge = _cachedViewerAge.age;
+      if (_cachedViewer && _cachedViewer.userId === viewerUserId) {
+        viewerAge = _cachedViewer.age;
+        viewerAgeMin = _cachedViewer.ageMin;
+        viewerAgeMax = _cachedViewer.ageMax;
       } else {
         const { data: viewerProfile } = await supabase
           .from('app_profiles')
-          .select('birth_date')
+          .select('birth_date, age_min, age_max')
           .eq('user_id', viewerUserId)
           .limit(1)
           .maybeSingle();
         viewerAge = calcAge(viewerProfile?.birth_date);
-        _cachedViewerAge = { userId: viewerUserId, age: viewerAge };
+        viewerAgeMin = viewerProfile?.age_min ?? 18;
+        viewerAgeMax = viewerProfile?.age_max ?? 100;
+        _cachedViewer = { userId: viewerUserId, age: viewerAge, ageMin: viewerAgeMin, ageMax: viewerAgeMax };
       }
     }
 
     // 2. Fetch all active checkins (include visibility fields from profile)
     const { data, error } = await supabase
       .from('app_checkins')
-      .select('*, profile:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type, bio, interests, show_on_map, snooze_mode, hide_distance)')
+      .select('*, profile:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type, bio, interests, show_on_map, snooze_mode, hide_distance, birth_date)')
       .eq('is_active', true)
       .ilike('city', city)
-      .eq('visibility', 'public');
+      .in('visibility', ['public', 'city_only'])
+      .limit(200);
 
     if (data) {
-      // 3a. Filter out expired checkins + users who disabled "show on map" or enabled snooze mode
+      // 3a. Filter out expired checkins + users who disabled "show on map"
       const now = new Date();
       const visible = (data as any[]).filter((c: any) => {
-        // Hide expired checkins (timer or status past their expires_at)
         if (c.expires_at && new Date(c.expires_at) < now) return false;
-        const profile = c.profile;
-        if (profile?.show_on_map === false) return false;
-        if (profile?.snooze_mode === true) return false;
+        if (c.profile?.show_on_map === false) return false;
         return true;
       });
 
-      // 3b. Filter by age range: only show checkins where viewer's age is within [age_min, age_max]
+      // 3b. Bidirectional age filter:
+      //   A) Viewer's age must be within the checkin creator's desired range
+      //   B) Creator's age must be within the viewer's desired range
       const filtered = viewerAge
         ? visible.filter((c: any) => {
-            const min = c.age_min ?? 18;
-            const max = c.age_max ?? 80;
-            return viewerAge! >= min && viewerAge! <= max;
+            // A — their preference: do they want to see my age?
+            const theirMin = c.age_min ?? 18;
+            const theirMax = c.age_max ?? 100;
+            if (viewerAge! < theirMin || viewerAge! > theirMax) return false;
+            // B — my preference: do I want to see their age?
+            const creatorAge = calcAge(c.profile?.birth_date);
+            if (creatorAge != null) {
+              if (creatorAge < viewerAgeMin || creatorAge > viewerAgeMax) return false;
+            }
+            return true;
           })
         : visible;
 
-      // 3c. Skip state update if same checkins (prevents marker flicker)
-      const newIds = filtered.map((c: any) => c.id).sort().join(',');
-      if (newIds !== prevIdsRef.current) {
-        prevIdsRef.current = newIds;
+      // 3c. Skip state update if same checkins AND same member counts (prevents marker flicker)
+      const newFingerprint = filtered.map((c: any) => `${c.id}:${c.member_count ?? 0}`).sort().join(',');
+      if (newFingerprint !== prevIdsRef.current) {
+        prevIdsRef.current = newFingerprint;
         setCheckins(filtered as unknown as CheckinWithProfile[]);
         setCount(filtered.length);
       }
@@ -122,21 +138,27 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
     fetch();
 
     // Polling fallback — ensures freshness even if Realtime is slow
-    const pollInterval = setInterval(() => { fetch(); }, 10000); // every 10s
+    const pollInterval = setInterval(() => { fetch(); }, 30000); // every 30s (reduced from 10s to ease DB load)
 
     // Realtime subscription — globally unique channel name
+    // NOTE: No city filter — Supabase Realtime `eq` is case-sensitive but our
+    // queries use `ilike`. Listening to all checkin changes and re-fetching
+    // (which filters by city with ilike) ensures we never miss updates.
     const channelName = `checkins-${nextChannelId()}`;
-    console.log(`[Realtime] Subscribing to checkins in "${city}" (channel: ${channelName})`);
+    console.log(`[Realtime] Subscribing to all checkin changes (channel: ${channelName}, viewing: "${city}")`);
     const channel = supabase
       .channel(channelName)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'app_checkins',
-        filter: `city=eq.${city}`,
       }, (payload) => {
-        console.log(`[Realtime] ✅ checkin event received:`, payload.eventType, (payload.new as any)?.id || (payload.old as any)?.id);
-        fetch(); // refetch on any change
+        // Only refetch if the changed checkin might be relevant to current city
+        const changedCity = (payload.new as any)?.city || (payload.old as any)?.city || '';
+        if (changedCity.toLowerCase() === city.toLowerCase()) {
+          console.log(`[Realtime] ✅ checkin event for ${city}:`, payload.eventType, (payload.new as any)?.id || (payload.old as any)?.id);
+          fetch(); // refetch on any change in this city
+        }
       })
       .subscribe((status, err) => {
         console.log(`[Realtime] checkins subscription status: ${status}`, err || '');
@@ -165,6 +187,44 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
 }
 
 /* ═══════════════════════════════════════════
+   HOT CHECKINS — checkins with recent chat activity
+   Returns a Map<checkin_id, recentMsgCount> for pulse animation
+   ═══════════════════════════════════════════ */
+export function useHotCheckins(city: string) {
+  const [hotMap, setHotMap] = useState<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    const poll = async () => {
+      const { data } = await supabase
+        .from('app_conversations')
+        .select('checkin_id, last_message_at')
+        .not('checkin_id', 'is', null)
+        .gte('last_message_at', new Date(Date.now() - 5 * 60000).toISOString());
+
+      if (data && data.length > 0) {
+        const map = new Map<string, number>();
+        for (const c of data) {
+          if (!c.checkin_id) continue;
+          // Approximate "heat" by how recent last_message_at is (1-3 scale)
+          const ago = (Date.now() - new Date(c.last_message_at).getTime()) / 60000;
+          const heat = ago < 1 ? 3 : ago < 3 ? 2 : 1;
+          map.set(c.checkin_id, Math.max(map.get(c.checkin_id) || 0, heat));
+        }
+        setHotMap(map);
+      } else {
+        setHotMap(new Map());
+      }
+    };
+
+    poll();
+    const iv = setInterval(poll, 15000); // every 15s
+    return () => clearInterval(iv);
+  }, [city]);
+
+  return hotMap;
+}
+
+/* ═══════════════════════════════════════════
    NOMADS IN CITY — profiles with current_city
    ═══════════════════════════════════════════ */
 export interface NomadInCity {
@@ -187,16 +247,14 @@ export function useNomadsInCity(city: string) {
   const fetch = async () => {
     const { data, error } = await supabase
       .from('app_profiles')
-      .select('user_id, full_name, display_name, username, avatar_url, bio, job_type, current_city, home_country, snooze_mode, show_on_map')
+      .select('user_id, full_name, display_name, username, avatar_url, bio, job_type, current_city, home_country, show_on_map')
       .ilike('current_city', city)
       .eq('show_on_map', true)
       .limit(200);
 
     if (data) {
-      // Filter out snoozed users
-      const visible = (data as any[]).filter((p: any) => p.snooze_mode !== true);
-      setNomads(visible as NomadInCity[]);
-      setCount(visible.length);
+      setNomads(data as NomadInCity[]);
+      setCount(data.length);
     }
     setLoading(false);
   };
@@ -212,7 +270,7 @@ export function useNomadsInCity(city: string) {
 
 export interface EventWithMembers extends AppEvent {
   member_count: number;
-  members: { user_id: string; profile: Pick<AppProfile, 'full_name' | 'avatar_url'> }[];
+  members: { user_id: string; profile: Pick<AppProfile, 'full_name' | 'display_name' | 'avatar_url'> }[];
 }
 
 export function useCityEvents(city: string, creatorId?: string | null) {
@@ -272,7 +330,7 @@ export function useJoinEvent() {
 
 export interface ConversationWithPreview extends AppConversation {
   last_message?: Pick<AppMessage, 'content' | 'sent_at' | 'sender_id'>;
-  members: { user_id: string; profile: Pick<AppProfile, 'full_name' | 'avatar_url'> }[];
+  members: { user_id: string; profile: Pick<AppProfile, 'full_name' | 'display_name' | 'avatar_url'> }[];
   unread_count: number;
   is_expired?: boolean;  // linked checkin expired or inactive
   is_muted?: boolean;    // user muted this conversation
@@ -347,46 +405,35 @@ export function useConversations(userId: string | null) {
       if (m.muted_at) mutedSet.add(m.conversation_id);
     });
 
-    // System message patterns — these are NOT real human messages
-    const isSystemMsg = (content: string) =>
-      /^Created "/.test(content) ||
-      /^Joined the activity/.test(content) ||
-      /^.{0,30} left the group$/.test(content) ||
-      /^.{0,30} joined the group$/.test(content);
+    // 5. Batch fetch: last message + unread count for ALL conversations in ONE query
+    const { data: summaryRows } = await supabase.rpc('get_conversations_summary', { p_user_id: userId });
+    const summaryMap: Record<string, any> = {};
+    (summaryRows || []).forEach((r: any) => { summaryMap[r.conversation_id] = r; });
 
-    // 5. Fetch last REAL message + linked checkin expiry + unread count for each conversation
-    const withMessages = await Promise.all(convWithMembers.map(async (conv: any) => {
-      const lastRead = lastReadMap[conv.id] || '1970-01-01T00:00:00Z';
+    // Batch fetch checkins for conversations that have checkin_id
+    const checkinIds = convWithMembers.filter((c: any) => c.checkin_id).map((c: any) => c.checkin_id);
+    const checkinMap: Record<string, any> = {};
+    if (checkinIds.length > 0) {
+      const { data: checkinRows } = await supabase
+        .from('app_checkins')
+        .select('id, is_active, expires_at')
+        .in('id', checkinIds);
+      (checkinRows || []).forEach((c: any) => { checkinMap[c.id] = c; });
+    }
 
-      const [{ data: recentMsgs }, { count: unreadCount }, checkinResult] = await Promise.all([
-        // Get last few messages so we can skip system ones for preview
-        supabase.from('app_messages')
-          .select('content, sent_at, sender_id')
-          .eq('conversation_id', conv.id)
-          .order('sent_at', { ascending: false })
-          .limit(10),
-        // Unread count — only real messages (not from self)
-        supabase.from('app_messages')
-          .select('*', { count: 'exact', head: true })
-          .eq('conversation_id', conv.id)
-          .neq('sender_id', userId)
-          .gt('sent_at', lastRead),
-        conv.checkin_id
-          ? supabase.from('app_checkins').select('is_active, expires_at').eq('id', conv.checkin_id).maybeSingle()
-          : Promise.resolve({ data: null }),
-      ]);
-
-      // Find the first real (non-system) message for preview
-      const realMsg = (recentMsgs || []).find(m => !isSystemMsg(m.content));
-      // Check if there are ANY real messages in this conversation
-      const hasRealMessages = (recentMsgs || []).some(m => !isSystemMsg(m.content));
-
-      // Count only real unread messages
-      const realUnread = Math.max(0, (unreadCount ?? 0));
+    const withMessages = convWithMembers.map((conv: any) => {
+      const summary = summaryMap[conv.id];
+      const realMsg = summary?.last_message_content ? {
+        content: summary.last_message_content,
+        sent_at: summary.last_message_sent_at,
+        sender_id: summary.last_message_sender_id,
+      } : null;
+      const hasRealMessages = !!realMsg;
+      const realUnread = Math.max(0, Number(summary?.unread_count ?? 0));
 
       let isExpired = false;
       if (conv.checkin_id) {
-        const checkin = checkinResult.data;
+        const checkin = checkinMap[conv.checkin_id];
         if (!checkin) {
           isExpired = true;
         } else {
@@ -403,7 +450,7 @@ export function useConversations(userId: string | null) {
         is_request: pendingSet.has(conv.id),
         _hasRealMessages: hasRealMessages,
       };
-    }));
+    });
 
     // Filter: groups always show (user explicitly joined); DMs only if they have real messages
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -470,37 +517,18 @@ export function useUnreadTotal(userId: string | null) {
   const fetch = useCallback(async () => {
     if (!userId) { setTotal(0); return; }
 
-    // Get all active, non-muted memberships with last_read_at
-    const { data: members } = await supabase
-      .from('app_conversation_members')
-      .select('conversation_id, last_read_at, muted_at')
-      .eq('user_id', userId)
-      .eq('status', 'active')
-      .is('muted_at', null);
-
-    if (!members?.length) { setTotal(0); return; }
-
-    // Count unread messages across all conversations
-    let sum = 0;
-    await Promise.all(members.map(async (m: any) => {
-      const lastRead = m.last_read_at || '1970-01-01T00:00:00Z';
-      const { count } = await supabase
-        .from('app_messages')
-        .select('*', { count: 'exact', head: true })
-        .eq('conversation_id', m.conversation_id)
-        .neq('sender_id', userId)
-        .gt('sent_at', lastRead);
-      sum += (count ?? 0);
-    }));
-
-    setTotal(sum);
+    // Single DB function call — replaces N+1 queries
+    const { data, error } = await supabase.rpc('get_unread_total', { p_user_id: userId });
+    if (!error && data !== null) {
+      setTotal(data as number);
+    }
   }, [userId]);
 
   useEffect(() => {
     fetch();
 
-    // Poll every 15 seconds for unread updates
-    const interval = setInterval(fetch, 15000);
+    // Poll every 45 seconds as fallback (Realtime handles instant updates)
+    const interval = setInterval(fetch, 45000);
 
     // Also listen to Realtime for new messages
     if (!userId) return;
@@ -654,6 +682,23 @@ export async function reportMessage(messageId: string, reporterId: string, reaso
   return { success: !error };
 }
 
+/** Report content (user / post / comment) */
+export async function reportContent(
+  reporterId: string,
+  contentType: 'user' | 'post' | 'comment',
+  reason: string,
+  opts: { reportedUserId?: string; contentId?: string } = {},
+): Promise<{ success: boolean }> {
+  const { error } = await supabase.from('app_reports').insert({
+    reporter_id: reporterId,
+    content_type: contentType,
+    reason,
+    reported_user_id: opts.reportedUserId ?? null,
+    content_id: opts.contentId ?? null,
+  });
+  return { success: !error };
+}
+
 /* ═══════════════════════════════════════════
    PROFILE — user profile + stats
    ═══════════════════════════════════════════ */
@@ -683,32 +728,23 @@ export function useProfile(userId: string | null) {
 
     if (p) setProfile(p as unknown as AppProfile);
 
-    // Stats
-    const [
-      { count: evCount },
-      { count: followerCount },
-      { count: followingCount },
-    ] = await Promise.all([
-      supabase.from('app_event_members').select('*', { count: 'exact', head: true }).eq('user_id', userId),
-      supabase.from('app_follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
-      supabase.from('app_follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
-    ]);
-
-    const followerTotal = followerCount ?? 0;
+    // Stats — single DB function call instead of 3 separate queries
+    const { data: statsData } = await supabase.rpc('get_profile_stats', { p_user_id: userId });
+    const followerTotal = Number(statsData?.[0]?.followers_count ?? 0);
 
     setStats({
-      events: evCount ?? 0,
+      events: Number(statsData?.[0]?.events_count ?? 0),
       followers: followerTotal,
-      following: followingCount ?? 0,
+      following: Number(statsData?.[0]?.following_count ?? 0),
     });
 
-    // Fetch up to 3 follower previews for "Followed by" display
+    // Fetch up to 4 follower previews for "Followed by" display
     if (followerTotal > 0) {
       const { data: followerRows } = await supabase
         .from('app_follows')
         .select('follower_id')
         .eq('following_id', userId)
-        .limit(3);
+        .limit(4);
       if (followerRows && followerRows.length > 0) {
         const ids = followerRows.map(r => r.follower_id);
         const { data: profiles } = await supabase
@@ -1845,4 +1881,178 @@ export async function leaveGroupChat(
     console.warn('[leaveGroupChat] error:', err);
     return { success: false, error: err };
   }
+}
+
+
+/* ═══════════════════════════════════════════
+   פניני חוכמה — WISDOM SIGNALS
+   Learn user intent from behavior
+   ═══════════════════════════════════════════ */
+
+export type WisdomSignalType =
+  | 'city_browse' | 'profile_tap' | 'join_attempt'
+  | 'travel_declared' | 'planning_declared' | 'just_looking' | 'city_onboard';
+
+export type WisdomIntent = 'flying_soon' | 'planning' | 'just_looking' | 'arrived';
+
+/** Haversine distance in km between two points */
+export function wisdomHaversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Track a wisdom signal — fire and forget */
+export async function trackWisdomSignal(params: {
+  userId: string;
+  signalType: WisdomSignalType;
+  city: string;
+  country?: string;
+  lat?: number;
+  lng?: number;
+  userCity?: string;
+  distanceKm?: number;
+  intent?: WisdomIntent;
+  checkinId?: string;
+  metadata?: Record<string, any>;
+}) {
+  try {
+    await supabase.from('app_wisdom_signals').insert({
+      user_id: params.userId,
+      signal_type: params.signalType,
+      city: params.city,
+      country: params.country || null,
+      latitude: params.lat || null,
+      longitude: params.lng || null,
+      user_city: params.userCity || null,
+      distance_km: params.distanceKm ? Math.round(params.distanceKm) : null,
+      intent: params.intent || null,
+      checkin_id: params.checkinId || null,
+      metadata: params.metadata || {},
+    });
+  } catch (e) {
+    console.warn('[wisdom] signal track failed:', e);
+  }
+}
+
+/** Check if user has a known travel intent for a city */
+export async function getWisdomForCity(
+  userId: string,
+  city: string,
+): Promise<{ hasIntent: boolean; intent: WisdomIntent | null; recentSignals: number }> {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data: signals } = await supabase
+      .from('app_wisdom_signals')
+      .select('signal_type, intent, created_at')
+      .eq('user_id', userId)
+      .eq('city', city)
+      .gte('created_at', thirtyDaysAgo)
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    if (!signals || signals.length === 0) {
+      return { hasIntent: false, intent: null, recentSignals: 0 };
+    }
+
+    const declared = signals.find(s =>
+      s.intent && ['flying_soon', 'planning', 'just_looking', 'arrived'].includes(s.intent)
+    );
+
+    return {
+      hasIntent: !!declared,
+      intent: (declared?.intent as WisdomIntent) || null,
+      recentSignals: signals.length,
+    };
+  } catch (e) {
+    console.warn('[wisdom] getWisdomForCity failed:', e);
+    return { hasIntent: false, intent: null, recentSignals: 0 };
+  }
+}
+
+/** Check if user has a flight/trip to a city based on profile data */
+export async function checkProfileTravelIntent(
+  userId: string,
+  targetCity: string,
+): Promise<{ hasPlannedTrip: boolean; departureDate: string | null }> {
+  try {
+    const { data: profile } = await supabase
+      .from('app_profiles')
+      .select('next_destination, next_departure_date, next_destination_date')
+      .eq('user_id', userId)
+      .single();
+
+    if (!profile?.next_destination) {
+      return { hasPlannedTrip: false, departureDate: null };
+    }
+
+    const dest = profile.next_destination.toLowerCase();
+    const target = targetCity.toLowerCase();
+    const match = dest.includes(target) || target.includes(dest);
+
+    return {
+      hasPlannedTrip: match,
+      departureDate: profile.next_departure_date || profile.next_destination_date || null,
+    };
+  } catch (e) {
+    return { hasPlannedTrip: false, departureDate: null };
+  }
+}
+
+/** Full wisdom check — combines all signals to decide if we need to prompt */
+export async function wisdomCheck(params: {
+  userId: string;
+  userLat: number;
+  userLng: number;
+  userCity: string;
+  userCountry: string;
+  targetCity: string;
+  targetLat: number;
+  targetLng: number;
+  targetCountry?: string;
+}): Promise<{
+  shouldPrompt: boolean;
+  distanceKm: number;
+  reason: 'close_enough' | 'has_flight' | 'recently_declared' | 'needs_prompt';
+  existingIntent: WisdomIntent | null;
+  departureDate: string | null;
+}> {
+  const distanceKm = wisdomHaversineKm(params.userLat, params.userLng, params.targetLat, params.targetLng);
+
+  // Same country — no prompt needed
+  const sameCountry = params.userCountry.toLowerCase() === (params.targetCountry || '').toLowerCase();
+  if (sameCountry) {
+    return { shouldPrompt: false, distanceKm, reason: 'close_enough', existingIntent: null, departureDate: null };
+  }
+
+  // Check profile for planned trip
+  const travel = await checkProfileTravelIntent(params.userId, params.targetCity);
+  if (travel.hasPlannedTrip) {
+    trackWisdomSignal({
+      userId: params.userId,
+      signalType: 'join_attempt',
+      city: params.targetCity,
+      country: params.targetCountry,
+      lat: params.targetLat,
+      lng: params.targetLng,
+      userCity: params.userCity,
+      distanceKm,
+      intent: 'flying_soon',
+    });
+    return { shouldPrompt: false, distanceKm, reason: 'has_flight', existingIntent: 'flying_soon', departureDate: travel.departureDate };
+  }
+
+  // Check recent wisdom signals
+  const wisdom = await getWisdomForCity(params.userId, params.targetCity);
+  if (wisdom.hasIntent && wisdom.intent === 'flying_soon') {
+    return { shouldPrompt: false, distanceKm, reason: 'recently_declared', existingIntent: wisdom.intent, departureDate: null };
+  }
+
+  // No info or previously said planning/looking — prompt
+  return { shouldPrompt: true, distanceKm, reason: 'needs_prompt', existingIntent: wisdom.intent, departureDate: null };
 }

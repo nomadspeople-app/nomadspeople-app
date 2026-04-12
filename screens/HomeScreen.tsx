@@ -1,4 +1,4 @@
-import { useState, useRef, useContext, useEffect, useCallback, useMemo, memo } from 'react';
+import { useState, useRef, useContext, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity, ScrollView, StatusBar,
   Modal, Animated, TextInput, Keyboard, FlatList, Dimensions, Easing,
@@ -15,8 +15,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { haversineKm, formatDistance } from '../lib/distance';
 import type { RootStackParamList } from '../lib/types';
-import { useActiveCheckins, useNomadsInCity, useFollow, useProfile, createOrJoinStatusChat, type CheckinWithProfile, type NomadInCity } from '../lib/hooks';
+import { useActiveCheckins, useHotCheckins, useNomadsInCity, useFollow, useProfile, createOrJoinStatusChat, wisdomCheck, trackWisdomSignal, type CheckinWithProfile, type NomadInCity, type WisdomIntent } from '../lib/hooks';
 import { AuthContext } from '../App';
+import { useAvatar } from '../lib/AvatarContext';
 import { useI18n } from '../lib/i18n';
 import { supabase } from '../lib/supabase';
 import { trackEvent } from '../lib/tracking';
@@ -27,6 +28,8 @@ import QuickStatusSheet, { type QuickActivityData } from '../components/QuickSta
 import TimerSheet, { type TimerData } from '../components/TimerSheet';
 import NomadsListSheet from '../components/NomadsListSheet';
 import ActivityDetailSheet from '../components/ActivityDetailSheet';
+import TimerBubble from '../components/TimerBubble';
+import WisdomPrompt from '../components/WisdomPrompt';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -71,7 +74,15 @@ const getCatStyle = (cat?: string | null) => CAT_STYLE[cat || ''] || CAT_STYLE.s
 const getInitials = (name?: string | null) => name ? name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : '??';
 
 /* ─── Scatter pin positions slightly so they don't overlap ─── */
-const scatter = (base: number, i: number) => base + (i % 3 - 1) * 0.004 + (i % 2) * 0.002;
+/* Uses a deterministic hash of the checkin ID so positions are stable across re-renders */
+const hashCode = (s: string): number => {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+};
+const scatter = (base: number, seed: number) => base + (seed % 3 - 1) * 0.004 + (seed % 2) * 0.002;
 
 const VIBES: { label: string; icon?: NomadIconName; color?: string; catKey?: string }[] = [
   { label: 'All' },
@@ -157,100 +168,121 @@ async function saveRecentCity(city: CitySearchResult): Promise<void> {
   } catch {}
 }
 
-/* ─── Memoized Markers — prevents re-render when parent state changes ─── */
-const NomadMarkers = memo(function NomadMarkers({
-  checkins: allCheckins,
-  activeVibe,
-  cityLat,
-  cityLng,
-  onPinTap,
-}: {
-  checkins: CheckinWithProfile[];
-  activeVibe: number;
-  cityLat: number;
-  cityLng: number;
-  onPinTap: (c: CheckinWithProfile) => void;
-}) {
-  const { colors } = useTheme();
-  const st = useMemo(() => makeStyles(colors), [colors]);
+/* ─── Pulse ring component — breathing animation for hot pins ─── */
+function PulseRing({ heat, size }: { heat: number; size: number }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    // Speed: heat 3 → 800ms, heat 2 → 1200ms, heat 1 → 1800ms
+    const duration = heat >= 3 ? 800 : heat >= 2 ? 1200 : 1800;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, { toValue: 1, duration, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+        Animated.timing(anim, { toValue: 0, duration, easing: Easing.in(Easing.ease), useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [heat]);
 
-  const filtered = useMemo(() => {
-    if (activeVibe === 0) return allCheckins;
-    const vibeKey = VIBES[activeVibe]?.catKey;
-    return vibeKey ? allCheckins.filter(c => c.category === vibeKey) : allCheckins;
-  }, [allCheckins, activeVibe]);
+  const scale = anim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.55] });
+  const opacity = anim.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] });
 
   return (
-    <>
-      {filtered.map((c, i) => {
-        const catStyle = getCatStyle(c.category);
-        const ini = getInitials(c.profile?.full_name);
-        const firstName = c.profile?.full_name?.split(' ')[0] || 'Nomad';
-        const pinEmoji = c.status_emoji || catStyle.emoji;
-        const avatarUrl = (c.profile as any)?.avatar_url || null;
-        const isTimer = (c as any).checkin_type === 'timer';
-        const expiresAt = (c as any).expires_at;
-        const minsLeft = expiresAt ? Math.max(0, Math.round((new Date(expiresAt).getTime() - Date.now()) / 60000)) : null;
-        const isExpired = expiresAt ? new Date(expiresAt).getTime() <= Date.now() : false;
-
-        // Border logic: expired → gray, timer → red tones, status → green
-        const borderColor = isExpired ? '#9CA3AF' : isTimer ? '#FF6B6B' : '#4ADE80';
-
-        return (
-          <Marker
-            key={c.id}
-            tracksViewChanges={false}
-            coordinate={{
-              latitude: c.latitude ? c.latitude : scatter(cityLat, i),
-              longitude: c.longitude ? c.longitude : scatter(cityLng, i + 3),
-            }}
-            onPress={() => onPinTap(c)}
-          >
-            <View style={[st.pinWrap, isExpired && { opacity: 0.5 }]}>
-              {/* Avatar with colored border — no halo */}
-              <View style={[st.avatarRing, { borderColor }]}>
-                <View style={[st.avatar, { backgroundColor: catStyle.color }]}>
-                  {avatarUrl ? (
-                    <Image source={{ uri: avatarUrl }} style={st.avatarImg} />
-                  ) : (
-                    <Text style={st.avatarTxt}>{ini}</Text>
-                  )}
-                </View>
-                {/* Emoji badge — top right, overlapping ring */}
-                <View style={st.emojiBadge}>
-                  <Text style={st.emojiText}>{pinEmoji}</Text>
-                </View>
-              </View>
-              {/* Name tag */}
-              <View style={st.nameTag}>
-                <Text style={st.nameTxt}>{firstName}</Text>
-              </View>
-              {/* Timer badge — only for timer checkins */}
-              {isTimer && minsLeft !== null && (() => {
-                const urgent = minsLeft <= 10;
-                const soon = minsLeft <= 30 && !urgent;
-                return (
-                  <View style={[
-                    st.timerPill,
-                    urgent && st.timerPillUrgent,
-                    soon && st.timerPillSoon,
-                  ]}>
-                    <Text style={[
-                      st.timerPillText,
-                      urgent && st.timerPillTextUrgent,
-                    ]}>
-                      {minsLeft < 60 ? `${minsLeft}m` : `${Math.floor(minsLeft / 60)}h${minsLeft % 60 > 0 ? `${minsLeft % 60}m` : ''}`}
-                    </Text>
-                  </View>
-                );
-              })()}
-            </View>
-          </Marker>
-        );
-      })}
-    </>
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        width: size, height: size, borderRadius: size / 2,
+        backgroundColor: 'rgba(42,157,143,0.35)',
+        transform: [{ scale }],
+        opacity,
+      }}
+    />
   );
-});
+}
+
+/* ─── Helper: build a single Marker element for a checkin ─── */
+function buildNomadMarker(
+  c: CheckinWithProfile,
+  i: number,
+  cityLat: number,
+  cityLng: number,
+  onPinTap: (c: CheckinWithProfile) => void,
+  avatarUri: (url: string | null | undefined) => string | undefined,
+  st: ReturnType<typeof makeStyles>,
+  hotMap?: Map<string, number>,
+) {
+  const catStyle = getCatStyle(c.category);
+  const ini = getInitials(c.profile?.full_name);
+  const firstName = c.profile?.full_name?.split(' ')[0] || 'Nomad';
+  const pinEmoji = c.status_emoji || catStyle.emoji;
+  const avatarUrl = (c.profile as any)?.avatar_url || null;
+  const isTimer = (c as any).checkin_type === 'timer';
+  const expiresAt = (c as any).expires_at;
+  const minsLeft = expiresAt ? Math.max(0, Math.round((new Date(expiresAt).getTime() - Date.now()) / 60000)) : null;
+  const isExpired = expiresAt ? new Date(expiresAt).getTime() <= Date.now() : false;
+
+  const borderColor = isExpired ? '#9CA3AF' : isTimer ? '#FF6B6B' : '#4ADE80';
+  const timerStr = minsLeft !== null
+    ? (minsLeft < 60 ? `${minsLeft}m` : `${Math.floor(minsLeft / 60)}h${minsLeft % 60 > 0 ? `${minsLeft % 60}m` : ''}`)
+    : '';
+
+  const heat = hotMap?.get(c.id) ?? 0;
+  const isHot = heat > 0 && !isExpired;
+  const ringSize = s(33); // slightly larger than avatarRing (s(27))
+
+  return (
+    <Marker
+      key={c.id}
+      tracksViewChanges={isHot}
+      coordinate={{
+        latitude: c.latitude ? c.latitude : scatter(cityLat, hashCode(c.id)),
+        longitude: c.longitude ? c.longitude : scatter(cityLng, hashCode(c.id + '_lng')),
+      }}
+      anchor={{ x: 0.5, y: 1 }}
+      onPress={() => onPinTap(c)}
+    >
+      <View style={[st.pinWrap, isExpired && { opacity: 0.5 }]}>
+        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+          {isHot && <PulseRing heat={heat} size={ringSize} />}
+          <View style={[st.avatarRing, { borderColor }]}>
+            <View style={[st.avatar, { backgroundColor: catStyle.color }]}>
+              {avatarUrl ? (
+                <Image source={{ uri: avatarUri(avatarUrl) }} style={st.avatarImg} />
+              ) : (
+                <Text style={st.avatarTxt}>{ini}</Text>
+              )}
+            </View>
+            <View style={st.emojiBadge}>
+              <Text style={st.emojiText}>{pinEmoji}</Text>
+            </View>
+          </View>
+        </View>
+        <View style={st.nameTag}>
+          <Text style={st.nameTxt}>{firstName}</Text>
+        </View>
+        {isTimer && minsLeft !== null && (() => {
+          const urgent = minsLeft <= 10;
+          const soon = minsLeft <= 30 && !urgent;
+          return (
+            <View style={[
+              st.timerPill,
+              urgent && st.timerPillUrgent,
+              soon && st.timerPillSoon,
+            ]}>
+              <Text style={[
+                st.timerPillText,
+                urgent && st.timerPillTextUrgent,
+              ]}>
+                {timerStr}
+              </Text>
+            </View>
+          );
+        })()}
+      </View>
+    </Marker>
+  );
+}
 
 /* ── Countdown component for timer popups ── */
 function PopupCountdown({ expiresAt }: { expiresAt: string }) {
@@ -287,12 +319,15 @@ export default function HomeScreen() {
   const nav = useNavigation<Nav>();
   const route = useRoute<any>();
   const { userId, justFinishedSetup, clearSetupFlag } = useContext(AuthContext);
+  const { avatarUri } = useAvatar();
   const { t } = useI18n();
   const { colors, isDark } = useTheme();
   const st = useMemo(() => makeStyles(colors), [colors]);
   const mapRef = useRef<MapView>(null);
   const [activeVibe, setActiveVibe] = useState(0);
   const [joined, setJoined] = useState(false);
+  const [visibleNomadCount, setVisibleNomadCount] = useState<number | null>(null);
+  const [visibleNomadIds, setVisibleNomadIds] = useState<Set<string>>(new Set());
 
   // ── Welcome celebration overlay ──
   const [showWelcome, setShowWelcome] = useState(false);
@@ -347,10 +382,30 @@ export default function HomeScreen() {
   const [activeTimerCheckin, setActiveTimerCheckin] = useState<string | null>(null); // checkin id
   const [activeTimerChatId, setActiveTimerChatId] = useState<string | null>(null);
   const [showReplaceStatus, setShowReplaceStatus] = useState(false); // confirm replacing active status
+  const [timerBubbleCheckin, setTimerBubbleCheckin] = useState<CheckinWithProfile | null>(null);
+  /* ── פניני חוכמה — Wisdom state ── */
+  const [showWisdom, setShowWisdom] = useState(false);
+  const [wisdomCity, setWisdomCity] = useState('');
+  const [wisdomDistance, setWisdomDistance] = useState(0);
+  const [wisdomExistingIntent, setWisdomExistingIntent] = useState<WisdomIntent | null>(null);
+  const [wisdomPendingAction, setWisdomPendingAction] = useState<(() => void) | null>(null);
 
-  /* ── GPS: fetch once on mount, reuse everywhere ── */
+  /* ── GPS: fetch on mount + refresh every 30s for live accuracy ── */
   const [userLat, setUserLat] = useState<number | null>(null);
   const [userLng, setUserLng] = useState<number | null>(null);
+  const gpsInitDone = useRef(false);
+
+  const refreshGPS = useCallback(async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setUserLat(pos.coords.latitude);
+      setUserLng(pos.coords.longitude);
+    } catch (e) {
+      console.warn('[HomeScreen] GPS refresh error:', e);
+    }
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -363,15 +418,28 @@ export default function HomeScreen() {
           setUserLat(last.coords.latitude);
           setUserLng(last.coords.longitude);
         }
-        // 2) Then get fresh GPS — may take 1-3s but userLat is already set
+        // 2) Then get fresh GPS — may take 1-3s
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         setUserLat(pos.coords.latitude);
         setUserLng(pos.coords.longitude);
+        // 3) Zoom map to real location on first GPS fix
+        if (!gpsInitDone.current) {
+          gpsInitDone.current = true;
+          mapRef.current?.animateToRegion({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            latitudeDelta: 0.04,
+            longitudeDelta: 0.04,
+          }, 600);
+        }
       } catch (e) {
         console.warn('[HomeScreen] GPS error:', e);
       }
     })();
-  }, []);
+    // Refresh GPS every 30 seconds
+    const gpsInterval = setInterval(refreshGPS, 30_000);
+    return () => clearInterval(gpsInterval);
+  }, [refreshGPS]);
 
   /* ── Load recent cities on mount ── */
   useEffect(() => {
@@ -430,14 +498,39 @@ export default function HomeScreen() {
 
   // Real data from Supabase
   const { checkins, count: activeCount, loading: checkinsLoading, refetch: refetchCheckins, addOptimistic } = useActiveCheckins(currentCity.name, userId);
+
+  // Hot checkins — for pulse animation on pins with active conversations
+  const hotCheckins = useHotCheckins(currentCity.name);
+
+  /* ── Filter checkins by active vibe for clustering ── */
+  const filteredCheckins = useMemo(() => {
+    if (activeVibe === 0) return checkins;
+    const vibeKey = VIBES[activeVibe]?.catKey;
+    return vibeKey ? checkins.filter(c => c.category === vibeKey) : checkins;
+  }, [checkins, activeVibe]);
+
   const { profile: myProfile, refetch: refetchProfile } = useProfile(userId);
   const myName = myProfile?.display_name || myProfile?.full_name || myProfile?.username || 'You';
   const myInitials = myName.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase();
   const { toggle: toggleFollow, isFollowing } = useFollow(userId);
   /* ── Refetch profile every time screen gains focus (catches Settings changes) ── */
-  useFocusEffect(useCallback(() => { refetchProfile(); }, [refetchProfile]));
+  useFocusEffect(useCallback(() => { refetchProfile(); refetchCheckins(); }, [refetchProfile, refetchCheckins]));
 
-  const isSnoozed = (myProfile as any)?.snooze_mode === true;
+  const isSnoozed = myProfile?.show_on_map === false;
+
+  // Sync current city with user's profile city on load
+  useEffect(() => {
+    if (myProfile?.current_city) {
+      const match = CITIES.find(c => c.name.toLowerCase() === myProfile.current_city?.toLowerCase());
+      if (match && match.id !== currentCity.id) {
+        setCurrentCity(match);
+        mapRef.current?.animateToRegion({
+          latitude: match.lat, longitude: match.lng,
+          latitudeDelta: 0.08, longitudeDelta: 0.08,
+        }, 600);
+      }
+    }
+  }, [myProfile?.current_city]);
 
   /* ── Cloud overlay animation refs ── */
   const cloudLeftX  = useRef(new Animated.Value(0)).current;
@@ -490,10 +583,10 @@ export default function HomeScreen() {
         useNativeDriver: true,
       }),
     ]).start(async () => {
-      // After animation completes, update DB
+      // Wake up: make visible again
       await supabase.from('app_profiles').update({
-        snooze_mode: false,
         show_on_map: true,
+        snooze_mode: false,
       }).eq('user_id', userId);
       await supabase.from('app_checkins').update({ visibility: 'public' })
         .eq('user_id', userId).eq('is_active', true);
@@ -517,11 +610,33 @@ export default function HomeScreen() {
   };
 
   const handlePinTap = (checkin: CheckinWithProfile) => {
-    // Show event popup — user decides to join or not
     trackEvent(userId, 'tap_map_pin', 'checkin', checkin.id);
-    setPopupData(checkin);
-    setJoined(false);
-    setShowPopup(true);
+    const isTimer = (checkin as any).checkin_type === 'timer';
+    const isOwn = checkin.user_id === userId;
+
+    // For own timer pins: prefer live GPS so map focuses on current position
+    const lat = (isOwn && isTimer && userLat) ? userLat : (checkin.latitude ?? currentCity.lat);
+    const lng = (isOwn && isTimer && userLng) ? userLng : (checkin.longitude ?? currentCity.lng);
+
+    // Smooth zoom into the pin's area first
+    mapRef.current?.animateToRegion({
+      latitude: lat,
+      longitude: lng,
+      latitudeDelta: 0.008,
+      longitudeDelta: 0.008,
+    }, 400);
+
+    // After zoom animation completes → open the popup
+    setTimeout(() => {
+      if (isTimer) {
+        setTimerBubbleCheckin(prev => prev?.id === checkin.id ? null : checkin);
+      } else {
+        setTimerBubbleCheckin(null);
+        setPopupData(checkin);
+        setJoined(false);
+        setShowPopup(true);
+      }
+    }, 450);
   };
 
   const handleViewProfile = (userId: string) => {
@@ -532,7 +647,109 @@ export default function HomeScreen() {
     nav.navigate('Chat', { conversationId: userId, title: name, avatarColor: selectedNomad?.color, avatarText: selectedNomad?.initials });
   };
 
-  /* Join/Chat logic now handled inside ActivityDetailSheet */
+  /* ── פניני חוכמה — Wisdom-aware join wrapper ── */
+  const wisdomGate = async (
+    targetCity: string,
+    targetLat: number,
+    targetLng: number,
+    targetCountry: string | undefined,
+    action: () => void,
+  ) => {
+    if (!userId || !userLat || !userLng) {
+      console.log('[WISDOM] No location data, letting through');
+      action(); // no location data — let them through
+      return;
+    }
+    // Find the user's actual country from their profile city
+    const profileCity = myProfile?.current_city || '';
+    const profileCityMatch = CITIES.find(c => c.name.toLowerCase() === profileCity.toLowerCase());
+    const myCountry = profileCityMatch?.country || myProfile?.home_country || '';
+
+    console.log('[WISDOM] Gate fired:', { profileCity, myCountry, targetCity, targetCountry, userId: userId.slice(0, 8) });
+
+    const result = await wisdomCheck({
+      userId,
+      userLat,
+      userLng,
+      userCity: profileCity,
+      userCountry: myCountry,
+      targetCity,
+      targetLat,
+      targetLng,
+      targetCountry,
+    });
+
+    console.log('[WISDOM] Result:', result);
+
+    if (!result.shouldPrompt) {
+      action(); // close enough, has flight, or already declared
+      return;
+    }
+    // Show wisdom prompt
+    setWisdomCity(targetCity);
+    setWisdomDistance(result.distanceKm);
+    setWisdomExistingIntent(result.existingIntent);
+    setWisdomPendingAction(() => action);
+    setShowWisdom(true);
+    console.log('[WISDOM] Showing prompt for', targetCity);
+  };
+
+  const handleWisdomResponse = (intent: WisdomIntent) => {
+    if (!userId) return;
+    // Track the signal
+    trackWisdomSignal({
+      userId,
+      signalType: intent === 'flying_soon' ? 'travel_declared' : intent === 'planning' ? 'planning_declared' : 'just_looking',
+      city: wisdomCity,
+      userCity: myProfile?.current_city || 'Unknown',
+      distanceKm: wisdomDistance,
+      intent,
+    });
+    setShowWisdom(false);
+    if (intent === 'flying_soon' || intent === 'planning') {
+      // Let them through — they declared intent
+      wisdomPendingAction?.();
+    }
+    // 'just_looking' — don't execute the action, they're just browsing
+    setWisdomPendingAction(null);
+  };
+
+  /**
+   * Resolve the correct city name for a checkin based on actual GPS coordinates.
+   * If the checkin lat/lng is >50km from currentCity, auto-correct to the nearest
+   * CITIES entry or fall back to Nominatim reverse geocoding.
+   */
+  const resolveCheckinCity = async (lat: number | null | undefined, lng: number | null | undefined): Promise<string> => {
+    const checkinLat = lat ?? userLat ?? currentCity.lat;
+    const checkinLng = lng ?? userLng ?? currentCity.lng;
+    const distFromCurrent = haversineKm(checkinLat, checkinLng, currentCity.lat, currentCity.lng);
+    // If within 50km of currentCity, it's correct
+    if (distFromCurrent < 50) return currentCity.name;
+    // Try to find a closer CITIES entry
+    const nearest = findNearestCity(checkinLat, checkinLng, 50);
+    if (nearest) {
+      console.log(`[City Resolve] GPS is ${distFromCurrent.toFixed(0)}km from ${currentCity.name}, auto-corrected to ${nearest.name}`);
+      setCurrentCity(nearest);
+      return nearest.name;
+    }
+    // Fall back to Nominatim reverse geocoding
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${checkinLat}&lon=${checkinLng}&zoom=10&accept-language=en`,
+        { headers: { 'User-Agent': 'NomadsPeople/1.0' } },
+      );
+      const data = await res.json();
+      const addr = data.address || {};
+      const cityName = addr.city || addr.town || addr.village || addr.state || '';
+      if (cityName) {
+        console.log(`[City Resolve] GPS is ${distFromCurrent.toFixed(0)}km from ${currentCity.name}, Nominatim resolved to ${cityName}`);
+        return cityName;
+      }
+    } catch (e) {
+      console.warn('[City Resolve] Nominatim failed, using currentCity as fallback', e);
+    }
+    return currentCity.name;
+  };
 
   /* ── Quick Status publish handler ── */
   const handleQuickPublish = async (data: QuickActivityData) => {
@@ -551,10 +768,13 @@ export default function HomeScreen() {
       const durationMs = (data.durationMinutes || 60) * 60 * 1000;
       const expiresAt = new Date(Date.now() + durationMs).toISOString();
 
+      // Resolve correct city based on actual GPS (prevents wrong-city bug)
+      const resolvedCity = await resolveCheckinCity(data.latitude, data.longitude);
+
       // Insert new activity checkin — always public (user chose to post)
       const { data: newCheckin, error: insertErr } = await supabase.from('app_checkins').insert({
         user_id: userId,
-        city: currentCity.name,
+        city: resolvedCity,
         checkin_type: 'status',
         status_text: data.activityText,
         status_emoji: data.emoji,
@@ -584,7 +804,7 @@ export default function HomeScreen() {
         addOptimistic({
           id: newCheckin.id,
           user_id: userId,
-          city: currentCity.name,
+          city: resolvedCity,
           checkin_type: 'status',
           status_text: data.activityText,
           status_emoji: data.emoji,
@@ -626,7 +846,7 @@ export default function HomeScreen() {
       });
 
       // Close sheet + refresh (success popup now handled inside QuickStatusSheet)
-      trackEvent(userId, 'create_status', 'checkin', newCheckin?.id, { city: currentCity.name });
+      trackEvent(userId, 'create_status', 'checkin', newCheckin?.id, { city: resolvedCity });
       refetchCheckins();
     } catch (err) {
       console.error('Quick publish error:', err);
@@ -651,18 +871,21 @@ export default function HomeScreen() {
       const durationMs = data.durationMinutes * 60 * 1000;
       const expiresAt = new Date(Date.now() + durationMs).toISOString();
 
+      // Resolve correct city based on actual GPS (prevents wrong-city bug)
+      const resolvedTimerCity = await resolveCheckinCity(data.latitude, data.longitude);
+
       // Always public — user chose to post a timer
       const { data: newCheckin, error: insertErr } = await supabase.from('app_checkins').insert({
         user_id: userId,
-        city: currentCity.name,
+        city: resolvedTimerCity,
         checkin_type: 'timer',
         status_text: data.statusText,
         status_emoji: data.emoji,
         category: data.category,
         activity_text: data.statusText,
         location_name: data.locationName || currentCity.name,
-        latitude: data.latitude ?? currentCity.lat,
-        longitude: data.longitude ?? currentCity.lng,
+        latitude: data.latitude ?? userLat ?? currentCity.lat,
+        longitude: data.longitude ?? userLng ?? currentCity.lng,
         expires_at: expiresAt,
         is_flexible_time: false,
         is_open: true,
@@ -683,15 +906,15 @@ export default function HomeScreen() {
         addOptimistic({
           id: newCheckin.id,
           user_id: userId,
-          city: currentCity.name,
+          city: resolvedTimerCity,
           checkin_type: 'timer',
           status_text: data.statusText,
           status_emoji: data.emoji,
           category: data.category,
           activity_text: data.statusText,
           location_name: data.locationName || currentCity.name,
-          latitude: data.latitude ?? currentCity.lat,
-          longitude: data.longitude ?? currentCity.lng,
+          latitude: data.latitude ?? userLat ?? currentCity.lat,
+          longitude: data.longitude ?? userLng ?? currentCity.lng,
           expires_at: expiresAt,
           is_active: true,
           visibility: 'public',
@@ -728,7 +951,7 @@ export default function HomeScreen() {
       if (newCheckin?.id) setActiveTimerCheckin(newCheckin.id);
 
       // DON'T close the modal — success card stays visible, user dismisses it
-      trackEvent(userId, 'create_timer', 'checkin', newCheckin?.id, { city: currentCity.name });
+      trackEvent(userId, 'create_timer', 'checkin', newCheckin?.id, { city: resolvedTimerCity });
       refetchCheckins();
     } catch (err) {
       console.error('Timer publish error:', err);
@@ -831,26 +1054,46 @@ export default function HomeScreen() {
         ref={mapRef}
         style={st.map}
         initialRegion={INITIAL_REGION}
-        showsUserLocation={false}
+        showsUserLocation={true}
         showsCompass={false}
         showsMyLocationButton={false}
+        onPress={() => { if (timerBubbleCheckin) setTimerBubbleCheckin(null); }}
         // @ts-ignore — mapLanguage supported in react-native-maps 1.10+
         mapLanguage="en"
         customMapStyle={isDark ? DIM_MAP_STYLE : []}
         userInterfaceStyle={isDark ? 'dark' : 'light'}
         mapPadding={{ top: (headerH > 0 ? headerH : insets.top + s(36)) + s(30), left: 0, right: 0, bottom: s(40) }}
+        onRegionChangeComplete={(region) => {
+          // Collect checkins visible in current map region
+          const visible = filteredCheckins.filter(c => {
+            const lat = c.latitude ?? 0;
+            const lng = c.longitude ?? 0;
+            return (
+              lat >= region.latitude - region.latitudeDelta / 2 &&
+              lat <= region.latitude + region.latitudeDelta / 2 &&
+              lng >= region.longitude - region.longitudeDelta / 2 &&
+              lng <= region.longitude + region.longitudeDelta / 2
+            );
+          });
+          setVisibleNomadCount(visible.length);
+          setVisibleNomadIds(new Set(visible.map(c => c.user_id)));
+        }}
       >
-        {/* ── NOMAD MARKERS from Supabase (memoized) — hidden when snoozed ── */}
-        {!isSnoozed && (
-          <NomadMarkers
-            checkins={checkins}
-            activeVibe={activeVibe}
-            cityLat={currentCity.lat}
-            cityLng={currentCity.lng}
-            onPinTap={handlePinTap}
-          />
+        {/* ── ALL NOMAD MARKERS — show full density ── */}
+        {!isSnoozed && filteredCheckins.map((c, i) =>
+          buildNomadMarker(c, i, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins)
         )}
       </MapView>
+
+      {/* ── Waze-style timer bubble overlay ── */}
+      <TimerBubble
+        visible={!!timerBubbleCheckin}
+        checkin={timerBubbleCheckin as any}
+        creatorName={timerBubbleCheckin?.profile?.full_name || 'Nomad'}
+        creatorAvatarUrl={avatarUri((timerBubbleCheckin?.profile as any)?.avatar_url)}
+        mapRef={mapRef}
+        onClose={() => setTimerBubbleCheckin(null)}
+      />
 
       {/* ── SNOOZE CLOUD OVERLAY — Simpsons-style clouds covering the map ── */}
       {isSnoozed && (
@@ -876,13 +1119,13 @@ export default function HomeScreen() {
 
           {/* Center wake-up card */}
           <Animated.View style={[st.snoozeCard, { transform: [{ scale: cardScale }] }]}>
-            <Text style={st.snoozeCardEmoji}>😴</Text>
-            <Text style={st.snoozeCardTitle}>you're snoozed</Text>
+            <Text style={st.snoozeCardEmoji}>👻</Text>
+            <Text style={st.snoozeCardTitle}>{t('hidden.title')}</Text>
             <Text style={st.snoozeCardSub}>
-              nomads and activities are hidden{'\n'}while you rest
+              {t('hidden.subHome')}
             </Text>
             <TouchableOpacity style={st.wakeUpBtn} onPress={handleWakeUp} activeOpacity={0.75}>
-              <Text style={st.wakeUpBtnText}>wake up</Text>
+              <Text style={st.wakeUpBtnText}>{t('hidden.wakeUp')}</Text>
             </TouchableOpacity>
           </Animated.View>
         </Animated.View>
@@ -896,29 +1139,34 @@ export default function HomeScreen() {
             <NomadIcon name="bell" size={s(8)} color={colors.dark} strokeWidth={1.8} />
           </TouchableOpacity>
         </View>
-        {/* ── City Search Bar ── */}
-        <View style={st.searchBar}>
-          <NomadIcon name="search" size={18} color="#aaa" strokeWidth={1.6} />
-          <TextInput
-            ref={searchInputRef}
-            style={st.searchInput}
-            placeholder={currentCity.name ? `${currentCity.name} — search any city...` : 'Search any city or country...'}
-            placeholderTextColor="#AAA"
-            value={cityQuery}
-            onChangeText={setCityQuery}
-            onFocus={() => setSearchFocused(true)}
-            returnKeyType="search"
-          />
-          {searchFocused && (
-            <TouchableOpacity onPress={closeSearch}>
-              <NomadIcon name="close" size={18} color="#888" strokeWidth={1.8} />
-            </TouchableOpacity>
-          )}
-          {!searchFocused && !checkinsLoading && (
-            <View style={st.searchBadge}>
-              <View style={st.searchBadgeDot} />
-              <Text style={st.searchBadgeTxt}>{activeCount}</Text>
-            </View>
+        {/* ── City Search Bar (compact) + City Label ── */}
+        <View style={st.searchRow}>
+          <View style={[st.searchBar, searchFocused && st.searchBarExpanded]}>
+            <NomadIcon name="search" size={16} color="#aaa" strokeWidth={1.6} />
+            <TextInput
+              ref={searchInputRef}
+              style={st.searchInput}
+              placeholder="search city..."
+              placeholderTextColor="#AAA"
+              value={cityQuery}
+              onChangeText={setCityQuery}
+              onFocus={() => setSearchFocused(true)}
+              returnKeyType="search"
+            />
+            {searchFocused && (
+              <TouchableOpacity onPress={closeSearch}>
+                <NomadIcon name="close" size={18} color="#888" strokeWidth={1.8} />
+              </TouchableOpacity>
+            )}
+            {!searchFocused && !checkinsLoading && (
+              <View style={st.searchBadge}>
+                <View style={st.searchBadgeDot} />
+                <Text style={st.searchBadgeTxt}>{activeCount}</Text>
+              </View>
+            )}
+          </View>
+          {!searchFocused && (
+            <Text style={st.searchCityLabel} numberOfLines={1}>{currentCity.flag} {currentCity.name}</Text>
           )}
         </View>
 
@@ -980,7 +1228,7 @@ export default function HomeScreen() {
         horizontal
         showsHorizontalScrollIndicator={false}
         style={[st.vibeBar, { top: vibeTop }]}
-        contentContainerStyle={{ paddingHorizontal: s(5), gap: s(3.5), alignItems: 'center' }}
+        contentContainerStyle={{ paddingHorizontal: s(10), gap: s(3.5), alignItems: 'center' }}
       >
         {VIBES.map((v, i) => (
           <TouchableOpacity
@@ -990,8 +1238,8 @@ export default function HomeScreen() {
             activeOpacity={0.7}
           >
             {v.icon && (
-              <View style={{ marginRight: s(1) }}>
-                <NomadIcon name={v.icon} size={s(4.5)} strokeWidth={1.6} color={activeVibe === i ? 'white' : (v.color || colors.textSec)} />
+              <View style={{ marginRight: s(0.5) }}>
+                <NomadIcon name={v.icon} size={s(6.5)} strokeWidth={1.8} color={activeVibe === i ? 'white' : (v.color || colors.textSec)} />
               </View>
             )}
             <Text style={[st.chipTxt, activeVibe === i && st.chipTxtOn]}>{v.label}</Text>
@@ -999,21 +1247,8 @@ export default function HomeScreen() {
         ))}
       </ScrollView>
 
-      {/* ── CITY LABEL + NOMADS BUBBLE — floats above map ── */}
-      <View style={[st.cityLabel, { top: cityTop }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: s(3) }}>
-          <Text style={st.cityName}>{currentCity.flag} {currentCity.name}</Text>
-          {userLat && userLng && (() => {
-            const distKm = haversineKm(userLat, userLng, currentCity.lat, currentCity.lng);
-            const unit = (myProfile as any)?.distance_unit === 'mi' ? 'mi' as const : 'km' as const;
-            return distKm > 5 ? (
-              <View style={st.distBadge}>
-                <NomadIcon name="navigation" size={s(4)} color={colors.accent} strokeWidth={1.4} />
-                <Text style={st.distBadgeText}>{formatDistance(distKm, unit)}</Text>
-              </View>
-            ) : null;
-          })()}
-        </View>
+      {/* ── NOMADS BUBBLE — floats above map ── */}
+      <View style={[st.nomadsBubbleWrap, { top: cityTop }]}>
         <TouchableOpacity
           style={st.nomadsBubble}
           activeOpacity={0.8}
@@ -1024,7 +1259,7 @@ export default function HomeScreen() {
             {nomadsInCity.slice(0, 3).map((n, i) => (
               <View key={n.user_id} style={[st.nomadsMiniAv, { marginLeft: i > 0 ? -s(3) : 0, zIndex: 3 - i }]}>
                 {n.avatar_url ? (
-                  <Image source={{ uri: n.avatar_url }} style={st.nomadsMiniAvImg} />
+                  <Image source={{ uri: avatarUri(n.avatar_url) }} style={st.nomadsMiniAvImg} />
                 ) : (
                   <Text style={st.nomadsMiniAvTxt}>
                     {(n.full_name || '?').charAt(0).toUpperCase()}
@@ -1034,20 +1269,33 @@ export default function HomeScreen() {
             ))}
           </View>
           <View style={st.nomadsBubbleTextCol}>
-            <Text style={st.nomadsBubbleCount}>{nomadsLoading ? '…' : nomadsCount}</Text>
+            <Text style={st.nomadsBubbleCount}>{nomadsLoading ? '…' : (visibleNomadCount ?? nomadsCount)}</Text>
             <Text style={st.nomadsBubbleLabel}>{t('home.nomadsHere')}</Text>
           </View>
           <NomadIcon name="forward" size={s(6)} color="#1A1A1A" strokeWidth={1.8} />
         </TouchableOpacity>
       </View>
 
-      {/* ── Activity Detail Sheet — shown after tapping a pin ── */}
+      {/* Timer bubble is now rendered inside the Marker (Waze-style) */}
+
+      {/* ── Activity Detail Sheet — shown after tapping a status pin ── */}
       <ActivityDetailSheet
         visible={showPopup}
         checkin={popupData}
         creatorName={(popupData as any)?.profile?.full_name || 'nomad'}
-        creatorAvatarUrl={(popupData as any)?.profile?.avatar_url}
-        onClose={() => { setShowPopup(false); setJoined(false); }}
+        creatorAvatarUrl={avatarUri((popupData as any)?.profile?.avatar_url)}
+        onClose={() => { setShowPopup(false); }}
+        onBeforeJoin={(checkin, doJoin) => {
+          // WisdomPrompt uses a native Modal — renders on top without closing the sheet.
+          // Keep the popup open so after join it transitions to Chat/Leave buttons.
+          wisdomGate(
+            checkin.city || currentCity.name,
+            checkin.latitude || currentCity.lat,
+            checkin.longitude || currentCity.lng,
+            currentCity.country,
+            doJoin,
+          );
+        }}
       />
 
       {/* ── FAB Column — bottom to top: Timer → Status → Location (hidden when snoozed) ── */}
@@ -1087,7 +1335,7 @@ export default function HomeScreen() {
               }, () => setShowTimer(true));
           }}
         >
-          <NomadIcon name="timer" size={s(13)} color="#FF6B6B" strokeWidth={1.8} />
+          <NomadIcon name="timer" size={s(10)} color="#FF6B6B" strokeWidth={1.8} />
         </TouchableOpacity>
 
         {/* Status — green square */}
@@ -1114,7 +1362,7 @@ export default function HomeScreen() {
               }, () => setShowQuickStatus(true));
           }}
         >
-          <NomadIcon name="plus" size={s(13)} color="#4ADE80" strokeWidth={2} />
+          <NomadIcon name="plus" size={s(10)} color="#4ADE80" strokeWidth={2} />
         </TouchableOpacity>
 
         {/* My Location — white square (top) */}
@@ -1162,7 +1410,7 @@ export default function HomeScreen() {
             }
           }}
         >
-          <NomadIcon name="crosshair" size={s(13)} color="#555" strokeWidth={1.8} />
+          <NomadIcon name="crosshair" size={s(10)} color="#555" strokeWidth={1.8} />
         </TouchableOpacity>
       </View>}
 
@@ -1179,23 +1427,39 @@ export default function HomeScreen() {
         isFollowing={selectedNomad ? isFollowing(selectedNomad.id) : false}
         onJoinStatus={async (statusUserId, statusText) => {
           if (!userId) return;
+          const doJoin = async () => {
+            setShowProfile(false);
+            const { conversationId, error } = await createOrJoinStatusChat(userId, statusUserId, statusText);
+            if (conversationId && !error) {
+              nav.navigate('Chat', {
+                conversationId,
+                title: statusText || 'Activity',
+                avatarColor: colors.accent,
+                avatarText: (statusText || 'ACT').slice(0, 3).toUpperCase(),
+                isGroup: true,
+              });
+            }
+          };
+          // Close ProfileCard first so WisdomPrompt can render on top (no nested Modals)
           setShowProfile(false);
-          const { conversationId, error } = await createOrJoinStatusChat(userId, statusUserId, statusText);
-          if (conversationId && !error) {
-            nav.navigate('Chat', {
-              conversationId,
-              title: statusText || 'Activity',
-              avatarColor: colors.accent,
-              avatarText: (statusText || 'ACT').slice(0, 3).toUpperCase(),
-              isGroup: true,
-            });
-          }
+          // Wisdom gate — check if user is far from this city
+          wisdomGate(
+            currentCity.name,
+            currentCity.lat,
+            currentCity.lng,
+            currentCity.country,
+            doJoin,
+          );
         }}
       />
       <NotificationsSheet
         visible={showNotifs}
         onClose={() => setShowNotifs(false)}
         userId={userId}
+        onNavigate={(screen, params) => {
+          setShowNotifs(false);
+          setTimeout(() => nav.navigate(screen as any, params as any), 200);
+        }}
       />
       {/* CityPickerSheet removed — replaced by inline search */}
 
@@ -1204,7 +1468,9 @@ export default function HomeScreen() {
         visible={showNomadsList}
         onClose={() => setShowNomadsList(false)}
         nomads={nomadsInCity}
+        nearbyIds={visibleNomadIds}
         cityName={currentCity.name}
+        bubbleTop={cityTop}
         onViewProfile={(uid, name) => {
           setShowNomadsList(false);
           setTimeout(() => nav.navigate('UserProfile', { userId: uid, name }), 200);
@@ -1235,6 +1501,17 @@ export default function HomeScreen() {
         userLat={userLat}
         userLng={userLng}
         publishing={timerPublishing}
+      />
+
+      {/* ── פניני חוכמה — Wisdom Prompt ── */}
+      <WisdomPrompt
+        visible={showWisdom}
+        cityName={wisdomCity}
+        distanceKm={wisdomDistance}
+        distanceUnit={(myProfile as any)?.distance_unit || 'km'}
+        existingIntent={wisdomExistingIntent}
+        onResponse={handleWisdomResponse}
+        onCancel={() => { setShowWisdom(false); setWisdomPendingAction(null); }}
       />
 
       {/* ── Cancel Active Timer Popup ── */}
@@ -1394,9 +1671,9 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   /* ── Map Pins — NomadsPeople bubble design ── */
   pinWrap: { alignItems: 'center' },
 
-  /* Outer ring = the colored border around the avatar */
+  /* Outer ring = the colored border around the avatar (compact: -15%) */
   avatarRing: {
-    width: s(32), height: s(32), borderRadius: s(16),
+    width: s(27), height: s(27), borderRadius: s(13.5),
     borderWidth: 2.5,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: c.card,
@@ -1404,25 +1681,25 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     shadowOpacity: 0.18, shadowRadius: s(4), elevation: 5,
   },
 
-  /* Inner avatar circle */
+  /* Inner avatar circle (compact: -15%) */
   avatar: {
-    width: s(26), height: s(26), borderRadius: s(13),
+    width: s(22), height: s(22), borderRadius: s(11),
     alignItems: 'center', justifyContent: 'center',
     overflow: 'hidden' as const,
   },
-  avatarTxt: { color: c.white, fontSize: s(7.5), fontWeight: FW.bold },
-  avatarImg: { width: s(26), height: s(26), borderRadius: s(13) },
+  avatarTxt: { color: c.white, fontSize: s(6.5), fontWeight: FW.bold },
+  avatarImg: { width: s(22), height: s(22), borderRadius: s(11) },
 
-  /* Emoji badge — sits on top-right of the ring */
+  /* Emoji badge — sits on top-right of the ring (enlarged: +20%) */
   emojiBadge: {
-    position: 'absolute', top: -s(3), right: -s(3),
-    width: s(14), height: s(14), borderRadius: s(7),
+    position: 'absolute', top: -s(3.5), right: -s(3.5),
+    width: s(17), height: s(17), borderRadius: s(8.5),
     backgroundColor: c.card, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: c.borderSoft,
     shadowColor: '#000', shadowOffset: { width: 0, height: s(0.5) },
     shadowOpacity: 0.12, shadowRadius: s(2), elevation: 3,
   },
-  emojiText: { fontSize: s(7.5) },
+  emojiText: { fontSize: s(9) },
 
   /* Name label under bubble */
   nameTag: {
@@ -1496,13 +1773,27 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   },
 
   /* Search */
+  searchRow: {
+    flexDirection: 'row', alignItems: 'center', gap: s(3),
+  },
   searchBar: {
-    backgroundColor: c.card, borderRadius: 16,
-    height: 52,
-    paddingHorizontal: 16,
-    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: c.card, borderRadius: 14,
+    height: s(18),
+    paddingHorizontal: s(5),
+    flexDirection: 'row', alignItems: 'center', gap: s(3),
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12, shadowRadius: 8, elevation: 5,
+    shadowOpacity: 0.1, shadowRadius: 6, elevation: 4,
+    flex: 0,
+    width: '48%',
+  },
+  searchBarExpanded: {
+    flex: 1,
+    width: '100%',
+  },
+  searchCityLabel: {
+    fontSize: s(8.5), fontWeight: FW.extra, color: c.dark,
+    flex: 1,
+    letterSpacing: -0.3,
   },
   searchInput: {
     flex: 1, fontSize: 15, fontWeight: '500' as const, color: c.dark, padding: 0,
@@ -1549,23 +1840,8 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   chipTxt: { fontSize: s(6), fontWeight: FW.semi, color: c.textSec },
   chipTxtOn: { color: 'white' },
 
-  /* City label + nomads bubble — floats above map */
-  cityLabel: { position: 'absolute', left: s(10), zIndex: 8 },
-  cityName: { fontSize: s(10), fontWeight: FW.extra, color: c.dark, marginBottom: s(3) },
-  distBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: s(1.5),
-    backgroundColor: c.accentLight,
-    borderRadius: s(5),
-    paddingVertical: s(1.5),
-    paddingHorizontal: s(4),
-  },
-  distBadgeText: {
-    fontSize: s(4.5),
-    fontWeight: FW.medium,
-    color: c.accent,
-  },
+  /* Nomads bubble wrapper — floats above map */
+  nomadsBubbleWrap: { position: 'absolute', left: s(10), zIndex: 8 },
 
   /* Nomads bubble — tappable, impressive */
   nomadsBubble: {
@@ -1592,26 +1868,29 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   /* FAB column — 3 buttons stacked vertically, close to bottom tab bar */
   fabColumn: {
     position: 'absolute', zIndex: 12,
-    bottom: 56, right: 12,
+    bottom: s(25), right: s(5),
     flexDirection: 'column-reverse', alignItems: 'center', gap: s(4),
   },
   fabLocationBtn: {
-    width: s(28), height: s(28), borderRadius: s(14),
-    backgroundColor: c.card,
+    width: s(24), height: s(24), borderRadius: s(7),
+    backgroundColor: '#F5F3EF',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2.5, borderColor: c.borderSoft,
+    borderWidth: 1.5, borderColor: c.borderSoft,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2,
   },
   fabBubbleGreen: {
-    width: s(28), height: s(28), borderRadius: s(14),
-    backgroundColor: c.card,
-    borderWidth: 2.5, borderColor: '#4ADE80',
+    width: s(24), height: s(24), borderRadius: s(7),
+    backgroundColor: '#F5F3EF',
+    borderWidth: 1.5, borderColor: '#4ADE80',
     alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2,
   },
   fabBubbleRed: {
-    width: s(28), height: s(28), borderRadius: s(14),
-    backgroundColor: c.card,
-    borderWidth: 2.5, borderColor: '#FF6B6B',
+    width: s(24), height: s(24), borderRadius: s(7),
+    backgroundColor: '#F5F3EF',
+    borderWidth: 1.5, borderColor: '#FF6B6B',
     alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2,
   },
 
   /* Popup — only shown on group pin tap */
