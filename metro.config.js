@@ -14,6 +14,13 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       type: 'sourceFile',
     };
   }
+  // Web-only: stub react-native-maps (native-only package that crashes the web bundler)
+  if (platform === 'web' && moduleName === 'react-native-maps') {
+    return {
+      filePath: path.resolve(__dirname, 'react-native-maps-web-mock.js'),
+      type: 'sourceFile',
+    };
+  }
   // Fall back to default resolution
   if (originalResolveRequest) {
     return originalResolveRequest(context, moduleName, platform);

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>NomadsPeople</title>
+    <script>
+      // Dev preview: on a wide desktop window, bounce to the phone-frame wrapper.
+      // Inside the iframe (window.self !== window.top) the app loads normally
+      // and reads innerWidth = 390 so scaling matches a real iPhone.
+      if (window.self === window.top && window.innerWidth >= 500) {
+        window.location.replace('/frame.html');
+      }
+    </script>
+    <style id="expo-reset">
+      html, body { height: 100%; margin: 0; padding: 0; }
+      body { overflow: hidden; }
+      #root { display: flex; flex: 1; height: 100%; width: 100%; }
+    </style>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
