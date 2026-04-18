@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Waze Bubble Mockup</title>
+<style>
+  body {
+    /* Fake map background */
+    background: #e8e4d8;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  .bubble-unit {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* No gaps — everything connected */
+  }
+
+  /* Avatar circle — sits on top, overlaps into card */
+  .avatar-wrap {
+    z-index: 2;
+    margin-bottom: -20px; /* half of avatar pushes INTO the card */
+  }
+  .avatar {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    border: 3px solid #fff;
+    background: #2A9D8F;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+  }
+
+  /* Card — wide short rectangle */
+  .card {
+    background: #fff;
+    border-radius: 18px;
+    padding: 28px 24px 12px 24px; /* extra top for avatar overlap */
+    text-align: center;
+    width: 240px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.10);
+    z-index: 1;
+  }
+  .card .name {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin: 0 0 2px 0;
+  }
+  .card .info {
+    font-size: 13px;
+    color: #666;
+    margin: 0 0 1px 0;
+    line-height: 1.3;
+  }
+  .card .timer {
+    font-size: 13px;
+    color: #999;
+    margin: 2px 0 0 0;
+  }
+
+  /* Spike — triangle pointing down */
+  .spike {
+    width: 0;
+    height: 0;
+    border-left: 10px solid transparent;
+    border-right: 10px solid transparent;
+    border-top: 10px solid #fff;
+    z-index: 1;
+    margin-top: -1px; /* seamless */
+  }
+</style>
+</head>
+<body>
+
+<div class="bubble-unit">
+  <div class="avatar-wrap">
+    <div class="avatar">BP</div>
+  </div>
+  <div class="card">
+    <p class="name">Barak</p>
+    <p class="info">☕ Coffee at Rothschild</p>
+    <p class="timer">⏱ 23:45</p>
+  </div>
+  <div class="spike"></div>
+</div>
+
+</body>
+</html>

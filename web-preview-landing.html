@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NomadsPeople — Find Your People, Anywhere</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', -apple-system, sans-serif; color: #1A1A1A; background: #FAFAF8; }
+
+    /* Nav */
+    nav { position: fixed; top: 0; left: 0; right: 0; background: rgba(250,250,248,0.9); backdrop-filter: blur(20px); z-index: 100; border-bottom: 1px solid #eee; }
+    .nav-inner { max-width: 1100px; margin: 0 auto; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+    .logo { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; color: #1A1A1A; text-decoration: none; }
+    .nav-links { display: flex; align-items: center; gap: 24px; }
+    .nav-links a { color: #666; text-decoration: none; font-size: 14px; font-weight: 500; }
+    .nav-btn { background: #1A1A1A !important; color: #fff !important; padding: 8px 20px; border-radius: 24px; font-weight: 600 !important; }
+
+    /* Hero */
+    .hero { max-width: 1100px; margin: 0 auto; padding: 140px 24px 80px; display: flex; align-items: center; gap: 60px; }
+    .hero-content { flex: 1; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; background: #FFF0EE; color: #E8614D; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 24px; }
+    .hero h1 { font-size: 56px; font-weight: 800; line-height: 1.1; letter-spacing: -1.5px; margin-bottom: 20px; }
+    .hero h1 span { color: #E8614D; }
+    .hero-sub { font-size: 18px; color: #666; line-height: 1.6; max-width: 480px; margin-bottom: 32px; }
+    .hero-ctas { display: flex; gap: 16px; margin-bottom: 48px; }
+    .cta-primary { display: inline-flex; align-items: center; gap: 8px; background: #E8614D; color: #fff; padding: 14px 28px; border-radius: 28px; font-size: 16px; font-weight: 700; text-decoration: none; }
+    .cta-secondary { display: inline-flex; align-items: center; gap: 6px; color: #1A1A1A; padding: 14px 20px; font-size: 16px; font-weight: 600; text-decoration: none; }
+    .hero-stats { display: flex; align-items: center; gap: 32px; }
+    .stat { display: flex; flex-direction: column; align-items: center; }
+    .stat-num { font-size: 28px; font-weight: 800; }
+    .stat-label { font-size: 13px; color: #999; font-weight: 500; margin-top: 2px; }
+    .stat-div { width: 1px; height: 40px; background: #ddd; }
+
+    /* Phone */
+    .hero-phone { flex: 0 0 320px; }
+    .phone-mockup { width: 280px; height: 500px; background: #fff; border-radius: 36px; border: 8px solid #1A1A1A; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+    .phone-screen { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(180deg, #f8f8f6 0%, #fff 100%); }
+    .fake-pins { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+    .fake-pin { background: #FFF0EE; color: #E8614D; padding: 6px 12px; border-radius: 12px; font-size: 13px; font-weight: 600; }
+
+    /* Features */
+    .features { max-width: 1100px; margin: 0 auto; padding: 80px 24px; }
+    .section-title { font-size: 36px; font-weight: 800; text-align: center; margin-bottom: 12px; letter-spacing: -0.5px; }
+    .section-sub { font-size: 16px; color: #888; text-align: center; margin-bottom: 48px; }
+    .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .feature-card { background: #fff; border-radius: 16px; padding: 28px; border: 1px solid #eee; }
+    .feature-icon { width: 48px; height: 48px; border-radius: 12px; background: #FFF0EE; color: #E8614D; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; font-size: 22px; }
+    .feature-card h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .feature-card p { font-size: 14px; color: #666; line-height: 1.6; }
+
+    /* Download */
+    .download { padding: 80px 24px; background: #1A1A1A; }
+    .download-inner { max-width: 600px; margin: 0 auto; text-align: center; }
+    .download h2 { font-size: 36px; font-weight: 800; color: #fff; margin-bottom: 12px; letter-spacing: -0.5px; }
+    .download-sub { font-size: 16px; color: #aaa; margin-bottom: 32px; }
+    .download-btns { display: flex; justify-content: center; gap: 16px; }
+    .store-btn { display: flex; align-items: center; gap: 10px; background: #333; color: #fff; padding: 12px 24px; border-radius: 12px; text-decoration: none; border: 1px solid #555; }
+    .store-btn .small { font-size: 10px; opacity: 0.8; }
+    .store-btn .big { font-size: 16px; font-weight: 700; }
+
+    /* Footer */
+    footer { padding: 32px 24px; border-top: 1px solid #eee; }
+    .footer-inner { max-width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
+    .footer-logo { font-size: 16px; font-weight: 800; letter-spacing: -0.5px; color: #999; }
+    .footer-links { display: flex; gap: 20px; }
+    .footer-links a { color: #999; text-decoration: none; font-size: 13px; }
+    .footer-copy { font-size: 13px; color: #ccc; }
+
+    @media (max-width: 768px) {
+      .hero { flex-direction: column; padding: 100px 24px 40px; gap: 40px; }
+      .hero h1 { font-size: 36px; }
+      .hero-phone { flex: none; }
+      .feature-grid { grid-template-columns: 1fr; }
+      .download-btns { flex-direction: column; align-items: center; }
+      .footer-inner { flex-direction: column; gap: 16px; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Nav -->
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="logo">nomadspeople</a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#download">Community</a>
+        <a href="#download" class="nav-btn">Get the App</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-content">
+      <div class="badge">&#9992; The social map for nomads</div>
+      <h1>Find your people,<br><span>anywhere.</span></h1>
+      <p class="hero-sub">The social map for digital nomads. See who's around you, join spontaneous meetups, and build real connections on the road.</p>
+      <div class="hero-ctas">
+        <a href="#download" class="cta-primary">&#11015; Download Free</a>
+        <a href="#features" class="cta-secondary">Learn More &rarr;</a>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><span class="stat-num">19+</span><span class="stat-label">Nomads</span></div>
+        <div class="stat-div"></div>
+        <div class="stat"><span class="stat-num">5+</span><span class="stat-label">Active Now</span></div>
+        <div class="stat-div"></div>
+        <div class="stat"><span class="stat-num">5</span><span class="stat-label">Cities</span></div>
+      </div>
+    </div>
+    <div class="hero-phone">
+      <div class="phone-mockup">
+        <div class="phone-screen">
+          <div style="font-size:48px; margin-bottom:12px">&#x1F5FA;</div>
+          <p style="color:#666; font-size:14px">Live Map</p>
+          <div class="fake-pins">
+            <span class="fake-pin">&#x1F4CD; Tel Aviv</span>
+            <span class="fake-pin">&#x1F4CD; Bangkok</span>
+            <span class="fake-pin">&#x1F4CD; Canggu</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features" class="features">
+    <h2 class="section-title">Why Nomads Love Us</h2>
+    <p class="section-sub">Built by nomads, for nomads. Every feature solves a real problem.</p>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-icon">&#x1F4CD;</div>
+        <h3>Live Map</h3>
+        <p>See who is around you right now. Real people, real locations, real-time.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x1F465;</div>
+        <h3>Spontaneous Groups</h3>
+        <p>Someone nearby wants coffee? Join with one tap. No planning needed.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x1F4AC;</div>
+        <h3>Instant Chat</h3>
+        <p>Join a group and start chatting immediately. Groups auto-expire, keeping things fresh.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x1F30D;</div>
+        <h3>City Intelligence</h3>
+        <p>Know where the nomads are before you fly. Real-time city data from the community.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x26A1;</div>
+        <h3>Smart Matching</h3>
+        <p>We learn who you want to meet and surface the right people at the right time.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">&#x1F6E1;</div>
+        <h3>Privacy First</h3>
+        <p>Go invisible anytime. Control who sees you, when, and where. Your data stays yours.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Download CTA -->
+  <section id="download" class="download">
+    <div class="download-inner">
+      <h2>Ready to find your people?</h2>
+      <p class="download-sub">Join the community of digital nomads who stopped traveling alone.</p>
+      <div class="download-btns">
+        <a href="#" class="store-btn">
+          <span style="font-size:24px">&#x1F34E;</span>
+          <div><div class="small">Download on the</div><div class="big">App Store</div></div>
+        </a>
+        <a href="#" class="store-btn">
+          <span style="font-size:24px">&#x25B6;&#xFE0F;</span>
+          <div><div class="small">Get it on</div><div class="big">Google Play</div></div>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-inner">
+      <span class="footer-logo">nomadspeople</span>
+      <div class="footer-links">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/delete-account">Delete Account</a>
+        <a href="mailto:nomadspeople1@gmail.com">Contact</a>
+      </div>
+      <span class="footer-copy">&copy; 2026 NomadsPeople</span>
+    </div>
+  </footer>
+</body>
+</html>

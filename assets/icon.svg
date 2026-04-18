@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="bg">
+      <rect width="1024" height="1024" rx="180"/>
+    </clipPath>
+    <!-- Long shadow: a polygon stretching from the N to the bottom-right corner -->
+    <linearGradient id="shadowFade" x1="0" y1="0" x2="0.7" y2="0.7">
+      <stop offset="0%" stop-color="#000" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.0"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Coral background -->
+  <rect width="1024" height="1024" rx="180" fill="#E8614D"/>
+  
+  <!-- Long flat shadow clipped to background -->
+  <g clip-path="url(#bg)">
+    <!-- Shadow: each stroke of the N casts a shadow to bottom-right at 45deg -->
+    <!-- Left vertical: (340,300)-(340,724) -> shadow polygon -->
+    <polygon points="340,724 340,300 1064,1024 1064,1448" fill="url(#shadowFade)"/>
+    <!-- Diagonal: (340,300)-(684,724) -> shadow polygon -->
+    <polygon points="684,724 340,300 1064,1024 1408,1448" fill="url(#shadowFade)"/>
+    <!-- Right vertical: (684,300)-(684,724) -> shadow polygon -->
+    <polygon points="684,724 684,300 1408,1024 1408,1448" fill="url(#shadowFade)"/>
+  </g>
+  
+  <!-- The N letter - white rounded strokes -->
+  <g fill="none" stroke="white" stroke-width="52" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="340" y1="300" x2="340" y2="724"/>
+    <line x1="684" y1="300" x2="684" y2="724"/>
+    <line x1="340" y1="300" x2="684" y2="724"/>
+  </g>
+  
+  <!-- Pin circle detail on diagonal -->
+  <circle cx="598" cy="408" r="28" fill="white"/>
+  <circle cx="598" cy="408" r="12" fill="#E8614D"/>
+</svg>
