@@ -193,13 +193,27 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
     if (step === 3) {
       const age = getAge();
       if (age < 18) {
-        Alert.alert('age requirement', 'you must be at least 18 years old to join nomadspeople.');
+        // Alert.alert with buttons doesn't work on web — fall back to window.alert
+        if (Platform.OS === 'web') {
+          window.alert('you must be at least 18 years old to join nomadspeople.');
+        } else {
+          Alert.alert('age requirement', 'you must be at least 18 years old to join nomadspeople.');
+        }
         return;
       }
       if (!ageConfirmed) {
+        const confirmMessage = `you entered ${birthDay} ${MONTHS[birthMonth - 1]} ${birthYear} (age ${age}). is this your real date of birth?\n\nthis cannot be changed later.`;
+        if (Platform.OS === 'web') {
+          // window.confirm works on web; Alert.alert with buttons does not
+          if (window.confirm(confirmMessage)) {
+            setAgeConfirmed(true);
+            animateTransition(step + 1);
+          }
+          return;
+        }
         Alert.alert(
           'confirm your age',
-          `you entered ${birthDay} ${MONTHS[birthMonth - 1]} ${birthYear} (age ${age}). is this your real date of birth?\n\nthis cannot be changed later.`,
+          confirmMessage,
           [
             { text: 'edit', style: 'cancel' },
             { text: 'confirm', onPress: () => { setAgeConfirmed(true); animateTransition(step + 1); } },
