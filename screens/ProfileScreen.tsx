@@ -431,10 +431,14 @@ export default function ProfileScreen() {
   const [editCheckin, setEditCheckin] = useState<any>(null);
   const [editPrivate, setEditPrivate] = useState(false);
   const [editMuted, setEditMuted] = useState(false);
-  // Inline title edit (replaces the cross-platform-broken Alert.prompt)
+  // Inline title edit — stages into `stagedChanges` below, does not write.
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
-  const [savingTitle, setSavingTitle] = useState(false);
+  // Staged changes buffer — all fields edited in the Activity Info modal
+  // accumulate here until the user taps the floating Save button. Keys
+  // correspond 1:1 to app_checkins columns. Empty object = no pending work.
+  const [stagedChanges, setStagedChanges] = useState<any>({});
+  const [savingAll, setSavingAll] = useState(false);
 
   // Inline pickers for Activity Info editing
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -706,6 +710,90 @@ export default function ProfileScreen() {
       .from('app_profiles')
       .update({ visited_places: updated })
       .eq('user_id', profileUserId);
+    refetch();
+  };
+
+  /* ─── Activity Info: resolve effective values (staged ?? original) ─── */
+  const effective = (field: string) => {
+    if (stagedChanges[field] !== undefined) return stagedChanges[field];
+    return editCheckin?.[field];
+  };
+  const hasStagedChanges = Object.keys(stagedChanges).length > 0;
+
+  /* ─── Activity Info: commit all staged changes + post system messages ─── */
+  const handleSaveAllActivityChanges = async () => {
+    if (!editCheckin || !hasStagedChanges || savingAll) return;
+    setSavingAll(true);
+
+    // 1. Write all staged fields to app_checkins in one round trip.
+    const { error } = await supabase
+      .from('app_checkins')
+      .update(stagedChanges)
+      .eq('id', editCheckin.id);
+    if (error) {
+      Alert.alert('Save failed', error.message);
+      setSavingAll(false);
+      return;
+    }
+
+    // 2. If the title changed, also rename the chat conversation so members
+    //    see the new name in their chat list (not just inside the event).
+    if (stagedChanges.activity_text !== undefined) {
+      try {
+        const { data: conv } = await supabase
+          .from('app_conversations')
+          .select('id')
+          .eq('checkin_id', editCheckin.id)
+          .maybeSingle();
+        if (conv?.id) {
+          await supabase
+            .from('app_conversations')
+            .update({ name: stagedChanges.activity_text, activity_text: stagedChanges.activity_text })
+            .eq('id', conv.id);
+        }
+      } catch (e) {
+        console.warn('[ActivityInfo] conversation rename failed:', e);
+      }
+    }
+
+    // 3. Post one system message per changed field so everyone in the chat
+    //    actually sees what the owner did. Closed loop — required by the
+    //    logic skill. Sequence matters for readability.
+    if (stagedChanges.activity_text !== undefined) {
+      await postEventSystemMessage(editCheckin.id, eventSystemMsg.titleChanged(stagedChanges.activity_text));
+    }
+    if (stagedChanges.location_name !== undefined) {
+      await postEventSystemMessage(editCheckin.id, eventSystemMsg.locationChanged(stagedChanges.location_name));
+    }
+    if (stagedChanges.scheduled_for !== undefined) {
+      // Date OR time — detect which by comparing the calendar day.
+      const oldIso = editCheckin.scheduled_for;
+      const newIso = stagedChanges.scheduled_for;
+      const oldD = oldIso ? new Date(oldIso) : null;
+      const newD = new Date(newIso);
+      const dayChanged = !oldD || oldD.toDateString() !== newD.toDateString();
+      if (dayChanged) {
+        const label = newD.toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
+        await postEventSystemMessage(editCheckin.id, eventSystemMsg.dateChanged(label));
+      } else {
+        const hh = newD.getHours();
+        const mm = newD.getMinutes();
+        const label = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+        await postEventSystemMessage(editCheckin.id, eventSystemMsg.timeChanged(label));
+      }
+    }
+    if (stagedChanges.is_open !== undefined) {
+      await postEventSystemMessage(
+        editCheckin.id,
+        stagedChanges.is_open ? eventSystemMsg.madePublic() : eventSystemMsg.madePrivate(),
+      );
+    }
+
+    // 4. Merge staged into local editCheckin so the UI reflects DB state,
+    //    clear the staging buffer, trigger a global refetch.
+    setEditCheckin({ ...editCheckin, ...stagedChanges });
+    setStagedChanges({});
+    setSavingAll(false);
     refetch();
   };
 
@@ -984,6 +1072,8 @@ export default function ProfileScreen() {
                 setEditCheckin(checkin);
                 setEditPrivate(!checkin.is_open);
                 setEditMuted(false);
+                setStagedChanges({});         // fresh slate — nothing pending on open
+                setEditingTitle(false);
                 setShowActivityInfo(true);
               }}
             >
@@ -1267,57 +1357,29 @@ export default function ProfileScreen() {
                         <Text style={{ fontSize: s(6), fontWeight: FW.semi, color: colors.textMuted }}>{t('common.cancel')}</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        onPress={async () => {
+                        onPress={() => {
                           const newText = titleDraft.trim();
-                          if (!newText || savingTitle) return;
-                          setSavingTitle(true);
-                          // 1. Update the check-in itself (map / people list / owner card).
-                          const { error } = await supabase
-                            .from('app_checkins')
-                            .update({ activity_text: newText, status_text: newText })
-                            .eq('id', editCheckin.id);
-                          if (error) {
-                            Alert.alert('Save failed', error.message);
-                            setSavingTitle(false);
-                            return;
-                          }
-                          // 2. If this check-in has a chat group, rename the conversation too
-                          //    so everyone who already joined sees the new title in their chat list.
-                          try {
-                            const { data: conv } = await supabase
-                              .from('app_conversations')
-                              .select('id')
-                              .eq('checkin_id', editCheckin.id)
-                              .maybeSingle();
-                            if (conv?.id) {
-                              await supabase
-                                .from('app_conversations')
-                                .update({ name: newText, activity_text: newText })
-                                .eq('id', conv.id);
-                            }
-                          } catch (e) {
-                            console.warn('[ActivityInfo] failed to sync conversation name:', e);
-                          }
-                          // 3. Post a system message so the chat members SEE the rename
-                          //    (closed loop — required by the logic skill).
-                          await postEventSystemMessage(editCheckin.id, eventSystemMsg.titleChanged(newText));
-                          setEditCheckin({ ...editCheckin, activity_text: newText, status_text: newText });
+                          if (!newText) return;
+                          // Stage only — actual DB write happens when the user
+                          // taps the floating Save button at the bottom of the
+                          // modal. Avoids hitting the DB twice when multiple
+                          // fields are edited at once.
+                          setStagedChanges({
+                            ...stagedChanges,
+                            activity_text: newText,
+                            status_text: newText,
+                          });
                           setEditingTitle(false);
-                          setSavingTitle(false);
-                          refetch();
                         }}
-                        disabled={savingTitle || !titleDraft.trim()}
+                        disabled={!titleDraft.trim()}
                         style={{
                           paddingVertical: s(3),
                           paddingHorizontal: s(10),
                           borderRadius: s(8),
                           backgroundColor: titleDraft.trim() ? colors.primary : colors.surface,
-                          opacity: savingTitle ? 0.6 : 1,
                         }}
                       >
-                        <Text style={{ fontSize: s(6), fontWeight: FW.bold, color: titleDraft.trim() ? '#fff' : colors.textFaint }}>
-                          {savingTitle ? 'Saving…' : t('common.save')}
-                        </Text>
+                        <Text style={{ fontSize: s(6), fontWeight: FW.bold, color: titleDraft.trim() ? '#fff' : colors.textFaint }}>Done</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -1335,11 +1397,11 @@ export default function ProfileScreen() {
                       }}
                       numberOfLines={2}
                     >
-                      {editCheckin.activity_text || editCheckin.status_text || 'Activity'}
+                      {effective('activity_text') || effective('status_text') || 'Activity'}
                     </Text>
                     <TouchableOpacity
                       onPress={() => {
-                        setTitleDraft(editCheckin.activity_text || editCheckin.status_text || '');
+                        setTitleDraft(effective('activity_text') || effective('status_text') || '');
                         setEditingTitle(true);
                       }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1412,14 +1474,9 @@ export default function ProfileScreen() {
                 <Switch
                   value={editPrivate}
                   onValueChange={(val) => {
+                    // Stage only — bottom Save button commits.
                     setEditPrivate(val);
-                    if (editCheckin) {
-                      supabase.from('app_checkins').update({ is_open: !val }).eq('id', editCheckin.id).then(() => {
-                        // Chat system message so existing members see the privacy change
-                        postEventSystemMessage(editCheckin.id, val ? eventSystemMsg.madePrivate() : eventSystemMsg.madePublic());
-                        refetch();
-                      });
-                    }
+                    setStagedChanges({ ...stagedChanges, is_open: !val });
                   }}
                   trackColor={{ false: '#D1D5DB', true: colors.primary }}
                   ios_backgroundColor="#D1D5DB"
@@ -1440,9 +1497,9 @@ export default function ProfileScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={aiStyles.rowLabel}>Location</Text>
-                  {editCheckin?.location_name && (
-                    <Text style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(0.5) }} numberOfLines={1}>
-                      {editCheckin.location_name}
+                  {effective('location_name') && (
+                    <Text style={{ fontSize: s(4.5), color: stagedChanges.location_name ? colors.primary : colors.textMuted, marginTop: s(0.5) }} numberOfLines={1}>
+                      {effective('location_name')}{stagedChanges.location_name ? ' •' : ''}
                     </Text>
                   )}
                 </View>
@@ -1488,18 +1545,18 @@ export default function ProfileScreen() {
                     <TouchableOpacity
                       key={i}
                       style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: s(4), paddingHorizontal: s(2), borderBottomWidth: 0.5, borderBottomColor: colors.borderSoft }}
-                      onPress={async () => {
+                      onPress={() => {
                         if (!editCheckin) return;
-                        await supabase.from('app_checkins').update({
+                        // Stage — bottom Save button commits + posts system message.
+                        setStagedChanges({
+                          ...stagedChanges,
                           location_name: `${r.name}, ${r.sub}`,
                           latitude: r.lat,
                           longitude: r.lng,
-                        }).eq('id', editCheckin.id);
-                        setEditCheckin({ ...editCheckin, location_name: `${r.name}, ${r.sub}`, latitude: r.lat, longitude: r.lng });
+                        });
                         setShowLocationSearch(false);
                         setLocationQuery('');
                         setLocationResults([]);
-                        refetch();
                       }}
                     >
                       <NomadIcon name="pin" size={s(5)} color={colors.textMuted} strokeWidth={1.4} />
@@ -1536,9 +1593,9 @@ export default function ProfileScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={aiStyles.rowLabel}>Date</Text>
-                  {editCheckin?.scheduled_for && (
-                    <Text style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(0.5) }}>
-                      {new Date(editCheckin.scheduled_for).toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' })}
+                  {effective('scheduled_for') && (
+                    <Text style={{ fontSize: s(4.5), color: stagedChanges.scheduled_for ? colors.primary : colors.textMuted, marginTop: s(0.5) }}>
+                      {new Date(effective('scheduled_for')).toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' })}{stagedChanges.scheduled_for ? ' •' : ''}
                     </Text>
                   )}
                 </View>
@@ -1556,18 +1613,17 @@ export default function ProfileScreen() {
                           <TouchableOpacity
                             key={i}
                             style={{ alignItems: 'center', paddingVertical: s(3), paddingHorizontal: s(5), borderRadius: s(6), backgroundColor: active ? colors.primary : colors.surface }}
-                            onPress={async () => {
+                            onPress={() => {
                               setEditDay(i);
                               if (!editCheckin) return;
                               const newDate = new Date(day.date);
-                              if (editCheckin.scheduled_for) {
-                                const old = new Date(editCheckin.scheduled_for);
+                              const baseIso = effective('scheduled_for');
+                              if (baseIso) {
+                                const old = new Date(baseIso);
                                 newDate.setHours(old.getHours(), old.getMinutes(), 0, 0);
                               }
-                              const iso = newDate.toISOString();
-                              await supabase.from('app_checkins').update({ scheduled_for: iso }).eq('id', editCheckin.id);
-                              setEditCheckin({ ...editCheckin, scheduled_for: iso });
-                              refetch();
+                              // Stage — bottom Save button commits + posts system message.
+                              setStagedChanges({ ...stagedChanges, scheduled_for: newDate.toISOString() });
                             }}
                           >
                             <Text style={{ fontSize: s(4.5), fontWeight: FW.medium, color: active ? C.white : colors.textMuted }}>{day.label}</Text>
@@ -1603,12 +1659,12 @@ export default function ProfileScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={aiStyles.rowLabel}>Time</Text>
-                  {editCheckin?.scheduled_for && !editCheckin.is_flexible_time && (
-                    <Text style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(0.5) }}>
-                      {fmtTime(new Date(editCheckin.scheduled_for).getHours(), new Date(editCheckin.scheduled_for).getMinutes())}
+                  {effective('scheduled_for') && !effective('is_flexible_time') && (
+                    <Text style={{ fontSize: s(4.5), color: stagedChanges.scheduled_for ? colors.primary : colors.textMuted, marginTop: s(0.5) }}>
+                      {fmtTime(new Date(effective('scheduled_for')).getHours(), new Date(effective('scheduled_for')).getMinutes())}{stagedChanges.scheduled_for ? ' •' : ''}
                     </Text>
                   )}
-                  {editCheckin?.is_flexible_time && (
+                  {effective('is_flexible_time') && (
                     <Text style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(0.5) }}>flexible</Text>
                   )}
                 </View>
@@ -1649,18 +1705,21 @@ export default function ProfileScreen() {
                       ))}
                     </ScrollView>
                   </View>
-                  {/* Save time button */}
+                  {/* "set" button — stages, closes the picker. Actual DB
+                       write happens via the floating Save button below. */}
                   <TouchableOpacity
                     style={{ marginTop: s(3), backgroundColor: colors.primary, borderRadius: s(6), paddingVertical: s(4), alignItems: 'center' }}
-                    onPress={async () => {
+                    onPress={() => {
                       if (!editCheckin) return;
-                      const base = editCheckin.scheduled_for ? new Date(editCheckin.scheduled_for) : new Date();
+                      const baseIso = effective('scheduled_for');
+                      const base = baseIso ? new Date(baseIso) : new Date();
                       base.setHours(editHour, editMinute, 0, 0);
-                      const iso = base.toISOString();
-                      await supabase.from('app_checkins').update({ scheduled_for: iso, is_flexible_time: false }).eq('id', editCheckin.id);
-                      setEditCheckin({ ...editCheckin, scheduled_for: iso, is_flexible_time: false });
+                      setStagedChanges({
+                        ...stagedChanges,
+                        scheduled_for: base.toISOString(),
+                        is_flexible_time: false,
+                      });
                       setShowTimePicker(false);
-                      refetch();
                     }}
                   >
                     <Text style={{ fontSize: s(5.5), fontWeight: FW.bold, color: colors.white }}>
@@ -1705,6 +1764,61 @@ export default function ProfileScreen() {
               <Text style={{ fontSize: s(7), fontWeight: FW.semi, color: colors.primary }}>Delete Activity</Text>
             </TouchableOpacity>
           </ScrollView>
+
+          {/* ═══ Floating Save bar — visible only when there are pending changes ═══ */}
+          {hasStagedChanges && (
+            <View style={{
+              position: 'absolute',
+              left: 0, right: 0, bottom: 0,
+              paddingTop: s(4),
+              paddingBottom: insets.bottom + s(4),
+              paddingHorizontal: s(8),
+              backgroundColor: colors.card,
+              borderTopWidth: 1,
+              borderTopColor: colors.borderSoft,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: -s(2) },
+              shadowOpacity: 0.08,
+              shadowRadius: s(6),
+              elevation: 8,
+              flexDirection: 'row',
+              gap: s(4),
+              alignItems: 'center',
+            }}>
+              <TouchableOpacity
+                onPress={() => setStagedChanges({})}
+                disabled={savingAll}
+                style={{
+                  paddingVertical: s(4),
+                  paddingHorizontal: s(7),
+                  borderRadius: s(8),
+                  backgroundColor: colors.surface,
+                  borderWidth: 1,
+                  borderColor: colors.borderSoft,
+                }}
+              >
+                <Text style={{ fontSize: s(6), fontWeight: FW.semi, color: colors.textMuted }}>Discard</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSaveAllActivityChanges}
+                disabled={savingAll}
+                style={{
+                  flex: 1,
+                  paddingVertical: s(4),
+                  borderRadius: s(8),
+                  backgroundColor: colors.primary,
+                  alignItems: 'center',
+                  opacity: savingAll ? 0.6 : 1,
+                }}
+              >
+                <Text style={{ fontSize: s(7), fontWeight: FW.bold, color: '#fff' }}>
+                  {savingAll
+                    ? 'Saving…'
+                    : `Save ${Object.keys(stagedChanges).filter(k => k !== 'status_text' && k !== 'longitude' && k !== 'latitude').length} change${Object.keys(stagedChanges).filter(k => k !== 'status_text' && k !== 'longitude' && k !== 'latitude').length === 1 ? '' : 's'}`}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </Modal>
 
