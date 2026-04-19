@@ -282,17 +282,24 @@ export default function TimerBubble({
       onPress={undefined}
       onDismiss={onClose}
     >
-      {/* TITLE — big, bold, the thing people read in one glance */}
-      {!!actText && (
-        <Text style={st.title} numberOfLines={3}>{actText}</Text>
-      )}
-
-      {/* Subtitle — creator + countdown. Small, muted, supporting. */}
-      <Text style={st.subtitle} numberOfLines={1}>
-        {firstName}
-        {!!countdown && countdown !== 'ended' && ` · ends in ${countdown}`}
-        {countdown === 'ended' && ' · ended'}
+      {/* TITLE — reads like a quote: "Barak [asks] מי בא לים".
+          The name sits at the start of the sentence in heavy bold
+          (800/900) so the reader instantly knows WHO is inviting,
+          and the activity text continues on the same line at a
+          lighter weight. No "says" / "asks" word — the layout
+          itself carries that meaning. */}
+      <Text style={st.title} numberOfLines={3}>
+        <Text style={st.titleName}>{firstName}</Text>
+        {actText ? ` ${actText}` : ''}
       </Text>
+
+      {/* Subtitle — countdown only. The creator name is already
+          in the title above. */}
+      {!!countdown && (
+        <Text style={st.subtitle} numberOfLines={1}>
+          {countdown === 'ended' ? 'ended' : `ends in ${countdown}`}
+        </Text>
+      )}
 
       {/* Member avatars — medium circles, social proof */}
       {showMembersRow && (
@@ -385,13 +392,25 @@ function MemberDot({
 }
 
 const styles = (c: ThemeColors) => StyleSheet.create({
+  // Title is the "Barak מי בא לים עוד שעתיים" block.
+  // Base weight is medium so the inline bold name (below) pops
+  // against it and the reader instantly sees: NAME + what they're
+  // saying. Color is the same across — contrast comes from weight
+  // alone (cleaner than mixing colors here).
   title: {
     fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '800',
+    lineHeight: 30,
+    fontWeight: '500',
     color: '#111827',
     textAlign: 'center',
     marginBottom: 6,
+  },
+  // Inline on the same Text block — this is the "who is asking" slot.
+  // 900 makes it visibly heavier than the 500 surrounding copy without
+  // needing a color change or a different font family.
+  titleName: {
+    fontWeight: '900',
+    color: '#111827',
   },
   subtitle: {
     fontSize: 13,
