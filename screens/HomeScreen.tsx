@@ -797,21 +797,31 @@ export default function HomeScreen() {
         .eq('is_active', true)
         .eq('checkin_type', 'status');
 
-      // expires_at logic — TWO cases:
-      //  A) Scheduled event (the user picked a future date + time):
-      //     stay visible until the event actually happens + 12h grace.
-      //     Ignores durationMinutes — it's meaningless for a scheduled
-      //     event. This is the fix for "my event for next Sunday vanished
-      //     an hour after I created it."
-      //  B) Immediate status ("I'm here now"): use durationMinutes (default
-      //     60 min). Short-lived, disappears on time.
-      const SCHEDULED_GRACE_MS = 12 * 60 * 60 * 1000;
+      // expires_at policy — three cases (per product spec 2026-04-19):
+      //  A) Scheduled with SPECIFIC time → expires AT that time (event's
+      //     start = end-of-life on the map). The chat survives because
+      //     it's a separate entity, but the pin disappears.
+      //  B) Scheduled with FLEXIBLE time → expires at 23:59:59 of the
+      //     event's day (the user committed only to "that day", so the
+      //     pin is alive throughout the day).
+      //  C) Immediate status ("I'm here now") → expires at now + 60 min.
       const scheduledFor = data.scheduledFor ?? null;
       const isFutureScheduled = scheduledFor instanceof Date && scheduledFor.getTime() > Date.now();
-      const durationMs = (data.durationMinutes || 60) * 60 * 1000;
-      const expiresAt = isFutureScheduled
-        ? new Date(scheduledFor!.getTime() + SCHEDULED_GRACE_MS).toISOString()
-        : new Date(Date.now() + durationMs).toISOString();
+      let expiresAt: string;
+      if (isFutureScheduled) {
+        if (data.isFlexibleTime) {
+          // End of the event's day, local time.
+          const endOfDay = new Date(scheduledFor!);
+          endOfDay.setHours(23, 59, 59, 999);
+          expiresAt = endOfDay.toISOString();
+        } else {
+          // Exactly at scheduled time.
+          expiresAt = scheduledFor!.toISOString();
+        }
+      } else {
+        const durationMs = (data.durationMinutes || 60) * 60 * 1000;
+        expiresAt = new Date(Date.now() + durationMs).toISOString();
+      }
 
       // Resolve correct city based on actual GPS (prevents wrong-city bug)
       const resolvedCity = await resolveCheckinCity(data.latitude, data.longitude);

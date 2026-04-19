@@ -520,18 +520,23 @@ export default function ProfileScreen() {
 
       if (updateErr) console.error('Error expiring old checkin:', updateErr);
 
-      // expires_at policy must match HomeScreen's handleQuickPublish:
-      //   scheduled future event → scheduled_for + 12h grace
-      //   immediate status      → now + 60 min (default duration)
-      // Without this, ProfileScreen-created statuses had a NULL expires_at
-      // (the cron's `expires_at < now()` never matched, so they hung
-      // around forever) AND the map filter respected scheduled_for so the
-      // bug was hidden — but the data was wrong.
-      const SCHEDULED_GRACE_MS = 12 * 60 * 60 * 1000;
+      // expires_at policy — same spec as HomeScreen.handleQuickPublish:
+      //   A) Specific time → expires_at = scheduled_for (exact).
+      //   B) Flexible time → expires_at = 23:59:59 of that date.
+      //   C) Immediate    → now + 60 min.
       const isFutureScheduled = data.scheduledFor instanceof Date && data.scheduledFor.getTime() > Date.now();
-      const expiresAt = isFutureScheduled
-        ? new Date(data.scheduledFor!.getTime() + SCHEDULED_GRACE_MS).toISOString()
-        : new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      let expiresAt: string;
+      if (isFutureScheduled) {
+        if (data.isFlexibleTime) {
+          const endOfDay = new Date(data.scheduledFor!);
+          endOfDay.setHours(23, 59, 59, 999);
+          expiresAt = endOfDay.toISOString();
+        } else {
+          expiresAt = data.scheduledFor!.toISOString();
+        }
+      } else {
+        expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      }
 
       // Insert new activity checkin — always public (user chose to post)
       const { data: newCheckin, error: insertErr } = await supabase.from('app_checkins').insert({
