@@ -347,37 +347,50 @@ export default function MyWorkSection({
 
 const makeStyles = (c: ThemeColors) => StyleSheet.create({
   card: {
-    marginHorizontal: s(8), marginTop: s(4),
-    backgroundColor: c.card, borderRadius: s(10), padding: s(6),
-    borderWidth: 0.5, borderColor: c.borderSoft,
-    shadowColor: '#000', shadowOffset: { width: 0, height: s(1) },
-    shadowOpacity: 0.04, shadowRadius: s(4),
+    marginHorizontal: s(8),
+    marginTop: s(5),
+    backgroundColor: c.card,
+    borderRadius: s(12),
+    padding: s(7),
+    borderWidth: 1,
+    borderColor: c.borderSoft,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: s(2) },
+    shadowOpacity: 0.06,
+    shadowRadius: s(6),
+    elevation: 2,
   },
 
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: s(4) },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: s(3) },
-  headerTitle: { fontSize: s(7), fontWeight: FW.extra, color: c.dark },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: s(5) },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: s(3.5) },
+  headerTitle: { fontSize: s(8), fontWeight: FW.extra, color: c.dark, letterSpacing: 0.2 },
 
   /* Open to work */
   openBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: s(2),
-    backgroundColor: 'rgba(16,185,129,0.1)', alignSelf: 'flex-start',
-    paddingHorizontal: s(4), paddingVertical: s(2),
-    borderRadius: s(6), marginBottom: s(3),
+    flexDirection: 'row', alignItems: 'center', gap: s(2.5),
+    backgroundColor: 'rgba(16,185,129,0.12)',
+    alignSelf: 'flex-start',
+    paddingHorizontal: s(5), paddingVertical: s(2.5),
+    borderRadius: s(20),
+    marginBottom: s(4),
+    borderWidth: 1,
+    borderColor: 'rgba(16,185,129,0.25)',
   },
-  openDot: { width: s(3), height: s(3), borderRadius: s(1.5), backgroundColor: '#10B981' },
-  openText: { fontSize: s(5), fontWeight: FW.bold, color: '#10B981' },
+  openDot: { width: s(3.5), height: s(3.5), borderRadius: s(1.75), backgroundColor: '#10B981' },
+  openText: { fontSize: s(5.5), fontWeight: FW.bold, color: '#059669', letterSpacing: 0.2 },
 
-  jobTitle: { fontSize: s(7), fontWeight: FW.bold, color: c.dark, marginBottom: s(3) },
+  jobTitle: { fontSize: s(8), fontWeight: FW.bold, color: c.dark, marginBottom: s(3) },
   addJobText: { fontSize: s(6), color: c.textMuted, fontStyle: 'italic', marginBottom: s(3) },
 
-  skillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: s(2.5), marginBottom: s(3) },
+  skillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: s(3), marginBottom: s(4) },
   skillChip: {
-    backgroundColor: c.surface, borderRadius: s(6),
-    paddingHorizontal: s(4), paddingVertical: s(2),
-    borderWidth: 0.5, borderColor: c.borderSoft,
+    backgroundColor: c.primary + '10',
+    borderRadius: s(20),
+    paddingHorizontal: s(5), paddingVertical: s(2.5),
+    borderWidth: 1,
+    borderColor: c.primary + '25',
   },
-  skillText: { fontSize: s(4.5), fontWeight: FW.medium, color: c.textSec },
+  skillText: { fontSize: s(5), fontWeight: FW.semi, color: c.primary },
 
   /* Prominent, tappable action buttons (edit pencil + close X) */
   editBtnPill: {

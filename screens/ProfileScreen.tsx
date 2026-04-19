@@ -792,7 +792,13 @@ export default function ProfileScreen() {
 
         {/* ─── Avatar + Status Button + Name + Badge + Bio (centered, compact) ─── */}
         <View style={styles.profTop}>
-          <View style={styles.avWrapper}>
+          <View style={styles.avatarWithZodiacRow}>
+            {zodiac && (
+              <View style={styles.zodiacBadge}>
+                <Text style={styles.zodiacBadgeSymbol}>{zodiac.symbol}</Text>
+              </View>
+            )}
+            <View style={styles.avWrapper}>
             <TouchableOpacity
               activeOpacity={isOwner ? 0.7 : 1}
               onPress={isOwner ? handleAvatarPress : undefined}
@@ -824,6 +830,9 @@ export default function ProfileScreen() {
               )}
             </TouchableOpacity>
             {/* Status button removed — now on HomeScreen map as green FAB */}
+            </View>
+            {/* Spacer on right to keep avatar visually centered when zodiac shows */}
+            {zodiac && <View style={styles.zodiacSpacer} />}
           </View>
           {/* ── 1. Name + Creator badge ── */}
           <Text style={[styles.displayName, { color: colors.dark }]}>{displayName}</Text>
@@ -842,12 +851,10 @@ export default function ProfileScreen() {
             linkedinHandle={(profile as any)?.linkedin_handle}
           />
 
-          {/* ── 1b. Age + Zodiac ── */}
-          {(age || zodiac) && (
+          {/* ── 1b. Age ── (zodiac moved to badge left of avatar) */}
+          {age && (
             <View style={styles.ageZodiacRow}>
-              {age && <Text style={styles.ageZodiacText}>{age}</Text>}
-              {age && zodiac && <Text style={styles.ageZodiacDot}> · </Text>}
-              {zodiac && <Text style={styles.ageZodiacText}>{zodiac.symbol} {zodiac.name}</Text>}
+              <Text style={styles.ageZodiacText}>{age}</Text>
             </View>
           )}
 
@@ -1819,20 +1826,34 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   featuredLabel: { fontSize: s(5.5), fontWeight: FW.medium, color: c.primary },
 
   activeEvent: {
-    marginHorizontal: s(10), marginBottom: s(4), backgroundColor: c.dangerSurface, borderRadius: s(6),
-    paddingVertical: s(3), paddingHorizontal: s(5), borderWidth: 0.5, borderColor: '#FFCDD0',
-    flexDirection: 'row', alignItems: 'center', gap: s(4),
+    marginHorizontal: s(8),
+    marginBottom: s(5),
+    backgroundColor: c.card,
+    borderRadius: s(10),
+    paddingVertical: s(5),
+    paddingHorizontal: s(6),
+    borderWidth: 1,
+    borderColor: c.borderSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: s(5),
+    // subtle elevation so it feels like its own card, not squeezed
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: s(1) },
+    shadowOpacity: 0.05,
+    shadowRadius: s(4),
+    elevation: 1,
   },
-  aeIcon: { width: s(15), height: s(15), borderRadius: s(5), backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' },
-  aeInfo: { flex: 1, minWidth: 0 },
+  aeIcon: { width: s(18), height: s(18), borderRadius: s(6), backgroundColor: c.primary, alignItems: 'center', justifyContent: 'center' },
+  aeInfo: { flex: 1, minWidth: 0, gap: s(1) },
   aeTagRow: { flexDirection: 'row', alignItems: 'center', gap: s(2), marginBottom: s(0.5) },
-  aeDot: { width: s(2), height: s(2), borderRadius: s(1), backgroundColor: c.primary },
-  aeTag: { fontSize: s(4.5), fontWeight: FW.bold, color: c.primary },
-  aeTitle: { fontSize: s(6), fontWeight: FW.bold, color: c.dark },
-  aeMeta: { fontSize: s(4.5), color: c.textMuted },
+  aeDot: { width: s(2.5), height: s(2.5), borderRadius: s(1.25), backgroundColor: c.primary },
+  aeTag: { fontSize: s(5), fontWeight: FW.bold, color: c.primary, letterSpacing: 0.3 },
+  aeTitle: { fontSize: s(7), fontWeight: FW.bold, color: c.dark },
+  aeMeta: { fontSize: s(5), color: c.textMuted },
   aeActions: { flexDirection: 'row', gap: s(2) },
-  aeBtn: { borderWidth: 0.5, borderColor: '#FFCDD0', backgroundColor: c.card, paddingVertical: s(2), paddingHorizontal: s(5), borderRadius: s(5) },
-  aeBtnText: { fontSize: s(4.5), fontWeight: FW.bold, color: c.primary },
+  aeBtn: { borderWidth: 0.5, borderColor: c.primary + '40', backgroundColor: c.primary + '10', paddingVertical: s(3), paddingHorizontal: s(6), borderRadius: s(6) },
+  aeBtnText: { fontSize: s(5), fontWeight: FW.bold, color: c.primary },
 
   actionBtns: { flexDirection: 'row', gap: s(4), paddingHorizontal: s(8), paddingTop: s(2), paddingBottom: s(6) },
   abtn: { flex: 1, height: s(22), borderRadius: s(11), flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: s(3) },
@@ -1865,6 +1886,36 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
 
   /* Avatar wrapper */
   avWrapper: { position: 'relative' },
+  // Avatar + zodiac badge row — keeps avatar visually centered with a thin
+  // outlined zodiac circle floating on its left.
+  avatarWithZodiacRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: s(4),
+  },
+  zodiacBadge: {
+    width: s(13),
+    height: s(13),
+    borderRadius: s(6.5),
+    borderWidth: 1,
+    borderColor: c.borderSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  zodiacBadgeSymbol: {
+    fontSize: s(8),
+    color: c.dark,
+    fontWeight: FW.medium as any,
+    lineHeight: s(10),
+  },
+  // Invisible spacer on the right of the avatar so the avatar stays
+  // visually centered when a zodiac badge is on the left.
+  zodiacSpacer: {
+    width: s(13),
+    height: s(13),
+  },
   cameraIconOverlay: {
     position: 'absolute',
     bottom: 0, right: 0,

@@ -90,16 +90,16 @@ export default function SocialIconRow(p: Props) {
   );
 }
 
-const ICON_SIZE = s(13);
+const ICON_SIZE = s(16);
 
 const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
-    gap: s(3),
+    gap: s(4),
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: s(3),
-    marginBottom: s(1),
+    marginTop: s(4),
+    marginBottom: s(2),
   },
   iconWrap: {
     width: ICON_SIZE,
@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   icon: {
-    width: ICON_SIZE * 0.6,
-    height: ICON_SIZE * 0.6,
+    width: ICON_SIZE * 0.65,
+    height: ICON_SIZE * 0.65,
   },
 });
