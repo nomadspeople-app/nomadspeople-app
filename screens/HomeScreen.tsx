@@ -1231,6 +1231,48 @@ export default function HomeScreen() {
           )}
         </View>
 
+        {/* ── ALWAYS-VISIBLE Recent cities strip (below search bar) ──
+             Previously the Recent list lived only inside the dropdown,
+             which requires a tap to open. User couldn't see their
+             history without that tap, and thought the list was empty.
+             Now a horizontal chip row is visible as long as the user
+             isn't actively typing — so the last 5 cities are one tap
+             away, not two. ─────────────────────────────────────── */}
+        {!searchFocused && recentCities.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: s(8), paddingBottom: s(3), gap: s(2.5) }}
+          >
+            {recentCities.slice(0, 5).map((city, i) => {
+              const isActive = city.name === currentCity.name && city.country === currentCity.country;
+              return (
+                <TouchableOpacity
+                  key={`${city.name}-${city.country}-${i}`}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: s(1.5),
+                    paddingVertical: s(2),
+                    paddingHorizontal: s(4),
+                    borderRadius: s(10),
+                    backgroundColor: isActive ? colors.primary : '#fff',
+                    borderWidth: 1,
+                    borderColor: isActive ? colors.primary : '#E5E7EB',
+                  }}
+                  onPress={() => handleCitySearchSelect(city)}
+                  activeOpacity={0.7}
+                >
+                  <NomadIcon name="pin" size={12} color={isActive ? '#fff' : colors.textMuted} strokeWidth={1.6} />
+                  <Text style={{ fontSize: s(5), fontWeight: FW.medium as any, color: isActive ? '#fff' : colors.dark }} numberOfLines={1}>
+                    {city.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
+
         {/* ── Search Dropdown (recents + results) ── */}
         {searchFocused && (
           <View style={st.cityDropdown}>
