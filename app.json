@@ -15,9 +15,14 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.nomadspeople.app",
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "infoPlist": {
         "CFBundleDevelopmentRegion": "en",
-        "CFBundleAllowMixedLocalizations": false,
+        "CFBundleAllowMixedLocalizations": true,
+        "CFBundleLocalizations": ["en", "he", "es", "pt", "it", "fr", "de", "ru"],
         "NSLocationWhenInUseUsageDescription": "NomadsPeople uses your location to show where you are on the map when you go live."
       }
     },
