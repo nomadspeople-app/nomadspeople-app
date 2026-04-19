@@ -8,7 +8,8 @@ import { Alert, Platform } from 'react-native';
 export async function pickImage(aspect?: [number, number]): Promise<string | null> {
   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (status !== 'granted') {
-    Alert.alert('Permission needed', 'Please allow access to your photo library.');
+    if (Platform.OS === 'web') window.alert('Permission needed: Please allow access to your photo library.');
+    else Alert.alert('Permission needed', 'Please allow access to your photo library.');
     return null;
   }
 
@@ -70,7 +71,9 @@ export async function uploadImage(
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Upload error:', response.status, errorText);
-      Alert.alert('Upload failed', `Server returned ${response.status}`);
+      const msg = `Upload failed: server returned ${response.status}. ${errorText.slice(0, 120)}`;
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Upload failed', msg);
       return null;
     }
 
@@ -79,7 +82,9 @@ export async function uploadImage(
     return urlData.publicUrl;
   } catch (err: any) {
     console.error('Upload exception:', err);
-    Alert.alert('Upload failed', err.message || 'Unknown error');
+    const msg = err.message || 'Unknown error';
+    if (Platform.OS === 'web') window.alert(`Upload failed: ${msg}`);
+    else Alert.alert('Upload failed', msg);
     return null;
   }
 }

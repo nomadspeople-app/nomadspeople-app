@@ -1148,7 +1148,16 @@ export default function ProfileScreen() {
               {uploading ? (
                 <ActivityIndicator color={colors.primary} size="small" />
               ) : (
-                <NomadIcon name="plus" size={s(7)} color={colors.textFaint} strokeWidth={1.4} />
+                <View style={{
+                  width: s(11),
+                  height: s(11),
+                  borderRadius: s(5.5),
+                  backgroundColor: colors.primary,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}>
+                  <NomadIcon name="plus" size={s(7)} color="white" strokeWidth={2.4} />
+                </View>
               )}
             </TouchableOpacity>
           ) : (

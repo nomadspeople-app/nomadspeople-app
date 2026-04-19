@@ -1269,7 +1269,7 @@ export default function HomeScreen() {
             ))}
           </View>
           <View style={st.nomadsBubbleTextCol}>
-            <Text style={st.nomadsBubbleCount}>{nomadsLoading ? '…' : (visibleNomadCount ?? nomadsCount)}</Text>
+            <Text style={st.nomadsBubbleCount}>{nomadsLoading ? '…' : Math.max(0, nomadsInCity.filter(n => n.user_id !== userId).length)}</Text>
             <Text style={st.nomadsBubbleLabel}>{t('home.nomadsHere')}</Text>
           </View>
           <NomadIcon name="forward" size={s(6)} color="#1A1A1A" strokeWidth={1.8} />
