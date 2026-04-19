@@ -96,11 +96,35 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
       .limit(200);
 
     if (data) {
-      // 3a. Filter out expired checkins + users who disabled "show on map"
+      // 3a. Visibility filter — the map's single source of truth.
+      //     An event must show if:
+      //       • is_active (already filtered at the query level), AND
+      //       • creator didn't turn off "show me on the map", AND
+      //       • the event hasn't finished yet.
+      //
+      //     "Hasn't finished yet" is delicate. We support two lifecycles:
+      //       A) Status / timer: short-lived — expires_at is the hard end.
+      //       B) Scheduled event: set for a future date — the event is
+      //          "alive" until its scheduled_for passes (plus grace), not
+      //          until the short expires_at that was set when the post
+      //          was created. A future-scheduled event with a stale
+      //          expires_at must STILL be visible in its city.
       const now = new Date();
+      const SCHEDULED_GRACE_MS = 12 * 60 * 60 * 1000;  // keep visible 12h after the event time
       const visible = (data as any[]).filter((c: any) => {
-        if (c.expires_at && new Date(c.expires_at) < now) return false;
         if (c.profile?.show_on_map === false) return false;
+
+        const scheduledTs = c.scheduled_for ? new Date(c.scheduled_for).getTime() : null;
+        const expiresTs = c.expires_at ? new Date(c.expires_at).getTime() : null;
+
+        // B) Scheduled event path
+        if (scheduledTs) {
+          if (scheduledTs + SCHEDULED_GRACE_MS < now.getTime()) return false;
+          return true;
+        }
+
+        // A) Regular status / timer path — respect expires_at
+        if (expiresTs && expiresTs < now.getTime()) return false;
         return true;
       });
 
