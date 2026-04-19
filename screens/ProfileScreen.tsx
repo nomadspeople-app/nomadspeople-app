@@ -791,10 +791,31 @@ export default function ProfileScreen() {
 
     // 4. Merge staged into local editCheckin so the UI reflects DB state,
     //    clear the staging buffer, trigger a global refetch.
+    const justSaved = stagedChanges;     // capture BEFORE clearing for the alert below
     setEditCheckin({ ...editCheckin, ...stagedChanges });
     setStagedChanges({});
     setSavingAll(false);
     refetch();
+
+    // 5. Closed-loop confirmation — the user must SEE that the save
+    //    happened and what specifically changed. Otherwise the modal
+    //    just goes quiet and they think nothing worked.
+    const lines: string[] = [];
+    if (justSaved.activity_text !== undefined) lines.push(`✏️ Title: "${justSaved.activity_text}"`);
+    if (justSaved.location_name !== undefined) lines.push(`📍 Location: ${justSaved.location_name}`);
+    if (justSaved.city !== undefined) lines.push(`🏙️ City: ${justSaved.city} — pin now shows on this city's map`);
+    if (justSaved.scheduled_for !== undefined) {
+      const d = new Date(justSaved.scheduled_for);
+      lines.push(`📅 When: ${d.toLocaleString('en', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`);
+    }
+    if (justSaved.is_open !== undefined) lines.push(justSaved.is_open ? '🌐 Now public' : '🔒 Now private');
+    Alert.alert(
+      'Event saved',
+      lines.join('\n') +
+        (justSaved.city
+          ? '\n\nThe event moved to a new city. Open the map and switch to that city to see the pin in its new spot. Members in the chat have been notified.'
+          : '\n\nThe map and the event chat have been updated for everyone who joined.'),
+    );
   };
 
   const handlePhotoTap = (postIdx: number) => {
