@@ -45,8 +45,6 @@ interface Props {
   checkin: AppCheckin | null;
   creatorName: string;
   creatorAvatarUrl?: string | null;
-  anchorX: number;
-  anchorY: number;
   onClose: () => void;
 }
 
@@ -147,8 +145,7 @@ function useJoinedMembers(checkinId: string | null, creatorUserId: string | null
 }
 
 export default function TimerBubble({
-  visible, checkin, creatorName, creatorAvatarUrl,
-  anchorX, anchorY, onClose,
+  visible, checkin, creatorName, creatorAvatarUrl, onClose,
 }: Props) {
   const { userId } = useContext(AuthContext);
   const nav = useNavigation<Nav>();
@@ -272,8 +269,6 @@ export default function TimerBubble({
   return (
     <Bubble
       visible={visible}
-      anchorX={anchorX}
-      anchorY={anchorY}
       avatarUrl={creatorAvatarUrl || null}
       avatarFallback={initials}
       avatarFallbackColor={colors.primary}

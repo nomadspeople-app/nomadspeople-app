@@ -429,39 +429,11 @@ export default function HomeScreen() {
   const [activeTimerChatId, setActiveTimerChatId] = useState<string | null>(null);
   const [showReplaceStatus, setShowReplaceStatus] = useState(false); // confirm replacing active status
   const [timerBubbleCheckin, setTimerBubbleCheckin] = useState<CheckinWithProfile | null>(null);
-  // Screen coords of the tapped pin. TimerBubble anchors its tail to
-  // this point. Cleared whenever the bubble dismisses — the bubble is
-  // NEVER a floating element; it's always tied to the exact pin the
-  // user just tapped.
-  const [timerBubbleAnchor, setTimerBubbleAnchor] = useState<{ x: number; y: number } | null>(null);
-  // Tracks pending anchor-computation timers so rapid pin-taps don't
-  // stack onto each other (tap A fires its timer, user taps B before
-  // A's timer lands → we cancel A and start fresh for B).
-  const pendingAnchorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Separate timer that clears the anchor 180ms AFTER dismiss, so the
-  // Bubble can animate out at its anchored position. Tracked so a new
-  // tap can cancel it — otherwise a stale "clear" would wipe the
-  // freshly-set anchor of the new bubble.
-  const pendingAnchorClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Dismiss the timer bubble.
-   *  Clears the checkin immediately (so the Bubble component receives
-   *  `visible={false}` and starts its exit animation). The anchor is
-   *  cleared AFTER the 160ms exit completes — without this delay, the
-   *  bubble would re-position to mid-screen mid-fade and look like a
-   *  glitch. Fixes the "short-circuit disappearance" the user flagged. */
+  /** Dismiss the timer bubble. Bottom-sheet style — no anchor to clear,
+   *  no map state to restore. The Bubble component handles its own
+   *  slide-down animation; we just unset the source checkin. */
   const dismissTimerBubble = () => {
-    if (pendingAnchorTimer.current) {
-      clearTimeout(pendingAnchorTimer.current);
-      pendingAnchorTimer.current = null;
-    }
-    if (pendingAnchorClearTimer.current) {
-      clearTimeout(pendingAnchorClearTimer.current);
-    }
     setTimerBubbleCheckin(null);
-    pendingAnchorClearTimer.current = setTimeout(() => {
-      setTimerBubbleAnchor(null);
-      pendingAnchorClearTimer.current = null;
-    }, 180);
   };
   /* ── פניני חוכמה — Wisdom state ── */
   const [showWisdom, setShowWisdom] = useState(false);
@@ -708,83 +680,20 @@ export default function HomeScreen() {
     // TIMER pins — Waze-style anchored Bubble.
     //
     // Unified flow for BOTH owner and visitor (per ux skill's
-    // one-screen-per-concept rule): tap pin → soft map pan that
-    // centers on the pin and nudges it up just enough to give the
-    // bubble room, WITHOUT crashing into the top bar → Bubble pops
-    // in with a spring scale + fade.
+    // Bottom-sheet style: tap pin → haptic → bubble slides up from
+    // below the bottom tab bar. The map does NOT move — the user
+    // said this was too dizzying. Re-tapping the same pin dismisses.
     //
-    // The pan is intentionally gentle — enough to "organize the
-    // area" around the pin (which the user likes — brings nearby
-    // context into focus) but not enough to shove the pin into the
-    // top 20% of the screen where the bubble would be occluded.
+    // No anchor math, no pointForCoordinate, no map pan. The sheet
+    // always lands in the same place, which makes the interaction
+    // predictable and familiar (same pattern as Apple/Google Maps).
     if (isTimer) {
-      // Re-tap on the same pin → dismiss. Feels natural (user is
-      // cancelling their own tap) and preserves the old toggle UX.
       if (timerBubbleCheckin?.id === checkin.id) {
         dismissTimerBubble();
         return;
       }
-      // Cancel any in-flight anchor resolution from a previous tap so
-      // the new tap wins. Without this, a rapid A→B tap would briefly
-      // flash bubble A before landing on bubble B.
-      if (pendingAnchorTimer.current) {
-        clearTimeout(pendingAnchorTimer.current);
-        pendingAnchorTimer.current = null;
-      }
-      // If a different bubble is currently showing, start its exit
-      // animation now (clear checkin, let the 160ms fade-out play)
-      // and — critically — cancel the deferred anchor-clear timer it
-      // would have scheduled. Otherwise that stale timer fires AFTER
-      // we've set the new anchor and wipes it, making the new bubble
-      // vanish ~180ms after it appears.
-      if (timerBubbleCheckin) {
-        if (pendingAnchorClearTimer.current) {
-          clearTimeout(pendingAnchorClearTimer.current);
-          pendingAnchorClearTimer.current = null;
-        }
-        setTimerBubbleCheckin(null);
-      }
-
-      const lat = checkin.latitude ?? currentCity.lat;
-      const lng = checkin.longitude ?? currentCity.lng;
-
-      // Haptic confirms the tap registered.
       Haptics.selectionAsync().catch(() => {});
-
-      // Map pan — gentle. At latDelta 0.014, a lat shift of 0.0010
-      // puts the pin at ~43% from the top of the map (just above
-      // center). Previous aggressive shift was 0.0035 → pin at 25%,
-      // which jammed the bubble into the top bar. Now the bubble
-      // gets the upper ~43% for itself while the surrounding context
-      // around the pin is still nicely framed.
-      mapRef.current?.animateToRegion({
-        latitude: lat - 0.0010,
-        longitude: lng,
-        latitudeDelta: 0.014,
-        longitudeDelta: 0.014,
-      }, 320);
-
-      // After the pan completes, compute the pin's new screen
-      // coordinate and pop the bubble in. 340ms setTimeout = pan
-      // duration + tiny buffer so pointForCoordinate reports the
-      // final position, not an in-flight value.
-      pendingAnchorTimer.current = setTimeout(() => {
-        pendingAnchorTimer.current = null;
-        const p = mapRef.current?.pointForCoordinate({ latitude: lat, longitude: lng });
-        Promise.resolve(p)
-          .then((pt: any) => {
-            if (!pt || typeof pt.x !== 'number' || typeof pt.y !== 'number') {
-              setTimerBubbleAnchor({ x: screenW / 2, y: 280 });
-            } else {
-              setTimerBubbleAnchor({ x: pt.x, y: pt.y });
-            }
-            setTimerBubbleCheckin(checkin);
-          })
-          .catch(() => {
-            setTimerBubbleAnchor({ x: screenW / 2, y: 280 });
-            setTimerBubbleCheckin(checkin);
-          });
-      }, 340);
+      setTimerBubbleCheckin(checkin);
       return;
     }
 
@@ -1252,18 +1161,23 @@ export default function HomeScreen() {
         showsUserLocation={true}
         showsCompass={false}
         showsMyLocationButton={false}
-        onPress={() => { if (timerBubbleCheckin) dismissTimerBubble(); }}
+        onPress={() => {
+          // Tapping the map (not a pin) dismisses the bubble. The
+          // Bubble has its own transparent backdrop Pressable that
+          // also catches taps — this is a safety net for taps that
+          // land directly on the Map rather than on the backdrop.
+          if (timerBubbleCheckin) dismissTimerBubble();
+        }}
         // @ts-ignore — mapLanguage supported in react-native-maps 1.10+
         mapLanguage="en"
         customMapStyle={isDark ? DIM_MAP_STYLE : []}
         userInterfaceStyle={isDark ? 'dark' : 'light'}
         mapPadding={{ top: (headerH > 0 ? headerH : insets.top + s(36)) + s(30), left: 0, right: 0, bottom: s(40) }}
         onRegionChangeComplete={(region) => {
-          // The bubble is anchored to a screen pixel, not a coordinate,
-          // so after the map moves the old anchor is stale. Rather than
-          // recompute every frame (expensive), we dismiss — matches the
-          // user's spec: "doesn't float, doesn't move on its own".
-          if (timerBubbleCheckin) dismissTimerBubble();
+          // Bubble is bottom-docked now (no anchor), so map pan/zoom
+          // doesn't affect it. The user can freely explore the map
+          // while the popup is open at the bottom — same as Apple
+          // Maps / Google Maps.
           // Collect checkins visible in current map region
           const visible = filteredCheckins.filter(c => {
             const lat = c.latitude ?? 0;
@@ -1285,18 +1199,16 @@ export default function HomeScreen() {
         )}
       </MapView>
 
-      {/* ── Waze-style anchored timer bubble ──
-           Tail points at the exact pin the user just tapped. Bubble
-           owns its own CTA: join / chat / leave / manage — no deeper
-           sheet needed. Dismisses on tap outside / map tap / region
-           change. Never floats freely. */}
+      {/* ── Bottom-sheet timer bubble ──
+           Slides up from above the tab bar. Owns its own CTA
+           (join / chat / leave / manage). Dismisses on backdrop tap
+           or when another pin is tapped. The bubble's backdrop is
+           transparent (no dim) so the user's map context stays clear. */}
       <TimerBubble
-        visible={!!timerBubbleCheckin && !!timerBubbleAnchor}
+        visible={!!timerBubbleCheckin}
         checkin={timerBubbleCheckin as any}
         creatorName={timerBubbleCheckin?.profile?.full_name || 'Nomad'}
         creatorAvatarUrl={avatarUri((timerBubbleCheckin?.profile as any)?.avatar_url)}
-        anchorX={timerBubbleAnchor?.x ?? screenW / 2}
-        anchorY={timerBubbleAnchor?.y ?? 200}
         onClose={dismissTimerBubble}
       />
 

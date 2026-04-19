@@ -1,58 +1,43 @@
 /**
- * Bubble — Waze-style anchored popup. The canonical "peek" shell for
- * any pin/marker tap in the app. Not a modal — it's absolute-positioned
- * on top of the map, anchored above a specific screen coordinate via
- * its tail.
+ * Bubble — bottom-docked sheet for pin/marker tap popups.
  *
- * Design rules (locked per ux skill + user's Figma spec):
- *  - The bubble is ALWAYS connected to its source pin via the tail.
- *    It does not float, it does not drift. The user sees a clear
- *    visual line from tail → pin → anchor.
- *  - Dismisses on ANY touch outside: map tap, another pin tap, region
- *    change. Never stays open when the user's focus moves.
- *  - Avatar overlaps the bubble from above by 25 px (Figma spec), with
- *    a white border so it "sits on" the speech bubble.
- *  - Tail is a 40×20 triangle pointing down from the bubble's bottom.
- *  - Entire speech-bubble is the primary tap target (Waze pattern).
- *    Tapping it fires onPress. Tapping anywhere else fires onDismiss.
+ * Design decision (2026-04-19 revision): we moved AWAY from an
+ * anchored-with-tail popup (Waze-style) because the required map
+ * motion was making users dizzy. The new pattern:
  *
- * Positioning math:
- *   - `anchorX` / `anchorY` are the pin's screen coords
- *     (from `mapRef.current.pointForCoordinate(...)`).
- *   - The bubble's TAIL TIP sits at (anchorX, anchorY - pinOffset).
- *     That puts the bubble body entirely above the pin.
- *   - Height is measured via onLayout and used to position the top.
- *     First frame uses an estimate so there's no "pop" on mount.
+ *   - Edge-to-edge card with a small horizontal margin (16px each side)
+ *   - Floats above the bottom tab bar with a gentle gap
+ *   - Tall enough to cover the floating Timer/Status FABs, so the
+ *     user's eye stays on one surface while the bubble is open
+ *   - Slides UP from below on appear, slides DOWN on dismiss
+ *   - No tail — the source pin is communicated by a highlight on the
+ *     pin itself (scale + ring), rendered by the parent screen
+ *
+ * Matches the pattern used by Apple Maps, Google Maps, Airbnb, Yelp
+ * for place detail popovers. Familiar to anyone who's used a maps
+ * app, and it's the cleanest way to give a popup a lot of content
+ * space without shoving the map around.
+ *
+ * The visual shell (avatar overlapping the top, white rounded card,
+ * soft shadow) is preserved from the previous version — the user
+ * loves that styling, so the only change is positioning + animation.
  */
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, Animated,
   Pressable, Dimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { s, FW, useTheme, type ThemeColors } from '../lib/theme';
 
-const SCREEN_W = Dimensions.get('window').width;
-
-/** Pin visual height above its geographic anchor, in px.
- *  Approximation — pins are circular avatar markers ~50 px tall and
- *  react-native-maps anchors at the bottom-center by default. */
-const PIN_OFFSET = 12;
-
-/** Max bubble width — Figma: 90vw capped at a sane readable value. */
-const BUBBLE_MAX_WIDTH = Math.min(SCREEN_W * 0.9, 320);
+const SCREEN_H = Dimensions.get('window').height;
 
 interface Props {
   visible: boolean;
-  /** Screen X of the source pin (from pointForCoordinate). */
-  anchorX: number;
-  /** Screen Y of the source pin (from pointForCoordinate). */
-  anchorY: number;
   avatarUrl?: string | null;
-  /** Fallback avatar text (initials or emoji) when no avatarUrl. */
   avatarFallback?: string;
-  /** Background of the fallback avatar circle. */
   avatarFallbackColor?: string;
-  /** Tap on the speech-bubble body fires this. */
+  /** Tap on the speech-bubble body fires this (if defined). */
   onPress?: () => void;
   /** Tap outside (backdrop) fires this. */
   onDismiss: () => void;
@@ -60,34 +45,31 @@ interface Props {
 }
 
 export default function Bubble({
-  visible, anchorX, anchorY,
+  visible,
   avatarUrl, avatarFallback, avatarFallbackColor,
   onPress, onDismiss, children,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const st = useMemo(() => makeStyles(colors), [colors]);
-  const [bubbleH, setBubbleH] = useState(180); // estimate; onLayout corrects
+
+  // Slide-up/down animation. translateY starts at SCREEN_H (fully
+  // below screen) and springs to 0 on entry. On exit, it eases back
+  // to SCREEN_H while opacity fades. Two animated values kept separate
+  // because spring + timing are driven differently.
   const opacity = useRef(new Animated.Value(0)).current;
-  // Subtle scale range — big enough to feel alive, small enough that
-  // the tail stays visually attached to the pin through the whole
-  // animation. Heavy scaling would read as "the bubble detached".
-  const scale = useRef(new Animated.Value(0.92)).current;
-  // Stays mounted through the exit animation. Without this, dropping
-  // `visible` would unmount the view mid-fade and you'd see a glitchy
-  // disappearance — exactly the "short-circuit" the user reported.
+  const translateY = useRef(new Animated.Value(SCREEN_H)).current;
   const [mounted, setMounted] = useState(visible);
 
   useEffect(() => {
     if (visible) {
       setMounted(true);
-      // Pop-in: spring scale + opacity fade. The spring gives a tiny
-      // overshoot that reads as "alive", not just "appeared".
       Animated.parallel([
-        Animated.spring(scale, {
-          toValue: 1,
+        Animated.spring(translateY, {
+          toValue: 0,
           useNativeDriver: true,
-          friction: 6,
-          tension: 90,
+          friction: 11,   // controlled slide, no bouncy overshoot
+          tension: 68,
         }),
         Animated.timing(opacity, {
           toValue: 1,
@@ -96,76 +78,54 @@ export default function Bubble({
         }),
       ]).start();
     } else {
-      // Exit: scale down + fade in parallel. Slightly faster than entry
-      // so dismissal feels decisive. Unmount AFTER the animation ends
-      // so the parent can clear the anchor without the bubble jumping
-      // to a default screen position.
       Animated.parallel([
-        Animated.timing(scale, {
-          toValue: 0.94,
-          duration: 160,
+        Animated.timing(translateY, {
+          toValue: SCREEN_H * 0.4,  // slide down ~40% of screen — enough to clearly exit
+          duration: 200,
           useNativeDriver: true,
         }),
         Animated.timing(opacity, {
           toValue: 0,
-          duration: 160,
+          duration: 180,
           useNativeDriver: true,
         }),
       ]).start(({ finished }) => {
         if (finished) setMounted(false);
       });
     }
-  }, [visible, opacity, scale]);
+  }, [visible, opacity, translateY]);
 
   if (!mounted) return null;
 
-  // Total height incl. the avatar that pops ABOVE the bubble (25 px) and
-  // the tail that hangs BELOW (20 px). We anchor the TAIL TIP to the pin.
-  const AVATAR_POP_ABOVE = 25;
-  const TAIL_H = 20;
-  const topOfBubble = anchorY - PIN_OFFSET - TAIL_H - bubbleH + AVATAR_POP_ABOVE;
-  const left = Math.max(
-    s(4),
-    Math.min(anchorX - BUBBLE_MAX_WIDTH / 2, SCREEN_W - BUBBLE_MAX_WIDTH - s(4)),
-  );
-  const tailCenterX = anchorX - left; // px from bubble's left edge
-
   return (
     <>
-      {/* Invisible backdrop — catches taps anywhere outside the bubble
-          and dismisses. Covers the whole screen so any tap that didn't
-          already fire on the speech-bubble cancels it. */}
+      {/* Backdrop — full screen tap catcher. Transparent on purpose;
+          we don't dim the map because the user's context (what city,
+          where their finger just was) should stay clear. Tapping here
+          dismisses. */}
       <Pressable
         style={StyleSheet.absoluteFill}
         onPress={onDismiss}
         pointerEvents={visible ? 'auto' : 'none'}
       />
 
+      {/* The sheet itself. Anchored to the bottom with a gap above
+          the safe area (so it never touches the tab bar). Horizontal
+          margins keep it edge-to-edge with breathing room. */}
       <Animated.View
         pointerEvents={visible ? 'box-none' : 'none'}
         style={[
           st.wrap,
           {
-            left,
-            top: topOfBubble,
-            width: BUBBLE_MAX_WIDTH,
+            bottom: insets.bottom + s(6),  // gap above tab bar / home indicator
             opacity,
-            // Subtle scale gives the popup a "pop" on entry without
-            // visually detaching from the pin (range is 0.92→1, only
-            // 8% shrink at worst). No transform-origin trick needed —
-            // the tail remains close enough to the pin throughout.
-            transform: [{ scale }],
+            transform: [{ translateY }],
           },
         ]}
-        onLayout={(e) => {
-          const h = e.nativeEvent.layout.height;
-          if (Math.abs(h - bubbleH) > 1) setBubbleH(h);
-        }}
       >
-        {/* Avatar overlapping top of speech bubble.
-            Negative marginBottom pulls the next sibling up 25 px so
-            the avatar sits half-in / half-out of the bubble. */}
-        <View style={[st.avatarWrap, avatarFallbackColor ? { backgroundColor: '#fff' } : null]}>
+        {/* Avatar overlapping the top of the card. Same styling as
+            before — 60px circle, 4px white border, soft shadow. */}
+        <View style={st.avatarWrap}>
           {avatarUrl ? (
             <Image source={{ uri: avatarUrl }} style={st.avatar} />
           ) : (
@@ -175,26 +135,18 @@ export default function Bubble({
           )}
         </View>
 
-        {/* The speech bubble body — the Waze white card. Entire surface
-            is the primary tap target. */}
+        {/* The card itself — white, rounded, shadowed. Whole surface
+            is tappable when onPress is provided (parent decides). */}
         <TouchableOpacity
-          activeOpacity={0.92}
+          activeOpacity={onPress ? 0.94 : 1}
           onPress={onPress}
-          style={st.speechBubble}
+          style={st.card}
+          disabled={!onPress}
         >
           <View style={st.content}>
             {children}
           </View>
         </TouchableOpacity>
-
-        {/* Tail — triangle pointing down. Centered under the anchor X
-            so the visual line from tail tip → pin is straight. */}
-        <View
-          style={[
-            st.tail,
-            { left: tailCenterX - 20 },
-          ]}
-        />
       </Animated.View>
     </>
   );
@@ -203,10 +155,13 @@ export default function Bubble({
 const makeStyles = (c: ThemeColors) => StyleSheet.create({
   wrap: {
     position: 'absolute',
+    left: s(8),   // ~16px
+    right: s(8),
     alignItems: 'center',
+    zIndex: 50,
   },
 
-  /* Avatar — sits on top of the speech bubble */
+  /* Avatar on top — overlaps the card by 25px per original Figma */
   avatarWrap: {
     width: 60,
     height: 60,
@@ -215,9 +170,8 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     borderWidth: 4,
     borderColor: '#FFFFFF',
     alignSelf: 'center',
-    marginBottom: -25, // pulls the speech bubble up so avatar overlaps
+    marginBottom: -25,
     zIndex: 2,
-    // Figma: shadow blur 8, color #000, opacity 0.1
     shadowColor: '#000',
     shadowOpacity: 0.1,
     shadowOffset: { width: 0, height: 2 },
@@ -235,41 +189,25 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     color: '#3B1F1A',
   },
 
-  /* Speech bubble — the white card. Figma: padding 40/32/24/32. */
-  speechBubble: {
+  /* The card body. Same Figma spec as before — 20px radius, 40/32/24/32
+     padding, soft 20-blur shadow. No tail. */
+  card: {
     width: '100%',
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     paddingTop: 40,
     paddingHorizontal: 32,
-    paddingBottom: 24,
+    paddingBottom: 28,
     alignItems: 'center',
-    // Figma: shadow blur 20, color #000, opacity 0.15
     shadowColor: '#000',
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.18,
     shadowOffset: { width: 0, height: 8 },
-    shadowRadius: 20,
-    elevation: 10,
+    shadowRadius: 24,
+    elevation: 12,
     zIndex: 1,
   },
   content: {
     width: '100%',
     alignItems: 'center',
-  },
-
-  /* Tail — triangle pointing down. Border-hack: transparent L/R,
-     colored top creates a downward isoceles triangle. */
-  tail: {
-    position: 'absolute',
-    bottom: -19, // just below the speech bubble (1px overlap kills the seam)
-    width: 0,
-    height: 0,
-    borderLeftWidth: 20,
-    borderRightWidth: 20,
-    borderTopWidth: 20,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderTopColor: '#FFFFFF',
-    zIndex: 0,
   },
 });
