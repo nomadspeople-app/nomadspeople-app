@@ -1326,10 +1326,10 @@ export async function createOrJoinStatusChat(
   statusText: string,
   metadata?: GroupMetadata,
   // When the event is private (is_open=false), the member is inserted
-  // with status='pending' instead of 'active'. No join message, no
+  // with status='request' instead of 'active'. No join message, no
   // member_count bump, no chat access yet — until the owner approves.
   requiresApproval: boolean = false,
-): Promise<{ conversationId: string; memberStatus: 'active' | 'pending'; error: any }> {
+): Promise<{ conversationId: string; memberStatus: 'active' | 'request'; error: any }> {
   try {
     const groupName = statusText || 'Activity';
 
@@ -1353,10 +1353,10 @@ export async function createOrJoinStatusChat(
         .maybeSingle();
 
       if (!alreadyMember) {
-        // Private events land in 'pending' — owner must approve before the
+        // Private events land in 'request' — owner must approve before the
         // joiner sees the chat or gets counted. Public events go in as 'active'
         // (the old behavior) and immediately see the chat + join message.
-        const newStatus = requiresApproval ? 'pending' : 'active';
+        const newStatus = requiresApproval ? 'request' : 'active';
         await supabase
           .from('app_conversation_members')
           .insert({ conversation_id: foundConvId, user_id: myUserId, role: 'member', status: newStatus });
@@ -1387,7 +1387,7 @@ export async function createOrJoinStatusChat(
         // is what we want — it tells the owner someone requested to join.
       }
 
-      return { conversationId: foundConvId, memberStatus: (alreadyMember ? 'active' : (requiresApproval ? 'pending' : 'active')), error: null };
+      return { conversationId: foundConvId, memberStatus: (alreadyMember ? 'active' : (requiresApproval ? 'request' : 'active')), error: null };
     }
 
     // No existing group — create a new one (with activity metadata)
@@ -1421,7 +1421,7 @@ export async function createOrJoinStatusChat(
 
     // Add both users as members. Owner is always 'active'; joiner's status
     // depends on whether the event is private (needs approval).
-    const joinerStatus = requiresApproval && statusOwnerId !== myUserId ? 'pending' : 'active';
+    const joinerStatus = requiresApproval && statusOwnerId !== myUserId ? 'request' : 'active';
     const members = [
       { conversation_id: newConv.id, user_id: statusOwnerId, role: 'admin', status: 'active' },
     ];
@@ -1536,7 +1536,7 @@ export async function denyPendingMember(
   try {
     const { error } = await supabase
       .from('app_conversation_members')
-      .update({ status: 'denied' })
+      .update({ status: 'declined' })
       .eq('conversation_id', conversationId)
       .eq('user_id', userId);
     return { ok: !error, error };

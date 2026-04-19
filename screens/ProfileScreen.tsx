@@ -1136,7 +1136,7 @@ export default function ProfileScreen() {
                       .from('app_conversation_members')
                       .select('user_id, profile:app_profiles!user_id(username, avatar_url, display_name, full_name)')
                       .eq('conversation_id', conv.id)
-                      .eq('status', 'pending');
+                      .eq('status', 'request');
                     if (pendings) {
                       setPendingRequests(
                         (pendings as any[]).map((p) => ({

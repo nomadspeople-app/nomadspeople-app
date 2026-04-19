@@ -122,7 +122,7 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
           if (membership) {
             // Differentiate between approved members (joined) and pending
             // requests (waiting for owner) so the UI shows the right state.
-            if ((membership as any).status === 'pending') {
+            if ((membership as any).status === 'request') {
               setRequestPending(true);
               setConversationId(convId);
             } else {
