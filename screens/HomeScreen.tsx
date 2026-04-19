@@ -213,8 +213,12 @@ function buildNomadMarker(
   hotMap?: Map<string, number>,
 ) {
   const catStyle = getCatStyle(c.category);
-  const ini = getInitials(c.profile?.full_name);
-  const firstName = c.profile?.full_name?.split(' ')[0] || 'Nomad';
+  // Prefer display_name (the user-controlled "nickname") over full_name —
+  // legacy rows sometimes have full_name='Deleted User' or similar stale
+  // defaults. display_name is the thing the user actually set in Settings.
+  const nameForDisplay = (c.profile as any)?.display_name || c.profile?.full_name || '';
+  const ini = getInitials(nameForDisplay || undefined);
+  const firstName = nameForDisplay?.split(' ')[0] || 'Nomad';
   const pinEmoji = c.status_emoji || catStyle.emoji;
   const avatarUrl = (c.profile as any)?.avatar_url || null;
   const isTimer = (c as any).checkin_type === 'timer';

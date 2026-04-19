@@ -10,7 +10,12 @@
 import { CITIES } from '../components/CityPickerSheet';
 import { haversineKm } from './distance';
 
-const CITY_SEARCH_RADIUS_KM = 50;
+// Was 50 km — too wide. A user picking a Rehovot venue (≈20 km from Tel
+// Aviv) was getting their event tagged 'Tel Aviv' because Tel Aviv was
+// the nearest CITIES entry within 50 km. 15 km matches "same urban area
+// / immediate suburbs only" — anything further falls through to Nominatim,
+// which returns the actual city name.
+const CITY_SEARCH_RADIUS_KM = 15;
 
 /** Reverse geocode using Nominatim — returns city name or empty string */
 export async function reverseGeocodeCity(lat: number, lng: number): Promise<string> {
