@@ -754,23 +754,11 @@ export default function SettingsScreen() {
         </View>
 
         {/* ═══ VISIBILITY ═══ */}
+        {/* Show-on-map row removed for v1.0 — see screens/SettingsScreen.removed.tsx.
+            Snooze mode below is the single user-facing visibility toggle;
+            handleToggleSnooze syncs show_on_map internally. */}
         <SectionHeader title="visibility" />
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
-          <SettingsRow
-            icon="eye"
-            label={t('settings.showOnMap')}
-            sublabel={t('settings.showOnMapSub')}
-            right={
-              <Switch
-                value={showOnMap}
-                onValueChange={handleToggleShowOnMap}
-                trackColor={{ false: '#D1D5DB', true: colors.success }}
-                ios_backgroundColor="#D1D5DB"
-                thumbColor="white"
-              />
-            }
-          />
-          <View style={[styles.divider, { backgroundColor: colors.borderSoft }]} />
           <SettingsRow
             icon="moon-stars"
             label="Snooze mode"
@@ -897,20 +885,7 @@ export default function SettingsScreen() {
               />
             }
           />
-          <View style={styles.divider} />
-          <SettingsRow
-            icon="trending"
-            label={t('settings.notifyHeating')}
-            right={
-              <Switch
-                value={notifyHeating}
-                onValueChange={handleToggleHeating}
-                trackColor={{ false: '#D1D5DB', true: colors.success }}
-                ios_backgroundColor="#D1D5DB"
-                thumbColor="white"
-              />
-            }
-          />
+          {/* "Activities heating up" row removed for v1.0 — see SettingsScreen.removed.tsx */}
           <View style={styles.divider} />
           <SettingsRow
             icon="target"
@@ -927,21 +902,7 @@ export default function SettingsScreen() {
               </View>
             }
           />
-          <View style={styles.divider} />
-          <SettingsRow
-            icon="eye"
-            label="Profile views"
-            sublabel="When someone views your profile"
-            right={
-              <Switch
-                value={notifyProfileView}
-                onValueChange={handleToggleProfileView}
-                trackColor={{ false: '#D1D5DB', true: colors.success }}
-                ios_backgroundColor="#D1D5DB"
-                thumbColor="white"
-              />
-            }
-          />
+          {/* "Profile views" notification removed for v1.0 — see SettingsScreen.removed.tsx */}
           <View style={styles.divider} />
           <SettingsRow
             icon="chat"
@@ -972,21 +933,7 @@ export default function SettingsScreen() {
               />
             }
           />
-          <View style={styles.divider} />
-          <SettingsRow
-            icon="heart"
-            label="DNA matches"
-            sublabel="When you match with a nearby nomad"
-            right={
-              <Switch
-                value={notifyDnaMatch}
-                onValueChange={handleToggleDnaMatch}
-                trackColor={{ false: '#D1D5DB', true: colors.success }}
-                ios_backgroundColor="#D1D5DB"
-                thumbColor="white"
-              />
-            }
-          />
+          {/* "DNA matches" notification removed for v1.0 — see SettingsScreen.removed.tsx */}
         </View>
 
         {/* ═══ SOCIAL ═══ */}
