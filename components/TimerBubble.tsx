@@ -81,9 +81,17 @@ function useCountdown(exp: string | null) {
 
 /** Load members of the timer's conversation (if it exists). Excludes
  *  the creator — they're already shown as the big avatar on top.
- *  Queries via app_conversations.checkin_id (exact link), not the
- *  fragile name-match the old TimerBubble used. */
-function useJoinedMembers(checkinId: string | null, creatorUserId: string | null, refreshKey: number) {
+ *  Primary lookup: app_conversations.checkin_id (exact link).
+ *  Fallback: name + created_by — used for conversations created by
+ *  older code paths that didn't set checkin_id. Without this
+ *  fallback, the chat/leave buttons stay disabled after join
+ *  because no conversation is found. */
+function useJoinedMembers(
+  checkinId: string | null,
+  creatorUserId: string | null,
+  checkinName: string | null,
+  refreshKey: number,
+) {
   const [members, setMembers] = useState<MemberLite[]>([]);
   const [myMembership, setMyMembership] = useState<'none' | 'active' | 'request'>('none');
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -93,11 +101,29 @@ function useJoinedMembers(checkinId: string | null, creatorUserId: string | null
     if (!checkinId) { setMembers([]); setConversationId(null); setMyMembership('none'); return; }
     let cancelled = false;
     const load = async () => {
-      const { data: conv } = await supabase
+      // 1. Try exact link via checkin_id
+      const byCheckin = await supabase
         .from('app_conversations')
         .select('id')
         .eq('checkin_id', checkinId)
         .maybeSingle();
+      let conv = byCheckin.data;
+
+      // 2. Fallback for legacy chats with no checkin_id set — match
+      //    by owner + name (exactly what createOrJoinStatusChat does
+      //    when it looks for "existing" conversations).
+      if (!conv?.id && creatorUserId && checkinName) {
+        const byName = await supabase
+          .from('app_conversations')
+          .select('id')
+          .eq('type', 'group')
+          .eq('name', checkinName)
+          .eq('created_by', creatorUserId)
+          .limit(1)
+          .maybeSingle();
+        conv = byName.data;
+      }
+
       if (cancelled) return;
       if (!conv?.id) {
         // No chat yet — nobody joined. Only the creator exists.
@@ -141,7 +167,7 @@ function useJoinedMembers(checkinId: string | null, creatorUserId: string | null
     return () => { cancelled = true; };
   }, [checkinId, creatorUserId, userId, refreshKey]);
 
-  return { members, myMembership, conversationId, setMyMembership };
+  return { members, myMembership, conversationId, setConversationId, setMyMembership };
 }
 
 export default function TimerBubble({
@@ -163,15 +189,25 @@ export default function TimerBubble({
   // Optimistically show me in the members row right after I tap Join.
   // Cleared whenever the bubble reopens for a fresh checkin.
   const [optimisticallyJoined, setOptimisticallyJoined] = useState(false);
+  // Optimistic count adjustment — +1 on Join (before server confirms),
+  // -1 on Leave. Merged with checkin.member_count for display so the
+  // "X going" number reacts instantly to taps, before refetch.
+  const [countDelta, setCountDelta] = useState(0);
 
   useEffect(() => {
     // Reset transient state whenever the bubble changes target.
     setOptimisticallyJoined(false);
     setJoining(false);
+    setCountDelta(0);
   }, [checkin?.id]);
 
-  const { members, myMembership, conversationId, setMyMembership } =
-    useJoinedMembers(checkin?.id || null, checkin?.user_id || null, refreshKey);
+  const { members, myMembership, conversationId, setConversationId, setMyMembership } =
+    useJoinedMembers(
+      checkin?.id || null,
+      checkin?.user_id || null,
+      checkin?.activity_text || checkin?.status_text || null,
+      refreshKey,
+    );
 
   const iAmMember = myMembership === 'active' || optimisticallyJoined;
 
@@ -186,27 +222,50 @@ export default function TimerBubble({
     if (!checkin || !userId || joining) return;
     setJoining(true);
     setOptimisticallyJoined(true); // immediate UI response
+    setCountDelta(1);               // "X going" bumps +1 instantly
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     try {
       const { conversationId: cid, memberStatus, error } = await createOrJoinStatusChat(
         userId,
         checkin.user_id,
         checkin.activity_text || checkin.status_text || 'Timer',
-        // TimerBubble is always called for timer pins; timers are always
-        // public per spec so requiresApproval is implicitly false here.
+        // Pass metadata so the new conversation gets linked to this
+        // exact checkin via checkin_id. Without this, useJoinedMembers
+        // can't find the conv on the next render and the chat/leave
+        // buttons stay disabled. (Backwards-compatible name+owner
+        // fallback exists in the hook for older convs without this
+        // link.) Timers are always public per spec.
+        {
+          checkinId: checkin.id,
+          activityText: checkin.activity_text || checkin.status_text || 'Timer',
+          emoji: checkin.status_emoji || null,
+          category: (checkin as any).category || null,
+          locationName: checkin.location_name || null,
+          latitude: checkin.latitude || null,
+          longitude: checkin.longitude || null,
+          isOpen: true,
+        } as any,
       );
       if (error || !cid) {
+        // Roll back optimistic state — server rejected.
         setOptimisticallyJoined(false);
+        setCountDelta(0);
         Alert.alert('could not join', (error as any)?.message || 'please try again');
         setJoining(false);
         return;
       }
+      // Set conversationId IMMEDIATELY from the helper's return — so
+      // tapping chat/leave right after joining works without waiting
+      // for the refetch cycle. (Previously the buttons did nothing
+      // because `conversationId` was still null at that moment.)
+      setConversationId(cid);
       if (memberStatus === 'active') setMyMembership('active');
       trackEvent(userId, 'join_timer', 'checkin', checkin.id);
       // Pull the real members list so my avatar enters with the right data.
       setRefreshKey(k => k + 1);
     } catch (e: any) {
       setOptimisticallyJoined(false);
+      setCountDelta(0);
       Alert.alert('could not join', e?.message || 'please try again');
     } finally {
       setJoining(false);
@@ -237,9 +296,11 @@ export default function TimerBubble({
           style: 'destructive',
           onPress: async () => {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
-            await leaveGroupChat(userId, conversationId);
+            // Optimistic count decrement — "X going" drops by 1 now.
+            setCountDelta(-1);
             setOptimisticallyJoined(false);
             setMyMembership('none');
+            await leaveGroupChat(userId, conversationId);
             setRefreshKey(k => k + 1);
           },
         },
@@ -260,14 +321,17 @@ export default function TimerBubble({
   const st = styles(colors);
 
   // Member row — ALWAYS rendered so the bubble height stays constant
-  // across states (empty → joined). Empty state shows an inviting
-  // "be the first" line so the slot doesn't read as missing.
+  // across states. Always shows a participant count from screen one
+  // (the creator counts as 1; joiners add to it). On Join, count
+  // bumps optimistically by +1 the moment the user taps, before the
+  // server confirms.
   const shown = members.slice(0, 3);
-  // Add myself optimistically at the end of the strip for instant feedback
   const meShown = optimisticallyJoined && !shown.some(m => m.user_id === userId);
   const othersCount = Math.max(0, members.length - shown.length);
-  // Total joiners visible (including the optimistic me, if any)
-  const goingCount = members.length + (meShown ? 1 : 0);
+  // checkin.member_count comes from the DB and includes the creator.
+  // Add the optimistic +1 so my tap on Join feels instant.
+  const baseCount = Math.max(1, checkin?.member_count ?? 1);
+  const goingCount = Math.max(1, baseCount + countDelta);
 
   return (
     <Bubble
@@ -299,31 +363,28 @@ export default function TimerBubble({
         </Text>
       )}
 
-      {/* Member row — ALWAYS rendered (constant bubble height). When
-          nobody has joined yet, shows a gentle invitation instead of
-          an empty strip. When joiners exist: avatars + "+N more" and
-          a "X going" count to give immediate presence. */}
+      {/* Member row — ALWAYS rendered with a count, from screen one.
+          The creator counts as 1 (so a fresh timer with no joiners
+          shows "1 going"). Each new join bumps the count optimistically.
+          Avatar strip shows joiners (creator's avatar is already at
+          the top of the bubble — no need to repeat them here). */}
       <View style={st.membersRow}>
-        {goingCount === 0 ? (
-          <Text style={st.emptyMembers}>be the first to join</Text>
-        ) : (
-          <>
-            <View style={st.avatarStrip}>
-              {shown.map((m) => (
-                <MemberDot key={m.user_id} url={m.avatar_url} name={m.full_name} st={st} />
-              ))}
-              {meShown && (
-                <MemberDot key="me" url={null} name="you" st={st} highlight={colors.primary} />
-              )}
-              {othersCount > 0 && (
-                <View style={[st.memberDot, st.memberDotMore]}>
-                  <Text style={st.memberMoreText}>+{othersCount}</Text>
-                </View>
-              )}
-            </View>
-            <Text style={st.goingCount}>{goingCount} going</Text>
-          </>
+        {(shown.length > 0 || meShown) && (
+          <View style={st.avatarStrip}>
+            {shown.map((m) => (
+              <MemberDot key={m.user_id} url={m.avatar_url} name={m.full_name} st={st} />
+            ))}
+            {meShown && (
+              <MemberDot key="me" url={null} name="you" st={st} highlight={colors.primary} />
+            )}
+            {othersCount > 0 && (
+              <View style={[st.memberDot, st.memberDotMore]}>
+                <Text style={st.memberMoreText}>+{othersCount}</Text>
+              </View>
+            )}
+          </View>
         )}
+        <Text style={st.goingCount}>{goingCount} going</Text>
       </View>
 
       {/* CTA area — fixed total height across all states so the bubble
