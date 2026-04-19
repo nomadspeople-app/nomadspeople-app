@@ -261,14 +261,56 @@ If any answer is no, fix it before committing.
 ## Reference Pointers
 
 - `CLAUDE.md` — locked architectural invariants (map pin flow, avatar cache, visibility reciprocal rule, i18n). Read first.
-- `logic` skill — the closed-loop contract every interactive element must satisfy. This skill assumes the logic skill's rules are met; it handles the *look and feel* of the same interaction.
-- `thorough` skill — the investigation discipline before writing code. Pair this skill with `thorough` on any UX change that touches DB state.
-- `nomadspeople` skill — the product's north star, if a UX decision becomes a product decision ("should this feature even exist?").
-- Working implementations that embody the rules in this skill:
-  - `screens/GroupInfoScreen.tsx` — unified info screen with creator pill row at top.
+- `docs/2026-04-19-daily-lock.md` — latest session summary + locked design decisions. Read this to know the live state.
+- `logic` skill — closed-loop contract for every interactive element.
+- `thorough` skill — investigation discipline before writing code.
+- `nomadspeople` skill — product north star.
+- Canonical working implementations:
+  - **`components/Bubble.tsx`** — the bottom-docked sheet shell for pin-peek popups. Use for any new peek surface.
+  - **`components/TimerBubble.tsx`** — content layout inside a Bubble (avatar-on-top, inline bold name + activity title, countdown, Facepile, fixed-height CTA).
+  - `components/MembersModal.tsx` — pageSheet full members list with role-gated remove.
+  - `screens/GroupInfoScreen.tsx` — unified info screen, creator pills at top.
   - `screens/PulseScreen.tsx` — Messages tab with peach palette, sticky swipe, hide-not-leave, undo toast.
-  - `components/MembersModal.tsx` — pageSheet "window" with role-gated remove affordance.
-  - `components/TimerBubble.tsx` — tap-in-place bubble (owner) / route-to-sheet (visitor).
+
+---
+
+## Locked Patterns (2026-04-19) — do not drift without a user ask
+
+### Bubble shell — bottom-docked, no tail
+  - 16px horizontal margin, `bottom: insets.bottom + s(3)`
+  - 20px radius, shadow blur 20 opacity 0.15, padding 40/32/28/32
+  - Avatar on top: 60×60, 4px white border, `marginBottom: -25`
+  - Entry: spring `translateY` (friction 11, tension 68) + opacity fade
+  - Exit: timing down + opacity; stays mounted through anim
+  - Transparent full-screen Pressable backdrop for tap-to-dismiss
+  - **Tail-anchored popup is retired.** Do not reintroduce.
+
+### Map motion on pin tap — gentle
+  - `animateToRegion` 320ms, `latitude - 0.0010` at `latDelta 0.014`
+  - Do not use larger shifts; user rejected aggressive pan.
+
+### Facepile — strict spec
+  - 32×32 circles, uniform for every participant
+  - 2px solid white border on each
+  - `marginLeft: -14` from the 2nd avatar onwards (heavy overlap)
+  - MAX 3 shown; overflow → 4th gray `#E5E7EB` circle with `+N`
+  - NO usernames, NO highlight on "me", NO size variations
+  - `N going` text next to stack (fontSize 14, color `#6B7280`)
+
+### CTA inside a Bubble — fixed height across states
+  - Visitor-not-joined: full-width JOIN `#E8614D`
+  - Visitor-joined: Chat `#60A5FA` (flex 2.2) + Leave `#EF4444` (flex 1) on one row
+  - Owner: full-width MANAGE `#E8614D`
+  - All: padding 14, radius 14, white lowercase bold label fontSize 17
+
+### Counts are optimistic
+  - Display = `max(localParticipants, member_count + delta)`
+  - +1 on Join tap, -1 on Leave tap, rolled back on server failure
+  - Floor: 1 (the creator)
+
+### Copy
+  - lowercase verbs: `join` `chat` `leave` `manage` `edit name` etc.
+  - counts read `N going`, not `N participants`
 
 ---
 
