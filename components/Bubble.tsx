@@ -117,7 +117,10 @@ export default function Bubble({
         style={[
           st.wrap,
           {
-            bottom: insets.bottom + s(6),  // gap above tab bar / home indicator
+            // Gentle gap above the safe area / tab bar — small enough
+            // that the bubble feels docked to the bottom, large enough
+            // that it doesn't visually kiss the tab bar.
+            bottom: insets.bottom + s(3),
             opacity,
             transform: [{ translateY }],
           },

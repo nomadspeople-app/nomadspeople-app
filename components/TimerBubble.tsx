@@ -259,12 +259,15 @@ export default function TimerBubble({
 
   const st = styles(colors);
 
-  // Member row — up to 3 avatars, then "+N more"
+  // Member row — ALWAYS rendered so the bubble height stays constant
+  // across states (empty → joined). Empty state shows an inviting
+  // "be the first" line so the slot doesn't read as missing.
   const shown = members.slice(0, 3);
   // Add myself optimistically at the end of the strip for instant feedback
   const meShown = optimisticallyJoined && !shown.some(m => m.user_id === userId);
   const othersCount = Math.max(0, members.length - shown.length);
-  const showMembersRow = shown.length > 0 || meShown;
+  // Total joiners visible (including the optimistic me, if any)
+  const goingCount = members.length + (meShown ? 1 : 0);
 
   return (
     <Bubble
@@ -296,59 +299,74 @@ export default function TimerBubble({
         </Text>
       )}
 
-      {/* Member avatars — medium circles, social proof */}
-      {showMembersRow && (
-        <View style={st.membersRow}>
-          {shown.map((m) => (
-            <MemberDot key={m.user_id} url={m.avatar_url} name={m.full_name} st={st} />
-          ))}
-          {meShown && (
-            <MemberDot key="me" url={null} name="you" st={st} highlight={colors.primary} />
-          )}
-          {othersCount > 0 && (
-            <View style={[st.memberDot, st.memberDotMore]}>
-              <Text style={st.memberMoreText}>+{othersCount}</Text>
+      {/* Member row — ALWAYS rendered (constant bubble height). When
+          nobody has joined yet, shows a gentle invitation instead of
+          an empty strip. When joiners exist: avatars + "+N more" and
+          a "X going" count to give immediate presence. */}
+      <View style={st.membersRow}>
+        {goingCount === 0 ? (
+          <Text style={st.emptyMembers}>be the first to join</Text>
+        ) : (
+          <>
+            <View style={st.avatarStrip}>
+              {shown.map((m) => (
+                <MemberDot key={m.user_id} url={m.avatar_url} name={m.full_name} st={st} />
+              ))}
+              {meShown && (
+                <MemberDot key="me" url={null} name="you" st={st} highlight={colors.primary} />
+              )}
+              {othersCount > 0 && (
+                <View style={[st.memberDot, st.memberDotMore]}>
+                  <Text style={st.memberMoreText}>+{othersCount}</Text>
+                </View>
+              )}
             </View>
-          )}
-        </View>
-      )}
+            <Text style={st.goingCount}>{goingCount} going</Text>
+          </>
+        )}
+      </View>
 
-      {/* Primary CTA — takes roughly half the bubble's vertical air */}
+      {/* CTA area — fixed total height across all states so the bubble
+          doesn't grow/shrink between "not joined" and "joined". */}
       <View style={st.ctaWrap}>
         {isOwn ? (
+          /* Owner: full-width manage button */
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={handleManage}
-            style={[st.cta, st.ctaPrimary]}
+            style={[st.cta, st.ctaJoin]}
           >
             <NomadIcon name="settings" size={s(6)} color="#fff" strokeWidth={1.8} />
             <Text style={st.ctaText}>manage</Text>
           </TouchableOpacity>
         ) : iAmMember ? (
-          <>
+          /* Joined visitor: chat (blue, wide) + leave (red, narrow)
+             on the SAME ROW. Same height as the Join button so the
+             total bubble height is identical across states. */
+          <View style={st.ctaRow}>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={handleChat}
-              style={[st.cta, st.ctaPrimary]}
+              style={[st.cta, st.ctaChat, { flex: 2.2 }]}
             >
               <NomadIcon name="chat" size={s(6)} color="#fff" strokeWidth={1.8} />
               <Text style={st.ctaText}>chat</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              activeOpacity={0.7}
+              activeOpacity={0.85}
               onPress={handleLeave}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={st.leaveLink}
+              style={[st.cta, st.ctaLeave, { flex: 1 }]}
             >
-              <Text style={st.leaveLinkText}>leave</Text>
+              <Text style={st.ctaText}>leave</Text>
             </TouchableOpacity>
-          </>
+          </View>
         ) : (
+          /* Visitor not yet joined: full-width JOIN */
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={handleJoin}
             disabled={joining}
-            style={[st.cta, st.ctaPrimary, joining && { opacity: 0.7 }]}
+            style={[st.cta, st.ctaJoin, joining && { opacity: 0.7 }]}
           >
             {joining ? (
               <ActivityIndicator color="#fff" size="small" />
@@ -416,13 +434,21 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     marginBottom: 14,
   },
 
-  /* Member row */
+  /* Member row — fixed min-height so the bubble doesn't grow
+     when the first person joins. Shows either the empty-state
+     invitation or the avatars + "X going" count. */
   membersRow: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 10,
     marginBottom: 16,
+  },
+  avatarStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   memberDot: {
     width: 36,
@@ -449,48 +475,70 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     fontWeight: '700',
     color: '#6B7280',
   },
+  goingCount: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  emptyMembers: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#9CA3AF',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
 
-  /* CTA — takes the lower half of the bubble */
+  /* CTA area — constant height across states */
   ctaWrap: {
     width: '100%',
-    alignItems: 'center',
     marginTop: 4,
+  },
+  ctaRow: {
+    flexDirection: 'row',
+    gap: 8,
   },
   cta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    width: '100%',
     paddingVertical: 14,
     borderRadius: 14,
+    width: '100%', // overridden by flex in the Chat/Leave row
   },
-  ctaPrimary: {
-    backgroundColor: '#E8614D', // brand primary
+  /* Join / Manage — brand coral, full width */
+  ctaJoin: {
+    backgroundColor: '#E8614D',
     shadowColor: '#E8614D',
     shadowOpacity: 0.25,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 8,
     elevation: 4,
   },
+  /* Chat — gentle blue, wide. Soft shadow in its own tone. */
+  ctaChat: {
+    backgroundColor: '#60A5FA',
+    shadowColor: '#60A5FA',
+    shadowOpacity: 0.28,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  /* Leave — solid red, narrower. Same height/radius as chat so the
+     two read as a paired action bar rather than a heavy CTA + tiny link. */
+  ctaLeave: {
+    backgroundColor: '#EF4444',
+    shadowColor: '#EF4444',
+    shadowOpacity: 0.22,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 3,
+  },
   ctaText: {
     fontSize: 17,
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.3,
-    textTransform: 'lowercase',
-  },
-
-  /* Secondary leave link — small, unobtrusive */
-  leaveLink: {
-    marginTop: 10,
-    paddingVertical: 4,
-    paddingHorizontal: 12,
-  },
-  leaveLinkText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#9CA3AF',
     textTransform: 'lowercase',
   },
 });
