@@ -800,45 +800,6 @@ export default function SettingsScreen() {
               />
             }
           />
-          <View style={[styles.divider, { backgroundColor: colors.borderSoft }]} />
-
-          {/* Visibility */}
-          <View style={styles.row}>
-            <View style={[styles.rowIcon, { backgroundColor: colors.pill }]}>
-              <NomadIcon name="eye" size={s(7)} color={colors.dark} strokeWidth={1.6} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.rowLabel, { color: colors.dark }]}>Visibility</Text>
-              <Text style={[styles.rowSublabel, { color: colors.textMuted }]}>How visible are you to others?</Text>
-              <View style={{ marginTop: s(5), flexDirection: 'row', gap: s(3) }}>
-                {[
-                  { value: 'public' as const, label: 'Everyone' },
-                  { value: 'city_only' as const, label: 'Same city' },
-                  { value: 'invisible' as const, label: 'Invisible' },
-                ].map((opt) => (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[
-                      styles.visibilityBtn,
-                      visibility === opt.value && styles.visibilityBtnActive,
-                      { backgroundColor: visibility === opt.value ? colors.primary : colors.pill },
-                    ]}
-                    onPress={() => handleVisibilityChange(opt.value)}
-                  >
-                    <Text
-                      style={[
-                        styles.visibilityBtnText,
-                        visibility === opt.value && styles.visibilityBtnTextActive,
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          </View>
-
           {/* Age Range */}
           <View style={styles.row}>
             <View style={[styles.rowIcon, { backgroundColor: colors.pill }]}>
