@@ -13,6 +13,7 @@ import type { RouteProp } from '@react-navigation/native';
 import NomadIcon from '../components/NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList } from '../lib/types';
+import { postEventSystemMessage, eventSystemMsg } from '../lib/eventSystemMessages';
 import { useProfile, useFollow, usePhotoPosts, usePhotoLike, usePhotoComments, createOrJoinStatusChat, createOrFindDM, calcAge, getZodiac, blockUser, type FollowerPreview } from '../lib/hooks';
 import { AuthContext, useAuthContext } from '../App';
 import type { PhotoPost } from '../lib/hooks';
@@ -1253,17 +1254,9 @@ export default function ProfileScreen() {
                       autoFocus
                       multiline={false}
                       returnKeyType="done"
-                      onSubmitEditing={() => {
-                        const t = titleDraft.trim();
-                        if (!t || savingTitle) return;
-                        setSavingTitle(true);
-                        supabase.from('app_checkins').update({ activity_text: t, status_text: t }).eq('id', editCheckin.id).then(() => {
-                          setEditCheckin({ ...editCheckin, activity_text: t, status_text: t });
-                          setEditingTitle(false);
-                          setSavingTitle(false);
-                          refetch();
-                        });
-                      }}
+                      // Return key only dismisses keyboard — all saves go
+                      // through the Save button below so the closed-loop
+                      // chat-sync + system-message logic runs every time.
                     />
                     <View style={{ flexDirection: 'row', justifyContent: 'center', gap: s(4), marginTop: s(4) }}>
                       <TouchableOpacity
@@ -1305,6 +1298,9 @@ export default function ProfileScreen() {
                           } catch (e) {
                             console.warn('[ActivityInfo] failed to sync conversation name:', e);
                           }
+                          // 3. Post a system message so the chat members SEE the rename
+                          //    (closed loop — required by the logic skill).
+                          await postEventSystemMessage(editCheckin.id, eventSystemMsg.titleChanged(newText));
                           setEditCheckin({ ...editCheckin, activity_text: newText, status_text: newText });
                           setEditingTitle(false);
                           setSavingTitle(false);
@@ -1418,7 +1414,11 @@ export default function ProfileScreen() {
                   onValueChange={(val) => {
                     setEditPrivate(val);
                     if (editCheckin) {
-                      supabase.from('app_checkins').update({ is_open: !val }).eq('id', editCheckin.id).then(() => refetch());
+                      supabase.from('app_checkins').update({ is_open: !val }).eq('id', editCheckin.id).then(() => {
+                        // Chat system message so existing members see the privacy change
+                        postEventSystemMessage(editCheckin.id, val ? eventSystemMsg.madePrivate() : eventSystemMsg.madePublic());
+                        refetch();
+                      });
                     }
                   }}
                   trackColor={{ false: '#D1D5DB', true: colors.primary }}
