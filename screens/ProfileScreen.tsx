@@ -1533,16 +1533,17 @@ export default function ProfileScreen() {
               </View>
             )}
 
-            {/* Active members — a horizontal avatar strip showing everyone
-                 who's currently IN the event. Owner always wants to know
-                 who's attending, not just a count. Tap avatar → profile. */}
+            {/* Active members — show up to 3 avatars + a "+N" chip for the
+                 rest. Keeps the modal compact. Tap avatar → profile. Tap
+                 the +N chip → reserved for the full list later (for now
+                 same as tapping the count label). */}
             {activeMembers.length > 0 && (
               <View style={{ marginBottom: s(5) }}>
                 <Text style={{ fontSize: s(6), fontWeight: FW.semi as any, color: colors.textSec, paddingHorizontal: s(10), marginBottom: s(3) }}>
                   {activeMembers.length} {activeMembers.length === 1 ? 'nomad joined' : 'nomads joined'}
                 </Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: s(10), gap: s(4) }}>
-                  {activeMembers.map((m) => (
+                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: s(10), gap: s(4) }}>
+                  {activeMembers.slice(0, 3).map((m) => (
                     <TouchableOpacity
                       key={m.user_id}
                       activeOpacity={0.7}
@@ -1566,7 +1567,15 @@ export default function ProfileScreen() {
                       </Text>
                     </TouchableOpacity>
                   ))}
-                </ScrollView>
+                  {activeMembers.length > 3 && (
+                    <View style={{ alignItems: 'center', width: s(22) }}>
+                      <View style={{ width: s(20), height: s(20), borderRadius: s(10), backgroundColor: colors.primary + '18', borderWidth: 1, borderColor: colors.primary + '40', alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ fontSize: s(6.5), fontWeight: FW.bold as any, color: colors.primary }}>+{activeMembers.length - 3}</Text>
+                      </View>
+                      <Text numberOfLines={1} style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(1.5) }}>more</Text>
+                    </View>
+                  )}
+                </View>
               </View>
             )}
 

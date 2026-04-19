@@ -375,7 +375,7 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
           {activeMembers.length > 0 && (
             <View style={{ alignItems: 'center', marginBottom: s(3) }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: s(2.5) }}>
-                {activeMembers.slice(0, 6).map((m) => (
+                {activeMembers.slice(0, 3).map((m) => (
                   <TouchableOpacity
                     key={m.user_id}
                     activeOpacity={0.7}
@@ -396,9 +396,9 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
                     )}
                   </TouchableOpacity>
                 ))}
-                {activeMembers.length > 6 && (
+                {activeMembers.length > 3 && (
                   <View style={{ width: s(11), height: s(11), borderRadius: s(5.5), backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#fff' }}>
-                    <Text style={{ fontSize: s(4), fontWeight: FW.bold, color: colors.dark }}>+{activeMembers.length - 6}</Text>
+                    <Text style={{ fontSize: s(4.5), fontWeight: FW.bold, color: colors.dark }}>+{activeMembers.length - 3}</Text>
                   </View>
                 )}
               </View>
