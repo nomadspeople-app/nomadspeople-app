@@ -1730,14 +1730,18 @@ export default function ProfileScreen() {
               )}
             </View>
 
-            {/* Mini Map */}
-            {editCheckin?.latitude && editCheckin?.longitude && (
+            {/* Mini Map — reflects both saved state and staged (preview)
+                 location. `region` (not `initialRegion`) makes the map
+                 recenter whenever coords change — so picking a new
+                 location on the search above immediately moves the pin
+                 here, before you even tap Save. */}
+            {effective('latitude') && effective('longitude') && (
               <View style={{ marginHorizontal: s(10), marginTop: s(8), borderRadius: s(10), overflow: 'hidden', height: s(70) }}>
                 <MapView
                   style={{ flex: 1 }}
-                  initialRegion={{
-                    latitude: editCheckin.latitude,
-                    longitude: editCheckin.longitude,
+                  region={{
+                    latitude: effective('latitude'),
+                    longitude: effective('longitude'),
                     latitudeDelta: 0.01,
                     longitudeDelta: 0.01,
                   }}
@@ -1746,7 +1750,10 @@ export default function ProfileScreen() {
                   pitchEnabled={false}
                   rotateEnabled={false}
                 >
-                  <Marker coordinate={{ latitude: editCheckin.latitude, longitude: editCheckin.longitude }} />
+                  <Marker
+                    coordinate={{ latitude: effective('latitude'), longitude: effective('longitude') }}
+                    tracksViewChanges={false}
+                  />
                 </MapView>
               </View>
             )}
