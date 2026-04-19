@@ -1051,53 +1051,11 @@ export default function ProfileScreen() {
 
         {/* ═══ STORY SECTIONS ═══ */}
 
-        {/* ── Next Destination ── */}
-        {(profile as any)?.next_destination ? (
-          <NextDestinationSection
-            destination={(profile as any)?.next_destination || null}
-            date={(profile as any)?.next_destination_date || null}
-            flag={(profile as any)?.next_destination_flag || null}
-            isOwner={isOwner}
-            onEdit={() => setShowTripManager(true)}
-            onPress={async () => {
-              if (isOwner) { setShowTripManager(true); return; }
-              const dest = (profile as any)?.next_destination;
-              if (!dest) return;
-              const { data: fg } = await supabase
-                .from('flight_groups')
-                .select('id')
-                .eq('country', dest)
-                .maybeSingle();
-              if (fg?.id) {
-                nav.navigate('FlightDetail' as any, { flightGroupId: fg.id });
-              }
-            }}
-          />
-        ) : isOwner ? (
-          <TouchableOpacity
-            style={styles.addTripCard}
-            onPress={() => setShowTripManager(true)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.addTripIconWrap}>
-              <Text style={{ fontSize: s(10) }}>✈️</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.addTripTitle}>got a trip coming up?</Text>
-              <Text style={styles.addTripSub}>let nomads know you're on the way</Text>
-            </View>
-            <NomadIcon name="plus" size={s(7)} color={colors.primary} strokeWidth={1.8} />
-          </TouchableOpacity>
-        ) : null}
-
-        {/* ── Flight Route Strip — replaces passport stamps ── */}
-        <FlightRouteStrip
-          places={(profile as any)?.visited_places || []}
-          isOwner={isOwner}
-          onAddPlace={handleAddPlace}
-          nextDestination={(profile as any)?.next_destination || null}
-          nextDestinationFlag={(profile as any)?.next_destination_flag || null}
-        />
+        {/* "My Travel" block (Next Destination card, Add Trip card, and
+             FlightRouteStrip) removed per product decision 2026-04-19.
+             Data columns (next_destination, next_destination_date,
+             next_destination_flag, visited_places) remain in the DB so
+             the UI can be restored without a migration. ─────────────── */}
 
         {/* ── My Work — hidden for visitors if nothing is filled ── */}
         {(isOwner || profile?.job_type || (profile as any)?.skills?.length || (profile as any)?.portfolio_url || profile?.website_url) && (

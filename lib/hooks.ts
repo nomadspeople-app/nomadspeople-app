@@ -1005,28 +1005,43 @@ export function usePhotoPosts(userId: string | null, myUserId?: string | null) {
       .eq('is_deleted', false)
       .order('created_at', { ascending: false });
 
-    if (data) {
-      const enriched = await Promise.all(data.map(async (post: any) => {
-        const [{ count: likesCount }, { count: commentCount }, { data: likeData }] = await Promise.all([
-          supabase.from('app_photo_likes').select('*', { count: 'exact', head: true }).eq('post_id', post.id),
-          supabase.from('app_photo_comments').select('*', { count: 'exact', head: true }).eq('post_id', post.id),
-          myUserId
-            ? supabase.from('app_photo_likes').select('user_id').eq('post_id', post.id).eq('user_id', myUserId)
-            : Promise.resolve({ data: [] }),
-        ]);
+    if (!data) { setLoading(false); return; }
 
-        return {
-          ...post,
-          photos: (post.photos || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
-          likes_count: likesCount ?? 0,
-          comment_count: commentCount ?? 0,
-          liked_by_me: (likeData?.length ?? 0) > 0,
-        };
-      }));
-
-      setPosts(enriched as PhotoPost[]);
-    }
+    // Step 1 — render the grid IMMEDIATELY with just photos + zeroed counts.
+    // This gets images on-screen in one round trip instead of waiting for
+    // likes/comments/liked-by-me to resolve across 3*N extra queries.
+    const basic = data.map((post: any) => ({
+      ...post,
+      photos: (post.photos || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
+      likes_count: 0,
+      comment_count: 0,
+      liked_by_me: false,
+    })) as PhotoPost[];
+    setPosts(basic);
     setLoading(false);
+
+    // Step 2 — enrich in the background; results replace the basic rows as
+    // they arrive. Users see photos instantly and the little counters pop in.
+    Promise.all(data.map(async (post: any) => {
+      const [{ count: likesCount }, { count: commentCount }, { data: likeData }] = await Promise.all([
+        supabase.from('app_photo_likes').select('*', { count: 'exact', head: true }).eq('post_id', post.id),
+        supabase.from('app_photo_comments').select('*', { count: 'exact', head: true }).eq('post_id', post.id),
+        myUserId
+          ? supabase.from('app_photo_likes').select('user_id').eq('post_id', post.id).eq('user_id', myUserId)
+          : Promise.resolve({ data: [] }),
+      ]);
+      return {
+        ...post,
+        photos: (post.photos || []).sort((a: any, b: any) => a.sort_order - b.sort_order),
+        likes_count: likesCount ?? 0,
+        comment_count: commentCount ?? 0,
+        liked_by_me: (likeData?.length ?? 0) > 0,
+      };
+    })).then((enriched) => {
+      setPosts(enriched as PhotoPost[]);
+    }).catch((err) => {
+      console.warn('[usePhotoPosts] enrichment failed:', err);
+    });
   };
 
   useEffect(() => { fetch(); }, [userId]);
