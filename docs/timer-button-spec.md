@@ -12,7 +12,7 @@ If it feels like a 2-hour Status, we built it wrong.
 
 1. **Time-boxed at source.** Every timer has a hard `expires_at = now + durationMinutes`. No flexible time, no scheduled future, no grace period.
 2. **Always public.** Privacy and approval flows are Status territory. A timer says "come" to everyone in range or it says nothing.
-3. **Minimal editing.** Once published, a timer can be **extended** or **deleted** — that's it. No renaming, no location change, no date change. If you want to change where you are, delete this one and publish a new one.
+3. **Minimal editing.** Once published, the ONLY field the owner can change is the short status text (`status_text` / `activity_text`) — the message that appears under the emoji. Location, time, category, privacy are all frozen at publish. To move to a new spot or change duration: cancel and publish a new timer.
 4. **Short copy, big emoji.** The pin, bubble, and chat header emphasize urgency and vibe, not details.
 5. **One active timer per user.** Publishing a new one replaces the old one (same one-slot rule as Status).
 6. **Red = Timer.** Green = Status. This is the universal color code on the map and in every UI surface.
@@ -144,7 +144,7 @@ Timers and Statuses come from the same query; the pin renderer (`buildNomadMarke
 
 - **Timer has no `scheduled_for`.** Ever. If someone tries to add it, it stops being a timer.
 - **Timer has no `is_open = false`.** No private timers, no approval flow.
-- **Timer has no editable location / title / time.** Editing = delete + repost.
+- **Timer has no editable location / time / category / privacy.** The ONLY editable field is `status_text` (the short message). Anything else → cancel + repost.
 - **Timer has no "scheduled specific time" branch.** The `expires_at` policy is always `now + durationMinutes`.
 - **Timer tap never flies the map.** Bubble in place. (The old `(isOwn && isTimer && userLat)` special case was removed this session.)
 - **Timer border is always red** (`#FF6B6B`) or gray when expired. Never green.
