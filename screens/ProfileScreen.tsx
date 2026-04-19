@@ -1460,7 +1460,6 @@ export default function ProfileScreen() {
                     <View style={{ flexDirection: 'row', justifyContent: 'center', gap: s(4), marginTop: s(4) }}>
                       <TouchableOpacity
                         onPress={() => { setEditingTitle(false); setTitleDraft(''); }}
-                        disabled={savingTitle}
                         style={{ paddingVertical: s(3), paddingHorizontal: s(8), borderRadius: s(8), backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft }}
                       >
                         <Text style={{ fontSize: s(6), fontWeight: FW.semi, color: colors.textMuted }}>{t('common.cancel')}</Text>

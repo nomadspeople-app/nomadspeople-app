@@ -398,17 +398,19 @@ export function useConversations(userId: string | null) {
         .map(m => ({ user_id: m.user_id, profile: profileMap.get(m.user_id) || null })),
     }));
 
-    // 4. Get user's last_read_at + muted_at for all conversations in one batch
+    // 4. Get user's last_read_at + muted_at + hidden_at for all conversations in one batch
     const { data: memberRows } = await supabase
       .from('app_conversation_members')
-      .select('conversation_id, last_read_at, muted_at')
+      .select('conversation_id, last_read_at, muted_at, hidden_at')
       .eq('user_id', userId)
       .in('conversation_id', convIds);
     const lastReadMap: Record<string, string> = {};
     const mutedSet = new Set<string>();
+    const hiddenAtMap: Record<string, string> = {};
     (memberRows || []).forEach((m: any) => {
       if (m.last_read_at) lastReadMap[m.conversation_id] = m.last_read_at;
       if (m.muted_at) mutedSet.add(m.conversation_id);
+      if (m.hidden_at) hiddenAtMap[m.conversation_id] = m.hidden_at;
     });
 
     // 5. Batch fetch: last message + unread count for ALL conversations in ONE query
@@ -461,6 +463,20 @@ export function useConversations(userId: string | null) {
     // Filter: groups always show (user explicitly joined); DMs only if they have real messages
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const filtered = withMessages.filter((c: any) => {
+      // Hide-locally: if the user hid this conversation AND no new message
+      // has arrived since hidden_at, drop it. A newer message auto-unhides.
+      const hiddenAt = hiddenAtMap[c.id];
+      if (hiddenAt) {
+        const lastAt = c.last_message?.sent_at || c.last_message_at;
+        if (!lastAt || new Date(lastAt) <= new Date(hiddenAt)) return false;
+        // Newer message arrived — clear hidden_at in the background (fire & forget)
+        supabase
+          .from('app_conversation_members')
+          .update({ hidden_at: null })
+          .eq('conversation_id', c.id)
+          .eq('user_id', userId)
+          .then(() => {}, () => {});
+      }
       // DMs: only show if they have real messages
       if (c.type === 'dm') return c._hasRealMessages;
       // Groups: always show, UNLESS expired for more than 7 days
@@ -564,6 +580,33 @@ export async function deleteConversation(conversationId: string, userId: string)
   const { error } = await supabase
     .from('app_conversation_members')
     .delete()
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId);
+  return { error };
+}
+
+/**
+ * Hide a conversation from this user's Messages list WITHOUT changing
+ * their membership. The user keeps access to the group, still receives
+ * messages, and the row re-appears automatically the moment any new
+ * message arrives (cleared in useConversations filter).
+ *
+ * Pair with unhideConversation() for the Undo toast path.
+ */
+export async function hideConversation(conversationId: string, userId: string): Promise<{ error: any }> {
+  const { error } = await supabase
+    .from('app_conversation_members')
+    .update({ hidden_at: new Date().toISOString() })
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId);
+  return { error };
+}
+
+/** Reverse a hide — used by the Undo toast. */
+export async function unhideConversation(conversationId: string, userId: string): Promise<{ error: any }> {
+  const { error } = await supabase
+    .from('app_conversation_members')
+    .update({ hidden_at: null })
     .eq('conversation_id', conversationId)
     .eq('user_id', userId);
   return { error };

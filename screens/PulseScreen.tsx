@@ -10,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import NomadIcon from '../components/NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList } from '../lib/types';
-import { useConversations, lockConversation, deleteConversation, leaveGroupChat, type ConversationWithPreview } from '../lib/hooks';
+import { useConversations, lockConversation, deleteConversation, leaveGroupChat, hideConversation, unhideConversation, type ConversationWithPreview } from '../lib/hooks';
 import { useI18n } from '../lib/i18n';
 import { AuthContext } from '../App';
 import { supabase } from '../lib/supabase';
@@ -36,7 +36,7 @@ function timeAgo(date: string) {
 /* ─── Swipeable conversation row ─── */
 function SwipeableConvRow({
   conv, idx, userId, nav, t, colors, st,
-  onLock, onDelete, onLeave, onMute, closeSignal,
+  onLock, onDelete, onLeave, onHide, onMute, closeSignal,
   isLast,
 }: {
   conv: ConversationWithPreview;
@@ -49,6 +49,7 @@ function SwipeableConvRow({
   onLock: (id: string) => void;
   onDelete: (id: string) => void;
   onLeave: (id: string) => void;
+  onHide: (id: string) => void;
   onMute: (id: string) => void;
   closeSignal: number;
   isLast: boolean;
@@ -74,22 +75,49 @@ function SwipeableConvRow({
     }
   }, [closeSignal]);
 
+  // Use the live animated value (not gs.dx) on release — otherwise small
+  // reverse-drift before releasing makes gs.dx drop under threshold and
+  // the row snaps back even though the user clearly pulled it open.
+  const currentXRef = useRef(0);
+  useEffect(() => {
+    const id = translateX.addListener(({ value }) => {
+      currentXRef.current = value;
+    });
+    return () => translateX.removeListener(id);
+  }, [translateX]);
+
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gs) => canSwipeRef.current && Math.abs(gs.dx) > 15 && Math.abs(gs.dx) > Math.abs(gs.dy),
+      onMoveShouldSetPanResponder: (_, gs) => canSwipeRef.current && Math.abs(gs.dx) > 10 && Math.abs(gs.dx) > Math.abs(gs.dy),
+      onPanResponderGrant: () => {
+        // Start the move from wherever the row currently sits (so a
+        // second swipe on an already-open row feels continuous).
+        translateX.stopAnimation();
+      },
       onPanResponderMove: (_, gs) => {
-        if (gs.dx > 0) {
-          translateX.setValue(Math.min(gs.dx, 170));
-        }
+        // Support swiping further right AND closing with a leftward drag
+        // when already open. Clamp to [0, 170].
+        const base = isOpen.current ? 160 : 0;
+        const next = Math.max(0, Math.min(base + gs.dx, 170));
+        translateX.setValue(next);
       },
       onPanResponderRelease: (_, gs) => {
-        if (gs.dx > 80) {
-          Animated.spring(translateX, { toValue: 160, useNativeDriver: true }).start();
-          isOpen.current = true;
-        } else {
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
-          isOpen.current = false;
-        }
+        const x = currentXRef.current;
+        // Fling right or past halfway → open. Fling left or below 40 → close.
+        const shouldOpen = gs.vx > 0.25 ? true : gs.vx < -0.25 ? false : x > 60;
+        Animated.spring(translateX, {
+          toValue: shouldOpen ? 160 : 0,
+          useNativeDriver: true,
+          velocity: gs.vx,
+          bounciness: 4,
+        }).start();
+        isOpen.current = shouldOpen;
+      },
+      onPanResponderTerminate: () => {
+        // Another responder took over — settle to current side cleanly.
+        const shouldOpen = currentXRef.current > 80;
+        Animated.spring(translateX, { toValue: shouldOpen ? 160 : 0, useNativeDriver: true }).start();
+        isOpen.current = shouldOpen;
       },
     })
   ).current;
@@ -147,6 +175,16 @@ function SwipeableConvRow({
     });
   };
 
+  // Hide — only makes sense for an ACTIVE group where the user is a
+  // member (not the owner). It hides the row from *this* user's list
+  // without touching membership; new messages re-surface it automatically.
+  const handleHide = () => {
+    Animated.timing(translateX, { toValue: 400, duration: 200, useNativeDriver: true }).start(() => {
+      onHide(conv.id);
+      Haptics.selectionAsync().catch(() => {});
+    });
+  };
+
   const avatarColor = isDead ? '#D1D5DB' : getGroupColor(idx);
   const otherMember = conv.members?.find(m => m.user_id !== userId);
   const otherProfile = otherMember?.profile;
@@ -192,9 +230,13 @@ function SwipeableConvRow({
               </TouchableOpacity>
             )
           ) : isGroupMember ? (
-            <TouchableOpacity style={[st.swipeAction, st.swipeActionPrimary]} activeOpacity={0.8} onPress={handleLeave}>
-              <NomadIcon name="logout" size={s(7)} color="white" strokeWidth={2} />
-              <Text style={st.swipeActionText}>leave</Text>
+            // Active group, user is a member (not owner) → HIDE locally,
+            // do NOT remove membership. Fixes the "swipe-to-delete kicked
+            // me out of the group" bug. To actually leave the group, use
+            // the GroupInfoScreen → Leave action.
+            <TouchableOpacity style={[st.swipeAction, st.swipeActionPrimary]} activeOpacity={0.8} onPress={handleHide}>
+              <NomadIcon name="eye-off" size={s(7)} color="white" strokeWidth={2} />
+              <Text style={st.swipeActionText}>hide</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity style={[st.swipeAction, st.swipeActionPrimary]} activeOpacity={0.8} onPress={handleLock}>
@@ -303,12 +345,43 @@ export default function PulseScreen() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [closeSignal, setCloseSignal] = useState(0);
 
+  /* ─── Undo-toast + optimistic-pending system ───
+     When the user swipes a destructive action, we:
+       1. Show a toast "hidden" / "deleted" / "left" with an Undo button.
+       2. Optimistically hide the row from the list right away.
+       3. For non-destructive actions (hide): commit the DB write now;
+          Undo reverses it.
+       4. For destructive actions (delete / leave / lock): defer the DB
+          write for 4s; Undo cancels it before it fires.
+     Everything routes through toastAction() below so the UX is uniform.  */
+  type ActionKind = 'hide' | 'delete' | 'leave' | 'lock';
+  type PendingAction = {
+    kind: ActionKind;
+    convId: string;
+    label: string;          // toast message
+    timer: ReturnType<typeof setTimeout> | null;
+    undo: () => Promise<void>;
+  };
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const pendingRef = useRef<PendingAction | null>(null);
+  pendingRef.current = pending;
+
   useFocusEffect(useCallback(() => {
     refetch();
     setCloseSignal(c => c + 1);
   }, [refetch]));
 
+  // On unmount, let any in-flight timer fire (don't clearTimeout) so the
+  // destructive write completes even if the user closes the app. For an
+  // in-flight hide, the DB write has already happened — so leaving the
+  // toast reference behind is safe. We just release the React state.
+  useEffect(() => {
+    return () => { setPending(null); };
+  }, []);
+
   const filtered = conversations.filter((c) => {
+    // Hide the row that has a pending action in-flight (optimistic)
+    if (pending?.convId === c.id) return false;
     if (activeFilter === 'All') return true;
     if (activeFilter === 'Groups') return c.type === 'group';
     return c.type === 'dm';
@@ -320,22 +393,100 @@ export default function PulseScreen() {
     return aScore - bScore;
   });
 
-  const handleLock = useCallback(async (conversationId: string) => {
-    await lockConversation(conversationId);
+  /** Cancel any pending action (e.g. user swiped another row, screen blurred). */
+  const flushPending = useCallback(async (mode: 'commit' | 'cancel') => {
+    const p = pendingRef.current;
+    if (!p) return;
+    if (p.timer) clearTimeout(p.timer);
+    setPending(null);
+    if (mode === 'cancel') {
+      await p.undo();
+    }
     refetch();
   }, [refetch]);
 
-  const handleDelete = useCallback(async (conversationId: string) => {
-    if (!userId) return;
-    await deleteConversation(conversationId, userId);
-    refetch();
-  }, [userId, refetch]);
+  /** Show a toast with Undo. Replaces any in-flight toast (committing it). */
+  const startToast = useCallback((next: PendingAction) => {
+    // If another action is mid-flight, commit it before queueing the next one.
+    const prev = pendingRef.current;
+    if (prev?.timer) {
+      // Letting the prev timer fire on its own would be fine, but we
+      // dismiss the prev toast immediately to avoid two toasts on screen.
+      // The prev's commit-on-timer keeps running.
+    }
+    setPending(next);
+  }, []);
 
-  const handleLeave = useCallback(async (conversationId: string) => {
+  const handleLock = useCallback((conversationId: string) => {
     if (!userId) return;
-    await leaveGroupChat(userId, conversationId);
+    const conv = conversations.find(c => c.id === conversationId);
+    const label = conv?.name ? `closed "${conv.name}"` : 'chat closed';
+    const timer = setTimeout(async () => {
+      await lockConversation(conversationId);
+      setPending(p => (p?.convId === conversationId && p.kind === 'lock' ? null : p));
+      refetch();
+    }, 4000);
+    startToast({
+      kind: 'lock',
+      convId: conversationId,
+      label,
+      timer,
+      undo: async () => { /* nothing to undo — DB write deferred */ },
+    });
+  }, [userId, conversations, refetch, startToast]);
+
+  const handleDelete = useCallback((conversationId: string) => {
+    if (!userId) return;
+    const conv = conversations.find(c => c.id === conversationId);
+    const label = conv?.type === 'dm' ? 'chat deleted' : 'group deleted';
+    const timer = setTimeout(async () => {
+      await deleteConversation(conversationId, userId);
+      setPending(p => (p?.convId === conversationId && p.kind === 'delete' ? null : p));
+      refetch();
+    }, 4000);
+    startToast({
+      kind: 'delete',
+      convId: conversationId,
+      label,
+      timer,
+      undo: async () => { /* nothing to undo — DB write deferred */ },
+    });
+  }, [userId, conversations, refetch, startToast]);
+
+  const handleLeave = useCallback((conversationId: string) => {
+    if (!userId) return;
+    const timer = setTimeout(async () => {
+      await leaveGroupChat(userId, conversationId);
+      setPending(p => (p?.convId === conversationId && p.kind === 'leave' ? null : p));
+      refetch();
+    }, 4000);
+    startToast({
+      kind: 'leave',
+      convId: conversationId,
+      label: 'left the group',
+      timer,
+      undo: async () => { /* nothing to undo — DB write deferred */ },
+    });
+  }, [userId, refetch, startToast]);
+
+  /** Hide is non-destructive — commit the DB write NOW so it persists
+      across reloads, but offer Undo for ~4s that calls unhideConversation. */
+  const handleHide = useCallback(async (conversationId: string) => {
+    if (!userId) return;
+    // Optimistic write — runs immediately
+    await hideConversation(conversationId, userId);
     refetch();
-  }, [userId, refetch]);
+    const timer = setTimeout(() => {
+      setPending(p => (p?.convId === conversationId && p.kind === 'hide' ? null : p));
+    }, 4000);
+    startToast({
+      kind: 'hide',
+      convId: conversationId,
+      label: 'hidden from list',
+      timer,
+      undo: async () => { await unhideConversation(conversationId, userId); },
+    });
+  }, [userId, refetch, startToast]);
 
   const handleMute = useCallback(async (conversationId: string) => {
     if (!userId) return;
@@ -375,8 +526,12 @@ export default function PulseScreen() {
       for (const id of selected) {
         const conv = sorted.find(c => c.id === id);
         if (!conv) continue;
-        const isGroupMember = conv.type === 'group' && conv.created_by !== userId;
-        if (isGroupMember) {
+        const isActiveGroupMember = conv.type === 'group' && conv.created_by !== userId && !conv.is_expired && !conv.is_locked;
+        const isEndedGroupMember = conv.type === 'group' && conv.created_by !== userId && (conv.is_expired || conv.is_locked);
+        if (isActiveGroupMember) {
+          // Bulk hide — no membership change, same rule as the swipe
+          await hideConversation(id, userId);
+        } else if (isEndedGroupMember) {
           await leaveGroupChat(userId, id);
         } else {
           await deleteConversation(id, userId);
@@ -504,6 +659,7 @@ export default function PulseScreen() {
               onLock={handleLock}
               onDelete={handleDelete}
               onLeave={handleLeave}
+              onHide={handleHide}
               onMute={handleMute}
               closeSignal={closeSignal}
               isLast={idx === sorted.length - 1}
@@ -511,6 +667,28 @@ export default function PulseScreen() {
           )
         ))}
       </ScrollView>
+
+      {/* ─── Undo toast ───
+           Floats above the tab bar; replaced on each new action. Tap Undo
+           within 4s to revert (for deferred writes: cancels the timer;
+           for hide: calls unhideConversation). */}
+      {pending && (
+        <View
+          pointerEvents="box-none"
+          style={[st.toastWrap, { bottom: insets.bottom + s(20) }]}
+        >
+          <View style={st.toast}>
+            <Text style={st.toastLabel} numberOfLines={1}>{pending.label}</Text>
+            <TouchableOpacity
+              onPress={() => flushPending('cancel')}
+              activeOpacity={0.7}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={st.toastUndo}>undo</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* Bulk delete bar */}
       {selectMode && selected.size > 0 && (
@@ -783,6 +961,46 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   checkboxOn: {
     backgroundColor: c.dark,
     borderColor: c.dark,
+  },
+
+  /* ── Undo toast ── */
+  toastWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 50,
+  },
+  toast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1F2937',
+    paddingLeft: s(7),
+    paddingRight: s(4),
+    paddingVertical: s(4),
+    borderRadius: s(10),
+    gap: s(6),
+    maxWidth: '90%',
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  toastLabel: {
+    color: '#fff',
+    fontSize: s(6),
+    fontWeight: FW.semi,
+    flexShrink: 1,
+  },
+  toastUndo: {
+    color: '#FFD166',
+    fontSize: s(6),
+    fontWeight: FW.extra,
+    paddingHorizontal: s(3),
+    paddingVertical: s(2),
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 
   /* ── Bulk bar ── */
