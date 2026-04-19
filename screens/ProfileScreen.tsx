@@ -1417,7 +1417,9 @@ export default function ProfileScreen() {
             <TouchableOpacity onPress={() => setShowActivityInfo(false)} style={{ padding: s(2) }}>
               <NomadIcon name="back" size={s(9)} color={colors.dark} strokeWidth={1.8} />
             </TouchableOpacity>
-            <Text style={{ flex: 1, textAlign: 'center', fontSize: s(8), fontWeight: FW.bold, color: colors.dark }}>Activity Info</Text>
+            <Text style={{ flex: 1, textAlign: 'center', fontSize: s(8), fontWeight: FW.bold, color: colors.dark }}>
+              {editCheckin?.checkin_type === 'timer' ? 'Timer Info' : 'Activity Info'}
+            </Text>
             <View style={{ width: s(13) }} />
           </View>
 
@@ -1668,6 +1670,12 @@ export default function ProfileScreen() {
                 <Text style={aiStyles.rowLabel}>Share Activity</Text>
                 <NomadIcon name="forward" size={s(6)} color="#CCC" strokeWidth={1.6} />
               </TouchableOpacity>
+
+              {/* Timer is locked — the owner can only edit the status text
+                   (via the title editor above) and cancel. No Mute toggle,
+                   no privacy (timers are always public), no location, no
+                   date, no time. Per spec: "only status text editable". */}
+              {editCheckin?.checkin_type !== 'timer' && (<>
 
               <View style={aiStyles.divider} />
 
@@ -1962,6 +1970,9 @@ export default function ProfileScreen() {
               )}
             </View>
 
+            </>)}
+            {/* ↑ end of `checkin_type !== 'timer'` editor block */}
+
             {/* Mini Map — reflects both saved state and staged (preview)
                  location. `region` (not `initialRegion`) makes the map
                  recenter whenever coords change — so picking a new
@@ -2000,7 +2011,9 @@ export default function ProfileScreen() {
               }}
             >
               <NomadIcon name="trash" size={s(7)} color={colors.primary} strokeWidth={1.6} />
-              <Text style={{ fontSize: s(7), fontWeight: FW.semi, color: colors.primary }}>Delete Activity</Text>
+              <Text style={{ fontSize: s(7), fontWeight: FW.semi, color: colors.primary }}>
+                {editCheckin?.checkin_type === 'timer' ? 'Cancel Timer' : 'Delete Activity'}
+              </Text>
             </TouchableOpacity>
           </ScrollView>
 
