@@ -130,6 +130,11 @@ export default function SettingsScreen() {
   // Modals
   const [showLangPicker, setShowLangPicker] = useState(false);
   const [showDNAEditor, setShowDNAEditor] = useState(false);
+  const [showSocialLinks, setShowSocialLinks] = useState(false);
+  const [socialIg, setSocialIg] = useState('');
+  const [socialTt, setSocialTt] = useState('');
+  const [socialLi, setSocialLi] = useState('');
+  const [socialWeb, setSocialWeb] = useState('');
 
   /* ─── Section Header ─── */
   function SectionHeader({ title }: { title: string }) {
@@ -588,6 +593,57 @@ export default function SettingsScreen() {
     ]);
   };
 
+  // ─── Social links: open modal loaded with current values ──────────────
+  const openSocialLinks = () => {
+    const p: any = profile || {};
+    setSocialIg(p.instagram_handle || '');
+    setSocialTt(p.tiktok_handle || '');
+    setSocialLi(p.linkedin_handle || '');
+    setSocialWeb(p.website_url || '');
+    setShowSocialLinks(true);
+  };
+
+  // Strip handle prefixes (@ or URL fragments) so users can paste either
+  // "@handle", "handle", or "https://instagram.com/handle" and we store
+  // the canonical bare handle.
+  const normHandle = (v: string, domain: string) =>
+    v.trim()
+      .replace(new RegExp(`^https?://(www\\.)?${domain.replace(/\./g, '\\.')}/(@?in/)?`, 'i'), '')
+      .replace(/^@/, '')
+      .replace(/\/$/, '')
+      .trim();
+
+  const normWeb = (v: string) => {
+    const t2 = v.trim();
+    if (!t2) return '';
+    return /^https?:\/\//i.test(t2) ? t2 : `https://${t2}`;
+  };
+
+  const handleSaveSocialLinks = () => {
+    const ig = normHandle(socialIg, 'instagram.com');
+    const tt = normHandle(socialTt, 'tiktok.com');
+    const li = normHandle(socialLi, 'linkedin.com');
+    const web = normWeb(socialWeb);
+    save({
+      instagram_handle: ig || null,
+      tiktok_handle: tt || null,
+      linkedin_handle: li || null,
+      website_url: web || null,
+    });
+    setShowSocialLinks(false);
+    setTimeout(() => refetchProfile(), 300);
+  };
+
+  const socialSummary = (() => {
+    const p: any = profile || {};
+    const parts: string[] = [];
+    if (p.instagram_handle) parts.push('IG');
+    if (p.tiktok_handle) parts.push('TikTok');
+    if (p.linkedin_handle) parts.push('LinkedIn');
+    if (p.website_url) parts.push('Web');
+    return parts.length ? parts.join(' · ') : 'not set';
+  })();
+
   const handleDeleteAccount = () => {
     Alert.alert(
       'Delete Account',
@@ -750,6 +806,17 @@ export default function SettingsScreen() {
             label={t('settings.featuredTags')}
             sublabel={featuredSummary}
             onPress={() => setShowDNAEditor(true)}
+          />
+        </View>
+
+        {/* ═══ YOUR SOCIAL LINKS ═══ */}
+        <SectionHeader title="your links" />
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+          <SettingsRow
+            icon="link"
+            label="social & website"
+            sublabel={socialSummary}
+            onPress={openSocialLinks}
           />
         </View>
 
@@ -1083,6 +1150,56 @@ export default function SettingsScreen() {
         setFeaturedTags={setDnaFeaturedTags}
         onSave={handleSaveDNA}
       />
+
+      {/* ═══ Social Links Modal ═══ */}
+      <Modal visible={showSocialLinks} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSocialLinks(false)}>
+        <View style={{ flex: 1, backgroundColor: colors.bg, paddingTop: s(8), paddingHorizontal: s(8) }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: s(8) }}>
+            <TouchableOpacity onPress={() => setShowSocialLinks(false)}>
+              <Text style={{ fontSize: s(8), color: colors.textMuted }}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+            <Text style={{ fontSize: s(9), fontWeight: '700', color: colors.dark }}>your links</Text>
+            <TouchableOpacity onPress={handleSaveSocialLinks}>
+              <Text style={{ fontSize: s(8), color: colors.primary, fontWeight: '700' }}>{t('common.save')}</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={{ fontSize: s(6), color: colors.textMuted, marginBottom: s(6) }}>
+            paste a full URL or just your username — we'll figure it out. shows as icons under your profile photo.
+          </Text>
+
+          {[
+            { label: 'Instagram',  value: socialIg,  setter: setSocialIg,  placeholder: '@yourhandle' },
+            { label: 'TikTok',     value: socialTt,  setter: setSocialTt,  placeholder: '@yourhandle' },
+            { label: 'LinkedIn',   value: socialLi,  setter: setSocialLi,  placeholder: 'username (or full /in/ URL)' },
+            { label: 'Website',    value: socialWeb, setter: setSocialWeb, placeholder: 'https://yoursite.com' },
+          ].map((field) => (
+            <View key={field.label} style={{ marginBottom: s(7) }}>
+              <Text style={{ fontSize: s(6), color: colors.textSec, marginBottom: s(2), fontWeight: '600' }}>
+                {field.label}
+              </Text>
+              <TextInput
+                value={field.value}
+                onChangeText={field.setter}
+                placeholder={field.placeholder}
+                placeholderTextColor={colors.textFaint}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                style={{
+                  fontSize: s(8),
+                  color: colors.dark,
+                  backgroundColor: colors.card,
+                  borderColor: colors.borderSoft,
+                  borderWidth: 1,
+                  borderRadius: s(3),
+                  paddingHorizontal: s(5),
+                  paddingVertical: s(5),
+                }}
+              />
+            </View>
+          ))}
+        </View>
+      </Modal>
     </View>
   );
 }

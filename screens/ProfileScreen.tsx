@@ -25,6 +25,7 @@ import NextDestinationSection from '../components/profile/NextDestinationSection
 import TripManagerSheet from '../components/TripManagerSheet';
 import MyWorkSection from '../components/profile/MyWorkSection';
 import PhotoMomentsSection from '../components/profile/PhotoMomentsSection';
+import SocialIconRow from '../components/profile/SocialIconRow';
 import { useI18n } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -832,6 +833,14 @@ export default function ProfileScreen() {
               <Text style={styles.creatorText}>{t('profile.official')}</Text>
             </View>
           )}
+
+          {/* ── 1a. Social icons (IG / TikTok / LinkedIn / Website) ── */}
+          <SocialIconRow
+            instagramHandle={(profile as any)?.instagram_handle}
+            tiktokHandle={(profile as any)?.tiktok_handle}
+            linkedinHandle={(profile as any)?.linkedin_handle}
+            websiteUrl={(profile as any)?.website_url}
+          />
 
           {/* ── 1b. Age + Zodiac ── */}
           {(age || zodiac) && (
