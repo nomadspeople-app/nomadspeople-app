@@ -787,15 +787,17 @@ export default function ProfileScreen() {
 
     // 3. Post one system message per changed field so everyone in the chat
     //    actually sees what the owner did. Closed loop — required by the
-    //    logic skill. Sequence matters for readability.
+    //    logic skill. Sequence matters for readability. Sender = the
+    //    current user (owner) so the INSERT passes RLS (sender_id =
+    //    auth.uid()); previously we used NULL which failed silently.
+    const ownerId = profileUserId!;
     if (stagedChanges.activity_text !== undefined) {
-      await postEventSystemMessage(editCheckin.id, eventSystemMsg.titleChanged(stagedChanges.activity_text));
+      await postEventSystemMessage(editCheckin.id, ownerId, eventSystemMsg.titleChanged(stagedChanges.activity_text));
     }
     if (stagedChanges.location_name !== undefined) {
-      await postEventSystemMessage(editCheckin.id, eventSystemMsg.locationChanged(stagedChanges.location_name));
+      await postEventSystemMessage(editCheckin.id, ownerId, eventSystemMsg.locationChanged(stagedChanges.location_name));
     }
     if (stagedChanges.scheduled_for !== undefined) {
-      // Date OR time — detect which by comparing the calendar day.
       const oldIso = editCheckin.scheduled_for;
       const newIso = stagedChanges.scheduled_for;
       const oldD = oldIso ? new Date(oldIso) : null;
@@ -803,17 +805,18 @@ export default function ProfileScreen() {
       const dayChanged = !oldD || oldD.toDateString() !== newD.toDateString();
       if (dayChanged) {
         const label = newD.toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
-        await postEventSystemMessage(editCheckin.id, eventSystemMsg.dateChanged(label));
+        await postEventSystemMessage(editCheckin.id, ownerId, eventSystemMsg.dateChanged(label));
       } else {
         const hh = newD.getHours();
         const mm = newD.getMinutes();
         const label = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-        await postEventSystemMessage(editCheckin.id, eventSystemMsg.timeChanged(label));
+        await postEventSystemMessage(editCheckin.id, ownerId, eventSystemMsg.timeChanged(label));
       }
     }
     if (stagedChanges.is_open !== undefined) {
       await postEventSystemMessage(
         editCheckin.id,
+        ownerId,
         stagedChanges.is_open ? eventSystemMsg.madePublic() : eventSystemMsg.madePrivate(),
       );
     }

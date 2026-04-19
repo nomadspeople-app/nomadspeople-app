@@ -1,32 +1,30 @@
 /**
- * eventSystemMessages — the single entry point for posting system-level
- * updates into an event's chat when the owner changes something about
- * the event. This closes the "logic skill" loop: a change in the DB is
- * only half the story; members in the chat room must also see the update
- * so they actually know what happened.
+ * eventSystemMessages — single entry point for posting change-notices
+ * into an event's chat when the owner edits the event. Closes the
+ * `logic` skill's loop: DB update is only half the story; members in
+ * the chat must see what changed.
  *
- * System messages are identified by `sender_id === null`. The chat UI
- * should render null-sender messages as centered, italic, no-bubble
- * callouts (e.g. "📍 Location changed to Jerusalem").
- *
- * Push notifications to the members are a separate concern (Edge
- * Function / server-side) and NOT handled here.
+ * Authoring rule: we attribute these to the OWNER (senderUserId), not
+ * a null sender. RLS on app_messages requires sender_id = auth.uid()
+ * for INSERT — posting with NULL silently fails. Content prefixes
+ * (✏️ / 📍 / ⏰ / 🔒 / ❌) are how the chat UI styles these as
+ * system-style announcements instead of regular bubbles.
  */
 import { supabase } from './supabase';
 
 /**
- * Post a system message into the chat conversation tied to the given
- * check-in, if one exists. Silent no-op when the check-in has no chat
- * (e.g. solo timer with no one joined yet) — this is intentional.
- *
- * Never throws — system-message posting must not block the primary
- * save from succeeding. Failures are logged to console.
+ * Post a change-notice into the chat tied to the given check-in.
+ *   senderUserId: the user making the change (normally the event
+ *     owner). This must equal auth.uid() or RLS blocks the INSERT.
+ * Silent no-op when there's no chat yet (solo event, nobody joined).
+ * Never throws — failures logged to console.
  */
 export async function postEventSystemMessage(
   checkinId: string,
+  senderUserId: string,
   content: string
 ): Promise<void> {
-  if (!checkinId || !content?.trim()) return;
+  if (!checkinId || !senderUserId || !content?.trim()) return;
   try {
     const { data: conv, error: findErr } = await supabase
       .from('app_conversations')
@@ -42,7 +40,7 @@ export async function postEventSystemMessage(
 
     const { error: insertErr } = await supabase.from('app_messages').insert({
       conversation_id: conv.id,
-      sender_id: null,   // null sender = system message
+      sender_id: senderUserId,
       content: content.trim(),
     });
 
