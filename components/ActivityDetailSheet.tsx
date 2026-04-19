@@ -92,6 +92,9 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
   const [editLocation, setEditLocation] = useState('');
   const [hasInstagram, setHasInstagram] = useState(false);
   const shareCardRef = useRef<ViewShot>(null);
+  // Active members of this event's chat (joined + approved). Shown as a
+  // horizontal avatar strip so the viewer sees WHO is going, not just N.
+  const [activeMembers, setActiveMembers] = useState<Array<{ user_id: string; avatar_url: string | null; display_name: string | null }>>([]);
 
   useEffect(() => {
     if (visible && checkin && userId) {
@@ -137,6 +140,24 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
           setJoined(false);
           setConversationId(null);
         }
+
+        // Load active members of this event for the avatar strip
+        if (convId) {
+          const { data: mems } = await supabase
+            .from('app_conversation_members')
+            .select('user_id, profile:app_profiles!user_id(avatar_url, display_name, full_name)')
+            .eq('conversation_id', convId)
+            .eq('status', 'active');
+          if (mems) {
+            setActiveMembers((mems as any[]).map((m) => ({
+              user_id: m.user_id,
+              avatar_url: m.profile?.avatar_url ?? null,
+              display_name: m.profile?.display_name ?? m.profile?.full_name ?? null,
+            })));
+          }
+        } else {
+          setActiveMembers([]);
+        }
       })();
       Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 65, friction: 11 }).start();
     } else if (!visible) {
@@ -144,6 +165,7 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
       // Clean slate for next open
       setJoined(false);
       setConversationId(null);
+      setActiveMembers([]);
     }
   }, [visible, checkin, userId]);
 
@@ -347,9 +369,43 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
             )}
           </View>
 
-          {/* Members */}
-          {checkin.member_count > 0 && (
-            <Text style={st.members}>{checkin.member_count} {checkin.member_count === 1 ? 'nomad joined' : 'nomads joined'}</Text>
+          {/* Members — avatar strip + count, so the viewer SEES who's
+              going, not just a number. Tap an avatar to open the person's
+              profile. */}
+          {activeMembers.length > 0 && (
+            <View style={{ alignItems: 'center', marginBottom: s(3) }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: s(2.5) }}>
+                {activeMembers.slice(0, 6).map((m) => (
+                  <TouchableOpacity
+                    key={m.user_id}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      onClose();
+                      setTimeout(() => nav.navigate('UserProfile' as any, { userId: m.user_id }), 200);
+                    }}
+                  >
+                    {m.avatar_url ? (
+                      <Image
+                        source={{ uri: m.avatar_url }}
+                        style={{ width: s(11), height: s(11), borderRadius: s(5.5), borderWidth: 1.5, borderColor: '#fff' }}
+                      />
+                    ) : (
+                      <View style={{ width: s(11), height: s(11), borderRadius: s(5.5), backgroundColor: colors.surface, borderWidth: 1.5, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ fontSize: s(5), fontWeight: FW.bold, color: colors.dark }}>{(m.display_name || '?')[0].toUpperCase()}</Text>
+                      </View>
+                    )}
+                  </TouchableOpacity>
+                ))}
+                {activeMembers.length > 6 && (
+                  <View style={{ width: s(11), height: s(11), borderRadius: s(5.5), backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: '#fff' }}>
+                    <Text style={{ fontSize: s(4), fontWeight: FW.bold, color: colors.dark }}>+{activeMembers.length - 6}</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={[st.members, { marginTop: s(2) }]}>
+                {activeMembers.length} {activeMembers.length === 1 ? 'nomad joined' : 'nomads joined'}
+              </Text>
+            </View>
           )}
 
           {/* ── Toolbar: share + owner tools ── */}

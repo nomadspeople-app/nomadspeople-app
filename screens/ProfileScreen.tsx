@@ -437,6 +437,9 @@ export default function ProfileScreen() {
   const [titleDraft, setTitleDraft] = useState('');
   // Pending join requests for the currently-viewed event (private events only)
   const [pendingRequests, setPendingRequests] = useState<Array<{ user_id: string; username: string | null; avatar_url: string | null; display_name: string | null; conversation_id: string }>>([]);
+  // Active members of the currently-viewed event (approved / joined).
+  // Owner wants to SEE who's in, not just a member_count number.
+  const [activeMembers, setActiveMembers] = useState<Array<{ user_id: string; avatar_url: string | null; display_name: string | null }>>([]);
   // Staged changes buffer — all fields edited in the Activity Info modal
   // accumulate here until the user taps the floating Save button. Keys
   // correspond 1:1 to app_checkins columns. Empty object = no pending work.
@@ -1126,6 +1129,7 @@ export default function ProfileScreen() {
                 setStagedChanges({});         // fresh slate — nothing pending on open
                 setEditingTitle(false);
                 setPendingRequests([]);
+                setActiveMembers([]);
                 setShowActivityInfo(true);
                 // Fetch pending join requests for this event's conversation.
                 // Only meaningful for private events — public events never
@@ -1150,6 +1154,24 @@ export default function ProfileScreen() {
                           avatar_url: p.profile?.avatar_url ?? null,
                           display_name: p.profile?.display_name ?? p.profile?.full_name ?? null,
                           conversation_id: conv.id,
+                        })),
+                      );
+                    }
+                    // Also pull active members so the owner sees who's IN.
+                    // Exclude themselves from the avatar strip (they know
+                    // they're the owner) — member_count still includes them.
+                    const { data: active } = await supabase
+                      .from('app_conversation_members')
+                      .select('user_id, profile:app_profiles!user_id(avatar_url, display_name, full_name)')
+                      .eq('conversation_id', conv.id)
+                      .eq('status', 'active')
+                      .neq('user_id', profileUserId);
+                    if (active) {
+                      setActiveMembers(
+                        (active as any[]).map((p) => ({
+                          user_id: p.user_id,
+                          avatar_url: p.profile?.avatar_url ?? null,
+                          display_name: p.profile?.display_name ?? p.profile?.full_name ?? null,
                         })),
                       );
                     }
@@ -1508,6 +1530,43 @@ export default function ProfileScreen() {
                     </Text>
                   </>
                 )}
+              </View>
+            )}
+
+            {/* Active members — a horizontal avatar strip showing everyone
+                 who's currently IN the event. Owner always wants to know
+                 who's attending, not just a count. Tap avatar → profile. */}
+            {activeMembers.length > 0 && (
+              <View style={{ marginBottom: s(5) }}>
+                <Text style={{ fontSize: s(6), fontWeight: FW.semi as any, color: colors.textSec, paddingHorizontal: s(10), marginBottom: s(3) }}>
+                  {activeMembers.length} {activeMembers.length === 1 ? 'nomad joined' : 'nomads joined'}
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: s(10), gap: s(4) }}>
+                  {activeMembers.map((m) => (
+                    <TouchableOpacity
+                      key={m.user_id}
+                      activeOpacity={0.7}
+                      style={{ alignItems: 'center', width: s(22) }}
+                      onPress={() => {
+                        nav.navigate('UserProfile' as any, { userId: m.user_id });
+                        setShowActivityInfo(false);
+                      }}
+                    >
+                      {m.avatar_url ? (
+                        <Image source={{ uri: m.avatar_url }} style={{ width: s(20), height: s(20), borderRadius: s(10) }} />
+                      ) : (
+                        <View style={{ width: s(20), height: s(20), borderRadius: s(10), backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' }}>
+                          <Text style={{ fontSize: s(8), fontWeight: FW.bold as any, color: colors.dark }}>
+                            {(m.display_name || '?')[0].toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+                      <Text numberOfLines={1} style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(1.5), maxWidth: s(22) }}>
+                        {m.display_name || '…'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
               </View>
             )}
 
