@@ -320,18 +320,34 @@ export default function TimerBubble({
 
   const st = styles(colors);
 
-  // Member row — ALWAYS rendered so the bubble height stays constant
-  // across states. Always shows a participant count from screen one
-  // (the creator counts as 1; joiners add to it). On Join, count
-  // bumps optimistically by +1 the moment the user taps, before the
-  // server confirms.
-  const shown = members.slice(0, 3);
-  const meShown = optimisticallyJoined && !shown.some(m => m.user_id === userId);
-  const othersCount = Math.max(0, members.length - shown.length);
-  // checkin.member_count comes from the DB and includes the creator.
-  // Add the optimistic +1 so my tap on Join feels instant.
+  // Participants strip — ALWAYS shows avatars. Creator first (so a
+  // brand-new timer with zero joiners still has 1 visible icon),
+  // then joiners. Up to 4 avatars side-by-side; the rest collapse
+  // into a "+N" pill. Matches the user's spec exactly:
+  //   2 participants → 2 icons,  4 → 4,  >4 → 4 + "+N".
+  type Participant = { user_id: string; avatar_url: string | null; full_name: string | null };
+  const allParticipants: Participant[] = [
+    {
+      user_id: checkin?.user_id || 'creator',
+      avatar_url: creatorAvatarUrl || null,
+      full_name: creatorName,
+    },
+    ...members,
+  ];
+  // Add me optimistically if I just tapped Join and the server hasn't
+  // returned my row yet. Skip if I'm already in the list (e.g., refetch
+  // landed) so I don't appear twice.
+  if (optimisticallyJoined && userId && !allParticipants.some(p => p.user_id === userId)) {
+    allParticipants.push({ user_id: userId, avatar_url: null, full_name: 'you' });
+  }
+  const MAX_AVATARS = 4;
+  const shownAvatars = allParticipants.slice(0, MAX_AVATARS);
   const baseCount = Math.max(1, checkin?.member_count ?? 1);
-  const goingCount = Math.max(1, baseCount + countDelta);
+  // The display count is the LARGER of (what we know locally) and
+  // (what the DB says + optimistic delta) — so partial data still
+  // shows a sane "X going" number.
+  const goingCount = Math.max(allParticipants.length, baseCount + countDelta);
+  const overflow = Math.max(0, goingCount - shownAvatars.length);
 
   return (
     <Bubble
@@ -363,27 +379,32 @@ export default function TimerBubble({
         </Text>
       )}
 
-      {/* Member row — ALWAYS rendered with a count, from screen one.
-          The creator counts as 1 (so a fresh timer with no joiners
-          shows "1 going"). Each new join bumps the count optimistically.
-          Avatar strip shows joiners (creator's avatar is already at
-          the top of the bubble — no need to repeat them here). */}
+      {/* Participants row — ALWAYS visible. Up to 4 avatars side-by-side
+          (creator first), then "+N" pill if there are more. Plus the
+          "X going" count next to it for an at-a-glance number. */}
       <View style={st.membersRow}>
-        {(shown.length > 0 || meShown) && (
-          <View style={st.avatarStrip}>
-            {shown.map((m) => (
-              <MemberDot key={m.user_id} url={m.avatar_url} name={m.full_name} st={st} />
-            ))}
-            {meShown && (
-              <MemberDot key="me" url={null} name="you" st={st} highlight={colors.primary} />
-            )}
-            {othersCount > 0 && (
-              <View style={[st.memberDot, st.memberDotMore]}>
-                <Text style={st.memberMoreText}>+{othersCount}</Text>
-              </View>
-            )}
-          </View>
-        )}
+        {/* Slightly overlapping avatar stack — first full-width,
+            subsequent ones overlap 8px left. Feels like a tight
+            social group rather than a spaced-out row. The white
+            borders between dots stay visible at overlap, which is
+            what makes this pattern read cleanly. */}
+        <View style={st.avatarStrip}>
+          {shownAvatars.map((p, i) => (
+            <View key={p.user_id} style={i > 0 ? { marginLeft: -8 } : null}>
+              <MemberDot
+                url={p.avatar_url}
+                name={p.full_name}
+                st={st}
+                highlight={p.user_id === userId ? colors.primary : undefined}
+              />
+            </View>
+          ))}
+          {overflow > 0 && (
+            <View style={[st.memberDot, st.memberDotMore, { marginLeft: -8 }]}>
+              <Text style={st.memberMoreText}>+{overflow}</Text>
+            </View>
+          )}
+        </View>
         <Text style={st.goingCount}>{goingCount} going</Text>
       </View>
 
