@@ -496,16 +496,10 @@ export default function HomeScreen() {
     loadRecentCities(userId).then(setRecentCities);
   }, [userId]);
 
-  useEffect(() => {
-    if (!currentCity?.name) return;
-    const entry: CitySearchResult = {
-      name: currentCity.name,
-      country: currentCity.country || '',
-      lat: currentCity.lat,
-      lng: currentCity.lng,
-    };
-    saveRecentCity(entry, userId).then(() => loadRecentCities(userId).then(setRecentCities));
-  }, [currentCity?.name, currentCity?.country, userId]);
+  // Auto-saving the current city on every mount was making the list feel
+  // noisy — Tel Aviv appearing even though the user never searched for it.
+  // Recents now only contain cities the user EXPLICITLY searched and
+  // picked, via handleCitySearchSelect.
 
   /* ── City search — debounced Photon autocomplete ── */
   useEffect(() => {
@@ -1269,48 +1263,6 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* ── ALWAYS-VISIBLE Recent cities strip (below search bar) ──
-             Previously the Recent list lived only inside the dropdown,
-             which requires a tap to open. User couldn't see their
-             history without that tap, and thought the list was empty.
-             Now a horizontal chip row is visible as long as the user
-             isn't actively typing — so the last 5 cities are one tap
-             away, not two. ─────────────────────────────────────── */}
-        {!searchFocused && recentCities.length > 0 && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingHorizontal: s(8), paddingBottom: s(3), gap: s(2.5) }}
-          >
-            {recentCities.slice(0, 5).map((city, i) => {
-              const isActive = city.name === currentCity.name && city.country === currentCity.country;
-              return (
-                <TouchableOpacity
-                  key={`${city.name}-${city.country}-${i}`}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: s(1.5),
-                    paddingVertical: s(2),
-                    paddingHorizontal: s(4),
-                    borderRadius: s(10),
-                    backgroundColor: isActive ? colors.primary : '#fff',
-                    borderWidth: 1,
-                    borderColor: isActive ? colors.primary : '#E5E7EB',
-                  }}
-                  onPress={() => handleCitySearchSelect(city)}
-                  activeOpacity={0.7}
-                >
-                  <NomadIcon name="pin" size={12} color={isActive ? '#fff' : colors.textMuted} strokeWidth={1.6} />
-                  <Text style={{ fontSize: s(5), fontWeight: FW.medium as any, color: isActive ? '#fff' : colors.dark }} numberOfLines={1}>
-                    {city.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        )}
-
         {/* ── Search Dropdown (recents + results) ── */}
         {searchFocused && (
           <View style={st.cityDropdown}>
@@ -1321,16 +1273,33 @@ export default function HomeScreen() {
                   <Text style={st.cityDropSectionText}>Recent</Text>
                 </View>
                 {recentCities.map((city, i) => (
-                  <TouchableOpacity
-                    key={`recent-${i}`}
-                    style={st.cityDropItem}
-                    onPress={() => handleCitySearchSelect(city)}
-                    activeOpacity={0.7}
-                  >
-                    <NomadIcon name="pin" size={16} color={colors.primary} strokeWidth={1.6} />
-                    <Text style={st.cityDropName} numberOfLines={1}>{city.name}</Text>
-                    <Text style={st.cityDropCountry} numberOfLines={1}>{city.country}</Text>
-                  </TouchableOpacity>
+                  <View key={`recent-${i}`} style={[st.cityDropItem, { paddingRight: s(3) }]}>
+                    <TouchableOpacity
+                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                      onPress={() => handleCitySearchSelect(city)}
+                      activeOpacity={0.7}
+                    >
+                      <NomadIcon name="pin" size={16} color={colors.primary} strokeWidth={1.6} />
+                      <Text style={[st.cityDropName, { marginLeft: s(3) }]} numberOfLines={1}>{city.name}</Text>
+                      <Text style={st.cityDropCountry} numberOfLines={1}>{city.country}</Text>
+                    </TouchableOpacity>
+                    {/* X — remove this city from the recent list. Tapping
+                         the row still opens the city; only the X deletes. */}
+                    <TouchableOpacity
+                      onPress={async () => {
+                        const next = recentCities.filter(c => !(c.name === city.name && c.country === city.country));
+                        setRecentCities(next);
+                        try { await AsyncStorage.setItem(RECENT_CITIES_KEY, JSON.stringify(next)); } catch {}
+                        if (userId) {
+                          await supabase.from('app_profiles').update({ recent_cities: next }).eq('user_id', userId);
+                        }
+                      }}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      style={{ padding: s(2), marginLeft: s(2) }}
+                    >
+                      <NomadIcon name="close" size={14} color="#C5C5C5" strokeWidth={1.8} />
+                    </TouchableOpacity>
+                  </View>
                 ))}
               </>
             )}
