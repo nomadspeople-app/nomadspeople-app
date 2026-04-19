@@ -2,6 +2,7 @@ import { useState, useContext, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Image, Alert, Share, Modal, Linking, ActivityIndicator, Switch, TextInput,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -16,6 +17,7 @@ import { useI18n } from '../lib/i18n';
 import { supabase } from '../lib/supabase';
 import { leaveGroupChat, removeGroupMember } from '../lib/hooks';
 import MembersModal from '../components/MembersModal';
+import { postEventSystemMessage, eventSystemMsg } from '../lib/eventSystemMessages';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'GroupInfo'>;
@@ -50,6 +52,7 @@ interface GroupData {
   is_open: boolean;
   created_by: string | null;
   created_at: string;
+  checkin_id: string | null;
 }
 
 interface MemberRow {
@@ -218,13 +221,46 @@ export default function GroupInfoScreen() {
 
   const handleEditName = async () => {
     if (!editName.trim() || !group) return;
+    if (!userId) return;
     const newName = editName.trim();
-    await supabase.from('app_conversations').update({
+    if (newName === group.name) {
+      // No-op — nothing changed. Just close the editor, no system message.
+      setEditing(false);
+      return;
+    }
+    // 1. DB write
+    const { error } = await supabase.from('app_conversations').update({
       name: newName,
       activity_text: newName,
     }).eq('id', conversationId);
+    if (error) {
+      Alert.alert('Could not save', error.message || 'Please try again.');
+      return;
+    }
+    // 2. Optimistic local update
     setGroup({ ...group, name: newName, activity_text: newName });
     setEditing(false);
+    // 3. Close the logic loop — post a chat system message so every
+    //    member sees the rename. Propagation map (logic skill):
+    //    title change → "✏️ Event renamed to X" system msg in chat.
+    //    Also update the linked app_checkins row so map/profile cards
+    //    reflect the new title (they read from app_checkins).
+    if ((group as any).checkin_id || group.created_by === userId) {
+      // Best-effort: keep activity_text and status_text in sync with
+      // the conversation title. Safe because only the creator can
+      // invoke this (iAmCreator gate in the UI).
+      await supabase
+        .from('app_checkins')
+        .update({ activity_text: newName, status_text: newName })
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .then(() => {}, () => {});
+    }
+    // Find the linked checkin to post the system message against
+    const linkedCheckinId = (group as any).checkin_id as string | undefined;
+    if (linkedCheckinId) {
+      await postEventSystemMessage(linkedCheckinId, userId, eventSystemMsg.titleChanged(newName));
+    }
   };
 
   const handleEndEvent = () => {
@@ -305,6 +341,11 @@ export default function GroupInfoScreen() {
   }
 
   return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={0}
+    >
     <View style={[st.root, { paddingTop: insets.top }]}>
       {/* ─── Header ─── */}
       <View style={st.hdr}>
@@ -315,15 +356,70 @@ export default function GroupInfoScreen() {
         <View style={st.backBtn} />
       </View>
 
-      <ScrollView style={st.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={st.scroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
 
         {/* ─── Activity icon + name + members ─── */}
         <View style={st.topSection}>
           <View style={[st.emojiCircle, { backgroundColor: cat.color + '18' }]}>
             <Text style={st.emojiText}>{displayEmoji}</Text>
           </View>
-          <Text style={st.groupName}>{group?.name || 'Activity'}</Text>
+
+          {/* Name: inline editable only while in edit mode. The new
+              creator pill row BELOW triggers editing. When editing, the
+              input sits HIGH on the screen so the keyboard doesn't
+              cover it — that was the reported bug with the old bottom
+              placement of Creator Tools. */}
+          {editing ? (
+            <View style={st.editRow}>
+              <TextInput
+                style={st.editInput}
+                value={editName}
+                onChangeText={setEditName}
+                placeholder="Activity name"
+                placeholderTextColor={colors.textFaint}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleEditName}
+              />
+              <TouchableOpacity style={st.editSave} onPress={handleEditName} activeOpacity={0.7}>
+                <Text style={st.editSaveText}>save</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setEditing(false)} activeOpacity={0.7}>
+                <Text style={st.editCancelText}>cancel</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <Text style={st.groupName}>{group?.name || 'Activity'}</Text>
+          )}
           <Text style={st.memberCountText}>{memberCount} Members</Text>
+
+          {/* Creator-only pills — moved from the bottom so tapping Edit
+              Name keeps the input above the keyboard. Icon-first compact
+              design, on-brand. Hidden entirely for non-creators. */}
+          {iAmCreator && !editing && (
+            <View style={st.creatorPillsRow}>
+              <TouchableOpacity
+                style={st.creatorPill}
+                activeOpacity={0.7}
+                onPress={() => { setEditName(group?.name || ''); setEditing(true); }}
+              >
+                <NomadIcon name="edit" size={s(4.5)} color={colors.dark} strokeWidth={1.5} />
+                <Text style={st.creatorPillText}>edit name</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[st.creatorPill, st.creatorPillDanger]}
+                activeOpacity={0.7}
+                onPress={handleEndEvent}
+              >
+                <NomadIcon name="close" size={s(4.5)} color={colors.danger} strokeWidth={1.5} />
+                <Text style={[st.creatorPillText, { color: colors.danger }]}>end event</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* ─── Action rows ─── */}
@@ -467,46 +563,9 @@ export default function GroupInfoScreen() {
           </View>
         </View>
 
-        {/* ─── Creator Tools ─── */}
-        {iAmCreator && (
-          <View style={st.section}>
-            <Text style={st.sectionTitle}>Creator Tools</Text>
-
-            {editing ? (
-              <View style={st.editRow}>
-                <TextInput
-                  style={st.editInput}
-                  value={editName}
-                  onChangeText={setEditName}
-                  placeholder="Activity name"
-                  placeholderTextColor={colors.textFaint}
-                  autoFocus
-                />
-                <TouchableOpacity style={st.editSave} onPress={handleEditName} activeOpacity={0.7}>
-                  <Text style={st.editSaveText}>save</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setEditing(false)} activeOpacity={0.7}>
-                  <Text style={st.editCancelText}>cancel</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={st.creatorTools}>
-                <TouchableOpacity
-                  style={st.creatorToolBtn}
-                  onPress={() => { setEditName(group?.name || ''); setEditing(true); }}
-                  activeOpacity={0.7}
-                >
-                  <NomadIcon name="settings" size={s(6)} color={colors.dark} strokeWidth={1.4} />
-                  <Text style={st.creatorToolText}>Edit Name</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={st.creatorToolBtnDanger} onPress={handleEndEvent} activeOpacity={0.7}>
-                  <NomadIcon name="close" size={s(6)} color={colors.danger} strokeWidth={1.4} />
-                  <Text style={[st.creatorToolText, { color: colors.danger }]}>End Event</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        )}
+        {/* Creator Tools block removed from here — it moved to the top,
+            next to the group name. The old bottom placement was why
+            the keyboard covered the edit input. */}
 
         {/* ─── Leave Chat ─── */}
         <TouchableOpacity
@@ -563,6 +622,7 @@ export default function GroupInfoScreen() {
         onAfterRemove={fetchAll}
       />
     </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -593,6 +653,35 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   emojiText: { fontSize: s(14) },
   groupName: { fontSize: s(8.5), fontWeight: FW.extra, color: c.dark, marginBottom: s(2) },
   memberCountText: { fontSize: s(5.5), fontWeight: FW.medium, color: c.textMuted },
+
+  /* Creator-only action pills (top of screen, under group name) */
+  creatorPillsRow: {
+    flexDirection: 'row',
+    gap: s(3),
+    marginTop: s(5),
+    justifyContent: 'center',
+  },
+  creatorPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: s(2),
+    paddingHorizontal: s(5),
+    paddingVertical: s(3),
+    borderRadius: s(10),
+    backgroundColor: c.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: c.borderSoft,
+  },
+  creatorPillDanger: {
+    backgroundColor: (c as any).dangerSurface || '#FEF2F2',
+    borderColor: c.danger + '40',
+  },
+  creatorPillText: {
+    fontSize: s(5),
+    fontWeight: FW.semi,
+    color: c.dark,
+    textTransform: 'lowercase',
+  },
 
   /* Section containers */
   section: { paddingHorizontal: s(8), marginBottom: s(6) },
