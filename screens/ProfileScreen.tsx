@@ -1968,10 +1968,11 @@ export default function ProfileScreen() {
                   </TouchableOpacity>
                 </View>
               )}
-            </View>
 
             </>)}
             {/* ↑ end of `checkin_type !== 'timer'` editor block */}
+            </View>
+            {/* ↑ closes the outer 'Action rows' wrapper that started above the Share button */}
 
             {/* Mini Map — reflects both saved state and staged (preview)
                  location. `region` (not `initialRegion`) makes the map
