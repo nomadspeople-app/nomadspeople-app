@@ -635,22 +635,49 @@ export default function SettingsScreen() {
   })();
 
   const handleDeleteAccount = () => {
+    // Step 1 — explain exactly what gets deleted. Transparent per
+    // Apple 5.1.1(v). No vague "all data" — spell it out.
     Alert.alert(
-      'Delete Account',
-      'This will permanently delete your account and all data. This action cannot be undone.',
+      'Delete Account?',
+      'This will PERMANENTLY delete:\n\n' +
+        '• Your profile, photo, bio, location\n' +
+        '• All events and check-ins you created\n' +
+        '• Your membership in all group chats\n' +
+        '• Your follows, blocks, notifications\n\n' +
+        'Messages you sent in group chats will stay visible to members for context, but your name will be removed.\n\n' +
+        'This cannot be undone. You will need to sign up again to use NomadsPeople.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Delete',
+          text: 'Continue',
           style: 'destructive',
-          onPress: async () => {
-            if (userId) {
-              await deleteAccount(userId);
-              signOut();
-            }
+          onPress: () => {
+            // Step 2 — final confirm. Two taps so it's never an accident.
+            Alert.alert(
+              'Are you absolutely sure?',
+              'This is your last chance to cancel.\n\nTap "Delete Forever" to permanently delete your account.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete Forever',
+                  style: 'destructive',
+                  onPress: async () => {
+                    if (!userId) return;
+                    const { error } = await deleteAccount(userId);
+                    if (error) {
+                      Alert.alert('Delete failed', error.message || 'Please try again or contact support.');
+                      return;
+                    }
+                    // deleteAccount already signs the user out; but call
+                    // signOut defensively in case the session lingered.
+                    signOut();
+                  },
+                },
+              ],
+            );
           },
         },
-      ]
+      ],
     );
   };
 
