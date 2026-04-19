@@ -708,12 +708,15 @@ export default function HomeScreen() {
     // TIMER pins — Waze-style anchored Bubble.
     //
     // Unified flow for BOTH owner and visitor (per ux skill's
-    // one-screen-per-concept rule): tap pin → Bubble pops in above
-    // the pin with a spring scale + fade. The MAP DOES NOT MOVE.
-    // Earlier version animated the camera south + zoomed in — that
-    // read as "the whole map jumps" which felt aggressive. The
-    // Bubble's own entry animation carries all the needed motion;
-    // the map stays exactly where the user left it.
+    // one-screen-per-concept rule): tap pin → soft map pan that
+    // centers on the pin and nudges it up just enough to give the
+    // bubble room, WITHOUT crashing into the top bar → Bubble pops
+    // in with a spring scale + fade.
+    //
+    // The pan is intentionally gentle — enough to "organize the
+    // area" around the pin (which the user likes — brings nearby
+    // context into focus) but not enough to shove the pin into the
+    // top 20% of the screen where the bubble would be occluded.
     if (isTimer) {
       // Re-tap on the same pin → dismiss. Feels natural (user is
       // cancelling their own tap) and preserves the old toggle UX.
@@ -745,27 +748,43 @@ export default function HomeScreen() {
       const lat = checkin.latitude ?? currentCity.lat;
       const lng = checkin.longitude ?? currentCity.lng;
 
-      // Haptic confirms the tap registered. Combined with the
-      // Bubble's spring entry, this is all the "felt motion" needed.
+      // Haptic confirms the tap registered.
       Haptics.selectionAsync().catch(() => {});
 
-      // Resolve the pin's current screen coords and pop the bubble
-      // immediately. No wait, no map animation. The bubble anchors
-      // right to where the user just tapped.
-      const p = mapRef.current?.pointForCoordinate({ latitude: lat, longitude: lng });
-      Promise.resolve(p)
-        .then((pt: any) => {
-          if (!pt || typeof pt.x !== 'number' || typeof pt.y !== 'number') {
+      // Map pan — gentle. At latDelta 0.014, a lat shift of 0.0010
+      // puts the pin at ~43% from the top of the map (just above
+      // center). Previous aggressive shift was 0.0035 → pin at 25%,
+      // which jammed the bubble into the top bar. Now the bubble
+      // gets the upper ~43% for itself while the surrounding context
+      // around the pin is still nicely framed.
+      mapRef.current?.animateToRegion({
+        latitude: lat - 0.0010,
+        longitude: lng,
+        latitudeDelta: 0.014,
+        longitudeDelta: 0.014,
+      }, 320);
+
+      // After the pan completes, compute the pin's new screen
+      // coordinate and pop the bubble in. 340ms setTimeout = pan
+      // duration + tiny buffer so pointForCoordinate reports the
+      // final position, not an in-flight value.
+      pendingAnchorTimer.current = setTimeout(() => {
+        pendingAnchorTimer.current = null;
+        const p = mapRef.current?.pointForCoordinate({ latitude: lat, longitude: lng });
+        Promise.resolve(p)
+          .then((pt: any) => {
+            if (!pt || typeof pt.x !== 'number' || typeof pt.y !== 'number') {
+              setTimerBubbleAnchor({ x: screenW / 2, y: 280 });
+            } else {
+              setTimerBubbleAnchor({ x: pt.x, y: pt.y });
+            }
+            setTimerBubbleCheckin(checkin);
+          })
+          .catch(() => {
             setTimerBubbleAnchor({ x: screenW / 2, y: 280 });
-          } else {
-            setTimerBubbleAnchor({ x: pt.x, y: pt.y });
-          }
-          setTimerBubbleCheckin(checkin);
-        })
-        .catch(() => {
-          setTimerBubbleAnchor({ x: screenW / 2, y: 280 });
-          setTimerBubbleCheckin(checkin);
-        });
+            setTimerBubbleCheckin(checkin);
+          });
+      }, 340);
       return;
     }
 
