@@ -65,11 +65,18 @@ const TAB_ICONS: Record<string, NomadIconName> = {
   Profile: 'user',
 };
 
-/* ─── Dev bypass: skip auth, go straight to onboarding → app ─── */
-const DEV_MODE = true;
+/* ─── Dev bypass: auto sign-in to a real Supabase auth session so RLS works.
+ * Previously this just injected a fake user_id, which meant:
+ *   - app_profiles writes failed silently (FK + RLS)
+ *   - People tab returned nothing (RLS policies reject non-authed reads)
+ *   - Settings updates (age range etc.) silently no-op'd
+ * Now DEV_MODE actually authenticates as the dev user.
+ * Before enabling DEV_MODE in a fresh Supabase project, create matching rows
+ * in auth.users + app_profiles with the passwords below. ───────────────── */
+const DEV_MODE = __DEV__;
 const DEV_USERS = [
-  { id: '88888888-8888-8888-8888-888888888888', label: 'Barak' },
-  { id: '99999999-9999-9999-9999-999999999999', label: 'Test Nomad' },
+  { id: '88888888-8888-8888-8888-888888888888', label: 'Barak',      email: 'barak_test@nomadspeople.dev',  password: 'NomadsPeopleDev2026!' },
+  { id: '99999999-9999-9999-9999-999999999999', label: 'Test Nomad', email: 'test_nomad@nomadspeople.dev',  password: 'NomadsPeopleDev2026!' },
 ];
 const DEV_USER_ID = DEV_USERS[0].id;
 
@@ -176,6 +183,32 @@ export default function App() {
       .catch(() => {})
       .finally(() => setDevUserLoaded(true));
   }, []);
+
+  // DEV_MODE: sign in as the selected dev user so we have a real Supabase auth
+  // session. Without this, RLS policies block all reads/writes and the app
+  // looks half-broken (empty People tab, settings saves silently fail, etc.).
+  useEffect(() => {
+    if (!DEV_MODE || !devUserLoaded) return;
+    let cancelled = false;
+    const dev = DEV_USERS[devUserIdx];
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (cancelled) return;
+      // Already signed in as the right dev user? done.
+      if (session?.user?.id === dev.id) return;
+      // Signed in as a DIFFERENT user (e.g. after switchDevUser) — sign out first.
+      if (session) {
+        await supabase.auth.signOut();
+        if (cancelled) return;
+      }
+      const { error } = await supabase.auth.signInWithPassword({
+        email: dev.email,
+        password: dev.password,
+      });
+      if (error) console.warn('[DEV_MODE] auto sign-in failed:', error.message);
+    })();
+    return () => { cancelled = true; };
+  }, [devUserIdx, devUserLoaded]);
 
   // Save when switching
   const switchDevUser = useCallback(() => {
