@@ -479,9 +479,13 @@ export default function ProfileScreen() {
 
   const fetchActiveCheckin = useCallback(async () => {
     if (!profileUserId) return;
+    // CRITICAL: select ALL fields the Activity Info modal reads/edits.
+    // Missing `scheduled_for` / `is_open` / `is_flexible_time` here was
+    // causing save-then-reopen to show stale date/time/privacy because
+    // those fields were never loaded back into activeStatus/activeTimer.
     const { data, error } = await supabase
       .from('app_checkins')
-      .select('id, user_id, city, checkin_type, status_text, status_emoji, category, activity_text, location_name, latitude, longitude, member_count, is_active, checked_in_at, expires_at')
+      .select('id, user_id, city, checkin_type, status_text, status_emoji, category, activity_text, location_name, latitude, longitude, member_count, is_active, is_open, checked_in_at, expires_at, scheduled_for, is_flexible_time, age_min, age_max, visibility')
       .eq('user_id', profileUserId)
       .eq('is_active', true)
       .order('checked_in_at', { ascending: false });
@@ -793,12 +797,16 @@ export default function ProfileScreen() {
     }
 
     // 4. Merge staged into local editCheckin so the UI reflects DB state,
-    //    clear the staging buffer, trigger a global refetch.
+    //    clear the staging buffer, trigger a global refetch AND refetch
+    //    active events specifically — the active-event card reads
+    //    scheduled_for/is_open which were missing from the profile
+    //    refetch's SELECT list.
     const justSaved = stagedChanges;     // capture BEFORE clearing for the alert below
     setEditCheckin({ ...editCheckin, ...stagedChanges });
     setStagedChanges({});
     setSavingAll(false);
     refetch();
+    fetchActiveCheckin();
 
     // 5. Closed-loop confirmation — the user must SEE that the save
     //    happened and what specifically changed. Otherwise the modal
@@ -1955,7 +1963,16 @@ export default function ProfileScreen() {
                 <Text style={{ fontSize: s(7), fontWeight: FW.bold, color: '#fff' }}>
                   {savingAll
                     ? 'Saving…'
-                    : `Save ${Object.keys(stagedChanges).filter(k => k !== 'status_text' && k !== 'longitude' && k !== 'latitude').length} change${Object.keys(stagedChanges).filter(k => k !== 'status_text' && k !== 'longitude' && k !== 'latitude').length === 1 ? '' : 's'}`}
+                    : (() => {
+                        // Count only USER-FACING edits. Location writes 4
+                        // fields (location_name, latitude, longitude, city)
+                        // but the user did 1 change. Title writes 2
+                        // (activity_text + status_text) for 1 edit. Time
+                        // can write 2 (scheduled_for + is_flexible_time).
+                        const n = (['activity_text', 'location_name', 'scheduled_for', 'is_open'] as const)
+                          .filter((k) => stagedChanges[k] !== undefined).length;
+                        return `Save ${n} change${n === 1 ? '' : 's'}`;
+                      })()}
                 </Text>
               </TouchableOpacity>
             </View>
