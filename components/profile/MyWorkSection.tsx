@@ -16,7 +16,7 @@ interface Props {
   jobType: string | null;
   skills: string[] | null;
   openToWork: boolean;
-  portfolioUrl: string | null;
+  portfolioUrl: string | null;      // kept in schema but no longer edited here
   websiteUrl: string | null;
   isOwner: boolean;
   onSave?: (data: {
@@ -27,8 +27,6 @@ interface Props {
     website_url?: string | null;
   }) => void;
 }
-
-const MAX_LINKS = 3;
 
 /* ── Brand detection for link icons ── */
 interface BrandInfo {
@@ -109,31 +107,21 @@ export default function MyWorkSection({
   const { colors } = useTheme();
   const st = useMemo(() => makeStyles(colors), [colors]);
 
-  // Edit mode
+  // Edit mode — single website field (simplified from 3-link array)
   const [editing, setEditing] = useState(false);
   const [editJob, setEditJob] = useState(jobType || '');
   const [editSkills, setEditSkills] = useState((skills || []).join(', '));
-  const [editLinks, setEditLinks] = useState<string[]>(() => {
-    const links: string[] = [];
-    if (portfolioUrl) links.push(portfolioUrl);
-    if (websiteUrl && websiteUrl !== portfolioUrl) links.push(websiteUrl);
-    while (links.length < MAX_LINKS) links.push('');
-    return links.slice(0, MAX_LINKS);
-  });
+  const [editWebsite, setEditWebsite] = useState(websiteUrl || '');
   const [editOpenToWork, setEditOpenToWork] = useState(openToWork);
 
   const openEdit = useCallback(() => {
     setEditJob(jobType || '');
     setEditSkills((skills || []).join(', '));
-    const links: string[] = [];
-    if (portfolioUrl) links.push(portfolioUrl);
-    if (websiteUrl && websiteUrl !== portfolioUrl) links.push(websiteUrl);
-    while (links.length < MAX_LINKS) links.push('');
-    setEditLinks(links.slice(0, MAX_LINKS));
+    setEditWebsite(websiteUrl || '');
     setEditOpenToWork(openToWork);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setEditing(true);
-  }, [jobType, skills, portfolioUrl, websiteUrl, openToWork]);
+  }, [jobType, skills, websiteUrl, openToWork]);
 
   const cancelEdit = useCallback(() => {
     Keyboard.dismiss();
@@ -147,32 +135,22 @@ export default function MyWorkSection({
       .split(',')
       .map(s => s.trim())
       .filter(Boolean);
-    const validLinks = editLinks.filter(l => l.trim().length > 0);
+    const trimmedWebsite = editWebsite.trim();
+    const normalizedWebsite = trimmedWebsite
+      ? (/^https?:\/\//i.test(trimmedWebsite) ? trimmedWebsite : `https://${trimmedWebsite}`)
+      : null;
 
     onSave?.({
       job_type: editJob.trim() || null,
-      skills: parsedSkills.length > 0 ? parsedSkills : [],
+      skills: parsedSkills,                 // always pass array — [] clears existing skills
       open_to_work: editOpenToWork,
-      portfolio_url: validLinks[0] || null,
-      website_url: validLinks[1] || null,
+      portfolio_url: null,                  // legacy column, no longer edited in this UI
+      website_url: normalizedWebsite,
     });
 
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setEditing(false);
-  }, [editJob, editSkills, editLinks, editOpenToWork, onSave]);
-
-  const updateLink = (idx: number, val: string) => {
-    const copy = [...editLinks];
-    copy[idx] = val;
-    setEditLinks(copy);
-  };
-
-  const clearLink = (idx: number) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    const copy = [...editLinks];
-    copy[idx] = '';
-    setEditLinks(copy);
-  };
+  }, [editJob, editSkills, editWebsite, editOpenToWork, onSave]);
 
   // Hide for visitors if nothing to show — MUST be after all hooks
   const hasContent = jobType || (skills && skills.length > 0) || portfolioUrl || websiteUrl;
@@ -187,8 +165,8 @@ export default function MyWorkSection({
             <NomadIcon name="briefcase" size={s(6)} color="#1A1A1A" strokeWidth={1.6} />
             <Text style={st.headerTitle}>{t('profile.myWork')}</Text>
           </View>
-          <TouchableOpacity onPress={cancelEdit} activeOpacity={0.7}>
-            <NomadIcon name="close" size={s(6)} color={colors.textMuted} strokeWidth={1.6} />
+          <TouchableOpacity onPress={cancelEdit} activeOpacity={0.7} style={st.actionBtnPill} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <NomadIcon name="close" size={s(6)} color={colors.dark} strokeWidth={2} />
           </TouchableOpacity>
         </View>
 
@@ -216,37 +194,32 @@ export default function MyWorkSection({
           returnKeyType="done"
         />
 
-        {/* Links (3 slots) */}
-        <Text style={st.fieldLabel}>{t('profile.linksLabel')}</Text>
-        {editLinks.map((link, i) => {
-          const hasValue = link.trim().length > 0;
-          const brand = hasValue ? detectBrand(link) : null;
-          return (
-            <View key={i} style={st.linkInputRow}>
-              {brand ? (
-                <NomadIcon name={brand.icon as NomadIconName} size={18} color={brand.color} strokeWidth={1.6} />
-              ) : (
-                <NomadIcon name="link" size={18} color="#ccc" strokeWidth={1.6} />
-              )}
-              <TextInput
-                style={st.linkInput}
-                value={link}
-                onChangeText={(v) => updateLink(i, v)}
-                placeholder={i === 0 ? 'instagram.com/you' : i === 1 ? 'yoursite.com' : 'Any link...'}
-                placeholderTextColor="#ccc"
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                returnKeyType="done"
-              />
-              {hasValue && (
-                <TouchableOpacity onPress={() => clearLink(i)} style={st.linkClearBtn} activeOpacity={0.7}>
-                  <NomadIcon name="x-circle" size={18} color="#ccc" strokeWidth={1.6} />
-                </TouchableOpacity>
-              )}
-            </View>
-          );
-        })}
+        {/* Website — single field */}
+        <Text style={st.fieldLabel}>Website</Text>
+        <View style={st.linkInputRow}>
+          <NomadIcon name="link" size={18} color={colors.textMuted} strokeWidth={1.8} />
+          <TextInput
+            style={st.linkInput}
+            value={editWebsite}
+            onChangeText={setEditWebsite}
+            placeholder="yoursite.com"
+            placeholderTextColor="#ccc"
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            returnKeyType="done"
+          />
+          {editWebsite.trim().length > 0 && (
+            <TouchableOpacity
+              onPress={() => setEditWebsite('')}
+              style={st.linkClearBtn}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <NomadIcon name="x-circle" size={20} color={colors.textMuted} strokeWidth={2} />
+            </TouchableOpacity>
+          )}
+        </View>
 
         {/* Open to work toggle */}
         <TouchableOpacity
@@ -274,7 +247,7 @@ export default function MyWorkSection({
   }
 
   /* ── DISPLAY MODE ── */
-  const allLinks = [portfolioUrl, websiteUrl].filter(Boolean) as string[];
+  const websiteOnly = websiteUrl ? [websiteUrl] : [];
 
   return (
     <View style={st.card}>
@@ -284,8 +257,13 @@ export default function MyWorkSection({
           <Text style={st.headerTitle}>{t('profile.myWork')}</Text>
         </View>
         {isOwner && (
-          <TouchableOpacity onPress={openEdit} activeOpacity={0.7}>
-            <NomadIcon name="edit" size={s(5)} color={colors.textMuted} strokeWidth={1.6} />
+          <TouchableOpacity
+            onPress={openEdit}
+            activeOpacity={0.7}
+            style={st.editBtnPill}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <NomadIcon name="edit" size={s(6)} color={colors.primary} strokeWidth={2} />
           </TouchableOpacity>
         )}
       </View>
@@ -318,10 +296,10 @@ export default function MyWorkSection({
         </View>
       )}
 
-      {/* Links — with brand icons and clean display */}
-      {allLinks.length > 0 && (
+      {/* Website — single link with favicon */}
+      {websiteOnly.length > 0 && (
         <View style={st.linksContainer}>
-          {allLinks.map((url, i) => {
+          {websiteOnly.map((url, i) => {
             const brand = detectBrand(url);
             const displayName = getDisplayName(url, brand);
             return (
@@ -349,7 +327,7 @@ export default function MyWorkSection({
                   <Text style={st.linkLabel}>{brand.label}</Text>
                   <Text style={st.linkHandle} numberOfLines={1}>{displayName}</Text>
                 </View>
-                <NomadIcon name="external-link" size={14} color="#ccc" strokeWidth={1.4} />
+                <NomadIcon name="external-link" size={16} color={colors.textMuted} strokeWidth={1.8} />
               </TouchableOpacity>
             );
           })}
@@ -359,7 +337,7 @@ export default function MyWorkSection({
       {/* Empty state for owner */}
       {!hasContent && isOwner && (
         <TouchableOpacity style={st.emptyRow} activeOpacity={0.7} onPress={openEdit}>
-          <NomadIcon name="plus-circle" size={s(6)} color={colors.textMuted} strokeWidth={1.6} />
+          <NomadIcon name="plus-circle" size={s(7)} color={colors.primary} strokeWidth={2} />
           <Text style={st.emptyText}>{t('profile.addWorkInfo')}</Text>
         </TouchableOpacity>
       )}
@@ -400,6 +378,28 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     borderWidth: 0.5, borderColor: c.borderSoft,
   },
   skillText: { fontSize: s(4.5), fontWeight: FW.medium, color: c.textSec },
+
+  /* Prominent, tappable action buttons (edit pencil + close X) */
+  editBtnPill: {
+    width: s(14),
+    height: s(14),
+    borderRadius: s(7),
+    backgroundColor: c.primary + '18',   // primary tint, clearly visible
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: c.primary + '40',
+  },
+  actionBtnPill: {
+    width: s(12),
+    height: s(12),
+    borderRadius: s(6),
+    backgroundColor: c.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: c.borderSoft,
+  },
 
   /* Links display — card style */
   linksContainer: { gap: s(2.5), marginTop: s(2) },

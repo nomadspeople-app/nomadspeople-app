@@ -834,12 +834,12 @@ export default function ProfileScreen() {
             </View>
           )}
 
-          {/* ── 1a. Social icons (IG / TikTok / LinkedIn / Website) ── */}
+          {/* ── 1a. Social icons (IG / TikTok / LinkedIn) ── Website is
+               shown in My Work section below, not duplicated here. ─ */}
           <SocialIconRow
             instagramHandle={(profile as any)?.instagram_handle}
             tiktokHandle={(profile as any)?.tiktok_handle}
             linkedinHandle={(profile as any)?.linkedin_handle}
-            websiteUrl={(profile as any)?.website_url}
           />
 
           {/* ── 1b. Age + Zodiac ── */}
@@ -1077,11 +1077,17 @@ export default function ProfileScreen() {
             isOwner={isOwner}
             onSave={async (data) => {
               if (!profileUserId) return;
+              // UPSERT, not UPDATE — otherwise a missing row silently
+              // no-ops and the save button appears to do nothing. Also
+              // surfaces real errors to the user instead of only console.
               const { error } = await supabase
                 .from('app_profiles')
-                .update(data)
-                .eq('user_id', profileUserId);
-              if (error) console.error('MyWork save error:', error);
+                .upsert({ user_id: profileUserId, ...data }, { onConflict: 'user_id' });
+              if (error) {
+                console.error('MyWork save error:', error);
+                Alert.alert('Save failed', error.message);
+                return;
+              }
               refetch();
             }}
           />

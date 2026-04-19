@@ -134,7 +134,7 @@ export default function SettingsScreen() {
   const [socialIg, setSocialIg] = useState('');
   const [socialTt, setSocialTt] = useState('');
   const [socialLi, setSocialLi] = useState('');
-  const [socialWeb, setSocialWeb] = useState('');
+  // Website moved to My Work section per product decision — no need to duplicate.
 
   /* ─── Section Header ─── */
   function SectionHeader({ title }: { title: string }) {
@@ -599,7 +599,6 @@ export default function SettingsScreen() {
     setSocialIg(p.instagram_handle || '');
     setSocialTt(p.tiktok_handle || '');
     setSocialLi(p.linkedin_handle || '');
-    setSocialWeb(p.website_url || '');
     setShowSocialLinks(true);
   };
 
@@ -613,22 +612,14 @@ export default function SettingsScreen() {
       .replace(/\/$/, '')
       .trim();
 
-  const normWeb = (v: string) => {
-    const t2 = v.trim();
-    if (!t2) return '';
-    return /^https?:\/\//i.test(t2) ? t2 : `https://${t2}`;
-  };
-
   const handleSaveSocialLinks = () => {
     const ig = normHandle(socialIg, 'instagram.com');
     const tt = normHandle(socialTt, 'tiktok.com');
     const li = normHandle(socialLi, 'linkedin.com');
-    const web = normWeb(socialWeb);
     save({
       instagram_handle: ig || null,
       tiktok_handle: tt || null,
       linkedin_handle: li || null,
-      website_url: web || null,
     });
     setShowSocialLinks(false);
     setTimeout(() => refetchProfile(), 300);
@@ -640,7 +631,6 @@ export default function SettingsScreen() {
     if (p.instagram_handle) parts.push('IG');
     if (p.tiktok_handle) parts.push('TikTok');
     if (p.linkedin_handle) parts.push('LinkedIn');
-    if (p.website_url) parts.push('Web');
     return parts.length ? parts.join(' · ') : 'not set';
   })();
 
@@ -1171,7 +1161,6 @@ export default function SettingsScreen() {
             { label: 'Instagram',  value: socialIg,  setter: setSocialIg,  placeholder: '@yourhandle' },
             { label: 'TikTok',     value: socialTt,  setter: setSocialTt,  placeholder: '@yourhandle' },
             { label: 'LinkedIn',   value: socialLi,  setter: setSocialLi,  placeholder: 'username (or full /in/ URL)' },
-            { label: 'Website',    value: socialWeb, setter: setSocialWeb, placeholder: 'https://yoursite.com' },
           ].map((field) => (
             <View key={field.label} style={{ marginBottom: s(7) }}>
               <Text style={{ fontSize: s(6), color: colors.textSec, marginBottom: s(2), fontWeight: '600' }}>
