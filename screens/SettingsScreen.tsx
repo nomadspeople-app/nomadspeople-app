@@ -1026,21 +1026,6 @@ export default function SettingsScreen() {
               />
             }
           />
-          <View style={styles.divider} />
-          <SettingsRow
-            icon="airplane"
-            label="Incoming flights"
-            sublabel="When someone is flying to your city"
-            right={
-              <Switch
-                value={notifyFlightIncoming}
-                onValueChange={handleToggleFlightIncoming}
-                trackColor={{ false: '#D1D5DB', true: colors.success }}
-                ios_backgroundColor="#D1D5DB"
-                thumbColor="white"
-              />
-            }
-          />
         </View>
 
         {/* ═══ SOCIAL ═══ */}
