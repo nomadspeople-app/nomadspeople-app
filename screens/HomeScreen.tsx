@@ -1211,9 +1211,10 @@ export default function HomeScreen() {
       </MapView>
 
       {/* ── Waze-style anchored timer bubble ──
-           Tail points at the exact pin the user just tapped. Dismisses
-           on: tap outside / map tap / region change / opening something
-           deeper via bubble tap. Never floats freely. */}
+           Tail points at the exact pin the user just tapped. Bubble
+           owns its own CTA: join / chat / leave / manage — no deeper
+           sheet needed. Dismisses on tap outside / map tap / region
+           change. Never floats freely. */}
       <TimerBubble
         visible={!!timerBubbleCheckin && !!timerBubbleAnchor}
         checkin={timerBubbleCheckin as any}
@@ -1222,23 +1223,6 @@ export default function HomeScreen() {
         anchorX={timerBubbleAnchor?.x ?? screenW / 2}
         anchorY={timerBubbleAnchor?.y ?? 200}
         onClose={dismissTimerBubble}
-        onOpenVisitorDetail={(c) => {
-          // Zoom + open the full sheet. TimerBubble already dismissed
-          // itself; we just drive the next surface.
-          const lat = c.latitude ?? currentCity.lat;
-          const lng = c.longitude ?? currentCity.lng;
-          mapRef.current?.animateToRegion({
-            latitude: lat,
-            longitude: lng,
-            latitudeDelta: 0.008,
-            longitudeDelta: 0.008,
-          }, 400);
-          setTimeout(() => {
-            setPopupData(c);
-            setJoined(false);
-            setShowPopup(true);
-          }, 450);
-        }}
       />
 
       {/* ── SNOOZE CLOUD OVERLAY — Simpsons-style clouds covering the map ── */}
