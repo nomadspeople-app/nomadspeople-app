@@ -671,12 +671,35 @@ export default function HomeScreen() {
     const isTimer = (checkin as any).checkin_type === 'timer';
     const isOwn = checkin.user_id === userId;
 
-    // TIMER pins — open the bubble in place, do NOT move the map. The pin
-    // is already where it is; jumping the camera is disorienting and was
-    // previously sending the owner to their live GPS instead of the pin,
-    // which didn't match the bubble's actual location.
+    // TIMER pins:
+    //  - OWNER taps own timer → fast in-place bubble (quick Cancel Timer).
+    //    No map move — tweet-like flow.
+    //  - VISITOR taps someone else's timer → full ActivityDetailSheet
+    //    with countdown, location, mini-map, Join button. Visitors need
+    //    the same level of info as any event, otherwise they can't make
+    //    an informed "should I show up?" decision.
     if (isTimer) {
-      setTimerBubbleCheckin(prev => prev?.id === checkin.id ? null : checkin);
+      if (isOwn) {
+        setTimerBubbleCheckin(prev => prev?.id === checkin.id ? null : checkin);
+        return;
+      }
+      // Visitor path: same map-zoom flow as status pins, then open the
+      // full sheet. ActivityDetailSheet already knows checkin_type='timer'
+      // and renders countdown + no-approval Join.
+      const lat = checkin.latitude ?? currentCity.lat;
+      const lng = checkin.longitude ?? currentCity.lng;
+      mapRef.current?.animateToRegion({
+        latitude: lat,
+        longitude: lng,
+        latitudeDelta: 0.008,
+        longitudeDelta: 0.008,
+      }, 400);
+      setTimeout(() => {
+        setTimerBubbleCheckin(null);
+        setPopupData(checkin);
+        setJoined(false);
+        setShowPopup(true);
+      }, 450);
       return;
     }
 

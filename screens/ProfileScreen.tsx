@@ -1670,74 +1670,96 @@ export default function ProfileScreen() {
                 <NomadIcon name="forward" size={s(6)} color="#CCC" strokeWidth={1.6} />
               </TouchableOpacity>
 
-              {/* Timer is locked — the owner can only edit the status text
-                   (via the title editor above) and cancel. No Mute toggle,
-                   no privacy (timers are always public), no location, no
-                   date, no time. Per spec: "only status text editable". */}
-              {editCheckin?.checkin_type !== 'timer' && (<View>
+              {/* Timer editing rules (per docs/timer-button-spec.md):
+                  - EDITABLE for timer owner: status_text only (the title
+                    editor above). Everything below this comment is EITHER
+                    hidden (Mute, Private, Date) or rendered READ-ONLY
+                    (Location, Time → countdown).
+                  - Map (further below) always renders for both timer &
+                    status so the user sees where the pin lives.
+                  - Status events keep the full editor (unchanged). */}
+
+              {/* Mute Notifications — hidden on timers (15–120 min; nothing to mute) */}
+              {editCheckin?.checkin_type !== 'timer' && (<>
+                <View style={aiStyles.divider} />
+                <View style={aiStyles.row}>
+                  <View style={[aiStyles.rowIcon, { backgroundColor: colors.warnSurface }]}>
+                    <NomadIcon name="bell" size={s(7)} color="#F97316" strokeWidth={1.6} />
+                  </View>
+                  <Text style={aiStyles.rowLabel}>Mute Notifications</Text>
+                  <Switch
+                    value={editMuted}
+                    onValueChange={setEditMuted}
+                    trackColor={{ false: '#D1D5DB', true: colors.success }}
+                    ios_backgroundColor="#D1D5DB"
+                    thumbColor="white"
+                  />
+                </View>
+              </>)}
+
+              {/* Private Activity — hidden on timers (timers are ALWAYS public per spec) */}
+              {editCheckin?.checkin_type !== 'timer' && (<>
+                <View style={aiStyles.divider} />
+                <View style={aiStyles.row}>
+                  <View style={[aiStyles.rowIcon, { backgroundColor: colors.dangerSurface }]}>
+                    <NomadIcon name="lock" size={s(7)} color={colors.primary} strokeWidth={1.6} />
+                  </View>
+                  <Text style={aiStyles.rowLabel}>Private Activity</Text>
+                  <Switch
+                    value={editPrivate}
+                    onValueChange={(val) => {
+                      // Stage only — bottom Save button commits.
+                      setEditPrivate(val);
+                      setStagedChanges({ ...stagedChanges, is_open: !val });
+                    }}
+                    trackColor={{ false: '#D1D5DB', true: colors.primary }}
+                    ios_backgroundColor="#D1D5DB"
+                    thumbColor="white"
+                  />
+                </View>
+              </>)}
 
               <View style={aiStyles.divider} />
 
-              {/* Mute Notifications */}
-              <View style={aiStyles.row}>
-                <View style={[aiStyles.rowIcon, { backgroundColor: colors.warnSurface }]}>
-                  <NomadIcon name="bell" size={s(7)} color="#F97316" strokeWidth={1.6} />
+              {/* Location — TouchableOpacity (editable) for status,
+                  static View (read-only) for timer per spec. */}
+              {editCheckin?.checkin_type === 'timer' ? (
+                <View style={aiStyles.row}>
+                  <View style={[aiStyles.rowIcon, { backgroundColor: colors.accentSurface }]}>
+                    <NomadIcon name="pin" size={s(7)} color="#EC4899" strokeWidth={1.6} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={aiStyles.rowLabel}>Location</Text>
+                    {effective('location_name') && (
+                      <Text style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(0.5) }} numberOfLines={1}>
+                        {effective('location_name')}
+                      </Text>
+                    )}
+                  </View>
                 </View>
-                <Text style={aiStyles.rowLabel}>Mute Notifications</Text>
-                <Switch
-                  value={editMuted}
-                  onValueChange={setEditMuted}
-                  trackColor={{ false: '#D1D5DB', true: colors.success }}
-                  ios_backgroundColor="#D1D5DB"
-                  thumbColor="white"
-                />
-              </View>
+              ) : (
+                <TouchableOpacity
+                  style={aiStyles.row}
+                  activeOpacity={0.6}
+                  onPress={() => { setShowLocationSearch(!showLocationSearch); setShowDatePicker(false); setShowTimePicker(false); }}
+                >
+                  <View style={[aiStyles.rowIcon, { backgroundColor: colors.accentSurface }]}>
+                    <NomadIcon name="pin" size={s(7)} color="#EC4899" strokeWidth={1.6} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={aiStyles.rowLabel}>Location</Text>
+                    {effective('location_name') && (
+                      <Text style={{ fontSize: s(4.5), color: stagedChanges.location_name ? colors.primary : colors.textMuted, marginTop: s(0.5) }} numberOfLines={1}>
+                        {effective('location_name')}{stagedChanges.location_name ? ' •' : ''}
+                      </Text>
+                    )}
+                  </View>
+                  <NomadIcon name={showLocationSearch ? 'close' : 'forward'} size={s(6)} color="#CCC" strokeWidth={1.6} />
+                </TouchableOpacity>
+              )}
 
-              <View style={aiStyles.divider} />
-
-              {/* Private Activity */}
-              <View style={aiStyles.row}>
-                <View style={[aiStyles.rowIcon, { backgroundColor: colors.dangerSurface }]}>
-                  <NomadIcon name="lock" size={s(7)} color={colors.primary} strokeWidth={1.6} />
-                </View>
-                <Text style={aiStyles.rowLabel}>Private Activity</Text>
-                <Switch
-                  value={editPrivate}
-                  onValueChange={(val) => {
-                    // Stage only — bottom Save button commits.
-                    setEditPrivate(val);
-                    setStagedChanges({ ...stagedChanges, is_open: !val });
-                  }}
-                  trackColor={{ false: '#D1D5DB', true: colors.primary }}
-                  ios_backgroundColor="#D1D5DB"
-                  thumbColor="white"
-                />
-              </View>
-
-              <View style={aiStyles.divider} />
-
-              {/* Change Location */}
-              <TouchableOpacity
-                style={aiStyles.row}
-                activeOpacity={0.6}
-                onPress={() => { setShowLocationSearch(!showLocationSearch); setShowDatePicker(false); setShowTimePicker(false); }}
-              >
-                <View style={[aiStyles.rowIcon, { backgroundColor: colors.accentSurface }]}>
-                  <NomadIcon name="pin" size={s(7)} color="#EC4899" strokeWidth={1.6} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={aiStyles.rowLabel}>Location</Text>
-                  {effective('location_name') && (
-                    <Text style={{ fontSize: s(4.5), color: stagedChanges.location_name ? colors.primary : colors.textMuted, marginTop: s(0.5) }} numberOfLines={1}>
-                      {effective('location_name')}{stagedChanges.location_name ? ' •' : ''}
-                    </Text>
-                  )}
-                </View>
-                <NomadIcon name={showLocationSearch ? 'close' : 'forward'} size={s(6)} color="#CCC" strokeWidth={1.6} />
-              </TouchableOpacity>
-
-              {/* Inline location search */}
-              {showLocationSearch && (
+              {/* Inline location search — never opens for timer (read-only) */}
+              {editCheckin?.checkin_type !== 'timer' && showLocationSearch && (
                 <View style={{ paddingHorizontal: s(4), paddingBottom: s(4) }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, borderRadius: s(6), paddingHorizontal: s(4), height: s(18) }}>
                     <NomadIcon name="search" size={s(6)} color={colors.textMuted} strokeWidth={1.4} />
@@ -1810,7 +1832,9 @@ export default function ProfileScreen() {
 
               <View style={aiStyles.divider} />
 
-              {/* Change Date */}
+              {/* Change Date — only renders for status events. Timers
+                  have no scheduled_for; their lifetime is expires_at. */}
+              {editCheckin?.checkin_type !== 'timer' && (
               <TouchableOpacity
                 style={aiStyles.row}
                 activeOpacity={0.6}
@@ -1840,9 +1864,10 @@ export default function ProfileScreen() {
                 </View>
                 <NomadIcon name={showDatePicker ? 'close' : 'forward'} size={s(6)} color="#CCC" strokeWidth={1.6} />
               </TouchableOpacity>
+              )}
 
-              {/* Inline date picker */}
-              {showDatePicker && (
+              {/* Inline date picker — never for timers */}
+              {editCheckin?.checkin_type !== 'timer' && showDatePicker && (
                 <View style={{ paddingHorizontal: s(4), paddingBottom: s(4) }}>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     <View style={{ flexDirection: 'row', gap: s(3), paddingVertical: s(3) }}>
@@ -1877,41 +1902,65 @@ export default function ProfileScreen() {
 
               <View style={aiStyles.divider} />
 
-              {/* Change Time */}
-              <TouchableOpacity
-                style={aiStyles.row}
-                activeOpacity={0.6}
-                onPress={() => {
-                  setShowTimePicker(!showTimePicker);
-                  setShowDatePicker(false);
-                  setShowLocationSearch(false);
-                  // Init from current scheduled_for
-                  if (editCheckin?.scheduled_for) {
-                    const d = new Date(editCheckin.scheduled_for);
-                    setEditHour(d.getHours());
-                    setEditMinute(Math.round(d.getMinutes() / 15) * 15);
-                  }
-                }}
-              >
-                <View style={[aiStyles.rowIcon, { backgroundColor: colors.warnSurface }]}>
-                  <NomadIcon name="clock" size={s(7)} color="#F59E0B" strokeWidth={1.6} />
+              {/* Time — read-only countdown for timer, editable picker for status */}
+              {editCheckin?.checkin_type === 'timer' ? (
+                <View style={aiStyles.row}>
+                  <View style={[aiStyles.rowIcon, { backgroundColor: colors.warnSurface }]}>
+                    <NomadIcon name="clock" size={s(7)} color="#F59E0B" strokeWidth={1.6} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={aiStyles.rowLabel}>Ends in</Text>
+                    {effective('expires_at') && (() => {
+                      const msLeft = new Date(effective('expires_at')).getTime() - Date.now();
+                      const label = msLeft <= 0
+                        ? 'expired'
+                        : msLeft < 60 * 60 * 1000
+                          ? `${Math.max(1, Math.round(msLeft / 60000))}m`
+                          : `${Math.floor(msLeft / 3600000)}h${Math.round((msLeft % 3600000) / 60000)}m`;
+                      return (
+                        <Text style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(0.5) }}>
+                          {label}
+                        </Text>
+                      );
+                    })()}
+                  </View>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={aiStyles.rowLabel}>Time</Text>
-                  {effective('scheduled_for') && !effective('is_flexible_time') && (
-                    <Text style={{ fontSize: s(4.5), color: stagedChanges.scheduled_for ? colors.primary : colors.textMuted, marginTop: s(0.5) }}>
-                      {fmtTime(new Date(effective('scheduled_for')).getHours(), new Date(effective('scheduled_for')).getMinutes())}{stagedChanges.scheduled_for ? ' •' : ''}
-                    </Text>
-                  )}
-                  {effective('is_flexible_time') && (
-                    <Text style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(0.5) }}>flexible</Text>
-                  )}
-                </View>
-                <NomadIcon name={showTimePicker ? 'close' : 'forward'} size={s(6)} color="#CCC" strokeWidth={1.6} />
-              </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={aiStyles.row}
+                  activeOpacity={0.6}
+                  onPress={() => {
+                    setShowTimePicker(!showTimePicker);
+                    setShowDatePicker(false);
+                    setShowLocationSearch(false);
+                    // Init from current scheduled_for
+                    if (editCheckin?.scheduled_for) {
+                      const d = new Date(editCheckin.scheduled_for);
+                      setEditHour(d.getHours());
+                      setEditMinute(Math.round(d.getMinutes() / 15) * 15);
+                    }
+                  }}
+                >
+                  <View style={[aiStyles.rowIcon, { backgroundColor: colors.warnSurface }]}>
+                    <NomadIcon name="clock" size={s(7)} color="#F59E0B" strokeWidth={1.6} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={aiStyles.rowLabel}>Time</Text>
+                    {effective('scheduled_for') && !effective('is_flexible_time') && (
+                      <Text style={{ fontSize: s(4.5), color: stagedChanges.scheduled_for ? colors.primary : colors.textMuted, marginTop: s(0.5) }}>
+                        {fmtTime(new Date(effective('scheduled_for')).getHours(), new Date(effective('scheduled_for')).getMinutes())}{stagedChanges.scheduled_for ? ' •' : ''}
+                      </Text>
+                    )}
+                    {effective('is_flexible_time') && (
+                      <Text style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(0.5) }}>flexible</Text>
+                    )}
+                  </View>
+                  <NomadIcon name={showTimePicker ? 'close' : 'forward'} size={s(6)} color="#CCC" strokeWidth={1.6} />
+                </TouchableOpacity>
+              )}
 
-              {/* Inline time picker */}
-              {showTimePicker && (
+              {/* Inline time picker — never for timers */}
+              {editCheckin?.checkin_type !== 'timer' && showTimePicker && (
                 <View style={{ paddingHorizontal: s(4), paddingBottom: s(4) }}>
                   <View style={{ flexDirection: 'row', borderRadius: s(6), backgroundColor: colors.surface, overflow: 'hidden', height: s(65) }}>
                     {/* Hours */}
@@ -1968,8 +2017,6 @@ export default function ProfileScreen() {
                 </View>
               )}
 
-            </View>)}
-            {/* ↑ end of `checkin_type !== 'timer'` editor block */}
             </View>
             {/* ↑ closes the outer 'Action rows' wrapper that started above the Share button */}
 
