@@ -429,6 +429,15 @@ export default function HomeScreen() {
   const [activeTimerChatId, setActiveTimerChatId] = useState<string | null>(null);
   const [showReplaceStatus, setShowReplaceStatus] = useState(false); // confirm replacing active status
   const [timerBubbleCheckin, setTimerBubbleCheckin] = useState<CheckinWithProfile | null>(null);
+  // Screen coords of the tapped pin. TimerBubble anchors its tail to
+  // this point. Cleared whenever the bubble dismisses — the bubble is
+  // NEVER a floating element; it's always tied to the exact pin the
+  // user just tapped.
+  const [timerBubbleAnchor, setTimerBubbleAnchor] = useState<{ x: number; y: number } | null>(null);
+  const dismissTimerBubble = () => {
+    setTimerBubbleCheckin(null);
+    setTimerBubbleAnchor(null);
+  };
   /* ── פניני חוכמה — Wisdom state ── */
   const [showWisdom, setShowWisdom] = useState(false);
   const [wisdomCity, setWisdomCity] = useState('');
@@ -671,35 +680,36 @@ export default function HomeScreen() {
     const isTimer = (checkin as any).checkin_type === 'timer';
     const isOwn = checkin.user_id === userId;
 
-    // TIMER pins:
-    //  - OWNER taps own timer → fast in-place bubble (quick Cancel Timer).
-    //    No map move — tweet-like flow.
-    //  - VISITOR taps someone else's timer → full ActivityDetailSheet
-    //    with countdown, location, mini-map, Join button. Visitors need
-    //    the same level of info as any event, otherwise they can't make
-    //    an informed "should I show up?" decision.
+    // TIMER pins — Waze-style anchored Bubble.
+    //
+    // Unified flow for BOTH owner and visitor (per ux skill's
+    // one-screen-per-concept rule): tap pin → Bubble appears above it
+    // with tail pointing at the pin. Tap the bubble → deeper surface
+    // (Profile for owner, ActivityDetailSheet for visitor).
+    //
+    // We do NOT zoom the map on pin tap for timers — the whole point of
+    // an anchored popup is context preservation. Zoom happens only if
+    // the user opens the full detail sheet after tapping the bubble.
     if (isTimer) {
-      if (isOwn) {
-        setTimerBubbleCheckin(prev => prev?.id === checkin.id ? null : checkin);
-        return;
-      }
-      // Visitor path: same map-zoom flow as status pins, then open the
-      // full sheet. ActivityDetailSheet already knows checkin_type='timer'
-      // and renders countdown + no-approval Join.
       const lat = checkin.latitude ?? currentCity.lat;
       const lng = checkin.longitude ?? currentCity.lng;
-      mapRef.current?.animateToRegion({
-        latitude: lat,
-        longitude: lng,
-        latitudeDelta: 0.008,
-        longitudeDelta: 0.008,
-      }, 400);
-      setTimeout(() => {
-        setTimerBubbleCheckin(null);
-        setPopupData(checkin);
-        setJoined(false);
-        setShowPopup(true);
-      }, 450);
+      // pointForCoordinate returns a promise in iOS, synchronous-feel in
+      // Android but typed as Promise. Both work here.
+      const p = mapRef.current?.pointForCoordinate({ latitude: lat, longitude: lng });
+      Promise.resolve(p)
+        .then((pt: any) => {
+          if (!pt || typeof pt.x !== 'number' || typeof pt.y !== 'number') {
+            // Fallback: mid-screen. Rare — usually pointForCoordinate works.
+            setTimerBubbleAnchor({ x: screenW / 2, y: 200 });
+          } else {
+            setTimerBubbleAnchor({ x: pt.x, y: pt.y });
+          }
+          setTimerBubbleCheckin(checkin);
+        })
+        .catch(() => {
+          setTimerBubbleAnchor({ x: SW / 2, y: 200 });
+          setTimerBubbleCheckin(checkin);
+        });
       return;
     }
 
@@ -1167,13 +1177,18 @@ export default function HomeScreen() {
         showsUserLocation={true}
         showsCompass={false}
         showsMyLocationButton={false}
-        onPress={() => { if (timerBubbleCheckin) setTimerBubbleCheckin(null); }}
+        onPress={() => { if (timerBubbleCheckin) dismissTimerBubble(); }}
         // @ts-ignore — mapLanguage supported in react-native-maps 1.10+
         mapLanguage="en"
         customMapStyle={isDark ? DIM_MAP_STYLE : []}
         userInterfaceStyle={isDark ? 'dark' : 'light'}
         mapPadding={{ top: (headerH > 0 ? headerH : insets.top + s(36)) + s(30), left: 0, right: 0, bottom: s(40) }}
         onRegionChangeComplete={(region) => {
+          // The bubble is anchored to a screen pixel, not a coordinate,
+          // so after the map moves the old anchor is stale. Rather than
+          // recompute every frame (expensive), we dismiss — matches the
+          // user's spec: "doesn't float, doesn't move on its own".
+          if (timerBubbleCheckin) dismissTimerBubble();
           // Collect checkins visible in current map region
           const visible = filteredCheckins.filter(c => {
             const lat = c.latitude ?? 0;
@@ -1195,14 +1210,35 @@ export default function HomeScreen() {
         )}
       </MapView>
 
-      {/* ── Waze-style timer bubble overlay ── */}
+      {/* ── Waze-style anchored timer bubble ──
+           Tail points at the exact pin the user just tapped. Dismisses
+           on: tap outside / map tap / region change / opening something
+           deeper via bubble tap. Never floats freely. */}
       <TimerBubble
-        visible={!!timerBubbleCheckin}
+        visible={!!timerBubbleCheckin && !!timerBubbleAnchor}
         checkin={timerBubbleCheckin as any}
         creatorName={timerBubbleCheckin?.profile?.full_name || 'Nomad'}
         creatorAvatarUrl={avatarUri((timerBubbleCheckin?.profile as any)?.avatar_url)}
-        mapRef={mapRef}
-        onClose={() => setTimerBubbleCheckin(null)}
+        anchorX={timerBubbleAnchor?.x ?? screenW / 2}
+        anchorY={timerBubbleAnchor?.y ?? 200}
+        onClose={dismissTimerBubble}
+        onOpenVisitorDetail={(c) => {
+          // Zoom + open the full sheet. TimerBubble already dismissed
+          // itself; we just drive the next surface.
+          const lat = c.latitude ?? currentCity.lat;
+          const lng = c.longitude ?? currentCity.lng;
+          mapRef.current?.animateToRegion({
+            latitude: lat,
+            longitude: lng,
+            latitudeDelta: 0.008,
+            longitudeDelta: 0.008,
+          }, 400);
+          setTimeout(() => {
+            setPopupData(c);
+            setJoined(false);
+            setShowPopup(true);
+          }, 450);
+        }}
       />
 
       {/* ── SNOOZE CLOUD OVERLAY — Simpsons-style clouds covering the map ── */}
