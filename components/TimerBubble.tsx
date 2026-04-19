@@ -340,7 +340,9 @@ export default function TimerBubble({
   if (optimisticallyJoined && userId && !allParticipants.some(p => p.user_id === userId)) {
     allParticipants.push({ user_id: userId, avatar_url: null, full_name: 'you' });
   }
-  const MAX_AVATARS = 4;
+  // Instagram "followed by" pattern: 3 small overlapping dots + a
+  // names line. Feels social and compact, not spec-sheet-y.
+  const MAX_AVATARS = 3;
   const shownAvatars = allParticipants.slice(0, MAX_AVATARS);
   const baseCount = Math.max(1, checkin?.member_count ?? 1);
   // The display count is the LARGER of (what we know locally) and
@@ -348,6 +350,31 @@ export default function TimerBubble({
   // shows a sane "X going" number.
   const goingCount = Math.max(allParticipants.length, baseCount + countDelta);
   const overflow = Math.max(0, goingCount - shownAvatars.length);
+
+  // Build the "followed by"–style social-proof line:
+  //   "Barak going"                 (1 going)
+  //   "Barak and Maya going"        (2)
+  //   "Barak, Maya and 1 other going"    (3)
+  //   "Barak, Maya and 5 others going"   (many)
+  // Names come from the fetched profiles; count comes from
+  // member_count (so even if we haven't loaded every avatar, the
+  // "and N others" is correct).
+  const firstNameOf = (s: string | null | undefined) =>
+    (s || '').split(' ')[0] || '';
+  const namesLine = (() => {
+    const displayed = allParticipants
+      .slice(0, 2)
+      .map(p => firstNameOf(p.full_name))
+      .filter(Boolean);
+    const others = goingCount - displayed.length;
+    if (displayed.length === 0) return `${goingCount} going`;
+    if (displayed.length === 1 && others === 0) return `${displayed[0]} going`;
+    if (displayed.length === 2 && others === 0) return `${displayed[0]} and ${displayed[1]} going`;
+    if (displayed.length === 1 && others === 1) return `${displayed[0]} and 1 other going`;
+    if (displayed.length === 1 && others > 1) return `${displayed[0]} and ${others} others going`;
+    if (displayed.length === 2 && others === 1) return `${displayed[0]}, ${displayed[1]} and 1 other going`;
+    return `${displayed[0]}, ${displayed[1]} and ${others} others going`;
+  })();
 
   return (
     <Bubble
@@ -382,15 +409,15 @@ export default function TimerBubble({
       {/* Participants row — ALWAYS visible. Up to 4 avatars side-by-side
           (creator first), then "+N" pill if there are more. Plus the
           "X going" count next to it for an at-a-glance number. */}
+      {/* Instagram "followed by" pattern — small overlapping circles
+          with a social-proof line right next to them. The dots are
+          24px (compact) with -9px overlap so 3 + a count pill fit
+          tightly. The text mentions names + "N others going",
+          feels like a friendly aside rather than a count badge. */}
       <View style={st.membersRow}>
-        {/* Slightly overlapping avatar stack — first full-width,
-            subsequent ones overlap 8px left. Feels like a tight
-            social group rather than a spaced-out row. The white
-            borders between dots stay visible at overlap, which is
-            what makes this pattern read cleanly. */}
         <View style={st.avatarStrip}>
           {shownAvatars.map((p, i) => (
-            <View key={p.user_id} style={i > 0 ? { marginLeft: -8 } : null}>
+            <View key={p.user_id} style={i > 0 ? { marginLeft: -9 } : null}>
               <MemberDot
                 url={p.avatar_url}
                 name={p.full_name}
@@ -399,13 +426,8 @@ export default function TimerBubble({
               />
             </View>
           ))}
-          {overflow > 0 && (
-            <View style={[st.memberDot, st.memberDotMore, { marginLeft: -8 }]}>
-              <Text style={st.memberMoreText}>+{overflow}</Text>
-            </View>
-          )}
         </View>
-        <Text style={st.goingCount}>{goingCount} going</Text>
+        <Text style={st.goingCount} numberOfLines={2}>{namesLine}</Text>
       </View>
 
       {/* CTA area — fixed total height across all states so the bubble
@@ -532,10 +554,12 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
+  /* Instagram-style small member dot — 24px, 2px white border kept
+     so overlapping stack reads as separated circles. */
   memberDot: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: '#F4A582',
     alignItems: 'center',
     justifyContent: 'center',
@@ -548,19 +572,26 @@ const styles = (c: ThemeColors) => StyleSheet.create({
   },
   memberImg: { width: '100%', height: '100%' },
   memberInitials: {
-    fontSize: 13,
+    fontSize: 10,
     fontWeight: '700',
     color: '#3B1F1A',
   },
   memberMoreText: {
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '700',
     color: '#6B7280',
   },
+  /* The names line — muted grey, regular weight. Friendly aside,
+     not a spec-sheet count. maxWidth caps wrap point so a very long
+     name doesn't stretch the row; the 2-line numberOfLines on the
+     Text gives it room to wrap if needed. */
   goingCount: {
-    fontSize: 14,
-    fontWeight: '600',
+    maxWidth: '72%',
+    fontSize: 13,
+    fontWeight: '500',
     color: '#6B7280',
+    lineHeight: 18,
+    textAlign: 'left',
   },
   emptyMembers: {
     fontSize: 14,
