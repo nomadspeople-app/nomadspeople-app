@@ -2089,6 +2089,121 @@ export async function leaveGroupChat(
   }
 }
 
+/* ═══════════════════════════════════════════
+   REMOVE GROUP MEMBER (admin / creator only)
+   ═══════════════════════════════════════════
+   Closed-loop rules (per logic skill):
+   1. Delete the member row (the one being kicked — NOT the admin's).
+   2. Post a system message in the chat authored by the ADMIN
+      (sender_id = adminUserId must equal auth.uid() for RLS).
+      Copy: "❌ {name} was removed"
+   3. Decrement member_count on the linked checkin, preferring
+      app_conversations.checkin_id, falling back to admin's active
+      checkin (most recent).
+   4. The removed user's chat row disappears automatically from their
+      Messages tab (useConversations filters by membership), so the
+      propagation to their device is handled by the delete + their
+      realtime subscription.
+*/
+export async function removeGroupMember(
+  adminUserId: string,
+  memberUserId: string,
+  conversationId: string,
+  memberDisplayName: string = 'member',
+): Promise<{ success: boolean; error: any }> {
+  if (!adminUserId || !memberUserId || !conversationId) {
+    return { success: false, error: new Error('missing args') };
+  }
+  if (adminUserId === memberUserId) {
+    // Admin removing themselves = leave, not remove. Refuse so UI can
+    // route through leaveGroupChat (which posts "left the group" with
+    // the right attribution).
+    return { success: false, error: new Error('admin cannot self-remove via this path') };
+  }
+  try {
+    // 0. Safety: only allow if caller is creator OR admin of the conv.
+    //    RLS alone isn't enough here — we want a clear "forbidden" path.
+    const { data: conv } = await supabase
+      .from('app_conversations')
+      .select('created_by, checkin_id')
+      .eq('id', conversationId)
+      .maybeSingle();
+    if (!conv) return { success: false, error: new Error('conversation not found') };
+    if (conv.created_by !== adminUserId) {
+      // Also accept admin role
+      const { data: me } = await supabase
+        .from('app_conversation_members')
+        .select('role')
+        .eq('conversation_id', conversationId)
+        .eq('user_id', adminUserId)
+        .maybeSingle();
+      if (me?.role !== 'admin') {
+        return { success: false, error: new Error('only the creator can remove members') };
+      }
+    }
+
+    // 1. Delete the target's membership row
+    const { error: delErr } = await supabase
+      .from('app_conversation_members')
+      .delete()
+      .eq('conversation_id', conversationId)
+      .eq('user_id', memberUserId);
+    if (delErr) {
+      console.warn('[removeGroupMember] delete failed:', delErr.message);
+      return { success: false, error: delErr };
+    }
+
+    // 2. System message authored by the admin (RLS-safe)
+    const content = `❌ ${memberDisplayName} was removed`;
+    const { error: msgErr } = await supabase.from('app_messages').insert({
+      conversation_id: conversationId,
+      sender_id: adminUserId,
+      content,
+    });
+    if (msgErr) {
+      // Non-fatal — the removal succeeded, but log so we can see gaps.
+      console.warn('[removeGroupMember] system message failed:', msgErr.message);
+    }
+
+    // 3. Decrement member_count on the linked checkin
+    const checkinId = (conv as any).checkin_id || null;
+    if (checkinId) {
+      const { data: checkin } = await supabase
+        .from('app_checkins')
+        .select('id, member_count')
+        .eq('id', checkinId)
+        .maybeSingle();
+      if (checkin && (checkin.member_count ?? 0) > 0) {
+        await supabase
+          .from('app_checkins')
+          .update({ member_count: Math.max(0, (checkin.member_count ?? 1) - 1) })
+          .eq('id', checkin.id);
+      }
+    } else if (conv.created_by) {
+      // Legacy fallback — most recent active checkin by the creator
+      const { data: checkin } = await supabase
+        .from('app_checkins')
+        .select('id, member_count')
+        .eq('user_id', conv.created_by)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (checkin && (checkin.member_count ?? 0) > 0) {
+        await supabase
+          .from('app_checkins')
+          .update({ member_count: Math.max(0, (checkin.member_count ?? 1) - 1) })
+          .eq('id', checkin.id);
+      }
+    }
+
+    return { success: true, error: null };
+  } catch (err) {
+    console.warn('[removeGroupMember] error:', err);
+    return { success: false, error: err };
+  }
+}
+
 
 /* ═══════════════════════════════════════════
    פניני חוכמה — WISDOM SIGNALS

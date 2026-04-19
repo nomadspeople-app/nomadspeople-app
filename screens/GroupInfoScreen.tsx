@@ -14,7 +14,8 @@ import type { RootStackParamList } from '../lib/types';
 import { AuthContext } from '../App';
 import { useI18n } from '../lib/i18n';
 import { supabase } from '../lib/supabase';
-import { leaveGroupChat } from '../lib/hooks';
+import { leaveGroupChat, removeGroupMember } from '../lib/hooks';
+import MembersModal from '../components/MembersModal';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'GroupInfo'>;
@@ -87,6 +88,7 @@ export default function GroupInfoScreen() {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
+  const [showMembersModal, setShowMembersModal] = useState(false);
   // Fallback coords from linked checkin
   const [checkinCoords, setCheckinCoords] = useState<{ lat: number; lng: number; locName?: string } | null>(null);
 
@@ -248,14 +250,28 @@ export default function GroupInfoScreen() {
 
   const handleRemoveMember = (memberId: string, memberName: string) => {
     if (memberId === userId) return; // can't remove yourself
+    if (!userId) return;
     Alert.alert('Remove Member', `Remove ${memberName} from this group?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',
         style: 'destructive',
         onPress: async () => {
-          await leaveGroupChat(memberId, conversationId);
-          fetchAll(); // refresh member list
+          // Use the admin-removal helper so the chat system message is
+          // authored by the creator (RLS requires sender_id=auth.uid()).
+          // Using leaveGroupChat here would silently drop the message
+          // because it tries to insert with sender_id=memberId.
+          const { success, error } = await removeGroupMember(
+            userId,
+            memberId,
+            conversationId,
+            memberName,
+          );
+          if (!success) {
+            Alert.alert('Could not remove', (error as any)?.message || 'Please try again.');
+            return;
+          }
+          fetchAll(); // refresh member list + counts
         },
       },
     ]);
@@ -394,7 +410,21 @@ export default function GroupInfoScreen() {
 
         {/* ─── Members ─── */}
         <View style={st.section}>
-          <Text style={st.sectionTitle}>Members ({memberCount})</Text>
+          {/* Tappable heading — opens the MembersModal. The inline list
+              below stays as a quick scan. Per the logic-skill closed
+              loop: tap → modal → tap member → profile / (creator only)
+              × → removeGroupMember → chat system message + count--. */}
+          <TouchableOpacity
+            style={st.membersHeaderBtn}
+            activeOpacity={0.7}
+            onPress={() => setShowMembersModal(true)}
+          >
+            <Text style={st.sectionTitle}>Members ({memberCount})</Text>
+            <View style={st.membersHeaderRight}>
+              <Text style={st.membersHeaderCta}>view all</Text>
+              <NomadIcon name="forward" size={s(5)} color="#1A1A1A" strokeWidth={1.4} />
+            </View>
+          </TouchableOpacity>
           <View style={st.membersList}>
             {members.map((m) => {
               const isCreator = m.user_id === group?.created_by || m.role === 'admin';
@@ -520,6 +550,18 @@ export default function GroupInfoScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* ─── Members Modal — "the window" when user taps "Members (N)" ─── */}
+      <MembersModal
+        visible={showMembersModal}
+        onClose={() => setShowMembersModal(false)}
+        conversationId={conversationId}
+        members={members}
+        currentUserId={userId || null}
+        creatorUserId={group?.created_by || null}
+        onTapMember={handleMemberTap}
+        onAfterRemove={fetchAll}
+      />
     </View>
   );
 }
@@ -559,6 +601,24 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     marginBottom: s(5),
   },
   sectionTitle: { fontSize: s(6.5), fontWeight: FW.bold, color: c.dark },
+
+  /* Tappable "Members (N) — view all" heading row */
+  membersHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: s(2),
+  },
+  membersHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: s(2),
+  },
+  membersHeaderCta: {
+    fontSize: s(5.5),
+    fontWeight: FW.semi,
+    color: c.primary,
+  },
 
   /* Action rows */
   actionRow: {
