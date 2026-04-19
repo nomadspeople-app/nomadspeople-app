@@ -1220,15 +1220,25 @@ export default function ProfileScreen() {
           </View>
 
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom + s(10) }}>
-            {/* Emoji + Title + Members */}
+            {/* Emoji + Title + Members — centered, padded, no side-clipping */}
             {editCheckin && (
-              <View style={{ alignItems: 'center', paddingTop: s(12), paddingBottom: s(8) }}>
+              <View style={{ alignItems: 'center', paddingTop: s(12), paddingBottom: s(8), paddingHorizontal: s(10) }}>
                 <Text style={{ fontSize: s(20) }}>{editCheckin.status_emoji || '📍'}</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: s(3), marginTop: s(4) }}>
-                  <Text style={{ fontSize: s(8), fontWeight: FW.bold, color: colors.dark }}>
-                    {editCheckin.activity_text || editCheckin.status_text || 'Activity'}
-                  </Text>
-                  <TouchableOpacity onPress={() => {
+                <Text
+                  style={{
+                    fontSize: s(8),
+                    fontWeight: FW.bold,
+                    color: colors.dark,
+                    textAlign: 'center',
+                    marginTop: s(4),
+                    paddingHorizontal: s(8),
+                  }}
+                  numberOfLines={2}
+                >
+                  {editCheckin.activity_text || editCheckin.status_text || 'Activity'}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
                     if (Alert.prompt) {
                       Alert.prompt('Edit Title', '', (text: string) => {
                         if (!text?.trim()) return;
@@ -1240,11 +1250,21 @@ export default function ProfileScreen() {
                     } else {
                       Alert.alert('Edit', 'Use the activity creation flow to edit the title');
                     }
-                  }}>
-                    <NomadIcon name="edit" size={s(5.5)} color={colors.textMuted} strokeWidth={1.4} />
-                  </TouchableOpacity>
-                </View>
-                <Text style={{ fontSize: s(5.5), color: colors.textMuted, marginTop: s(2) }}>
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: s(2),
+                    marginTop: s(2),
+                    paddingVertical: s(1.5),
+                    paddingHorizontal: s(3),
+                  }}
+                >
+                  <NomadIcon name="edit" size={s(5)} color={colors.primary} strokeWidth={1.8} />
+                  <Text style={{ fontSize: s(5), color: colors.primary, fontWeight: FW.semi }}>edit title</Text>
+                </TouchableOpacity>
+                <Text style={{ fontSize: s(5.5), color: colors.textMuted, marginTop: s(3) }}>
                   {editCheckin.member_count || 1} member{(editCheckin.member_count || 1) > 1 ? 's' : ''}
                 </Text>
               </View>

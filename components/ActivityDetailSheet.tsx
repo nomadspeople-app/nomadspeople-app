@@ -294,8 +294,8 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
           {/* Emoji */}
           <Text style={st.emoji}>{emoji}</Text>
 
-          {/* Activity text */}
-          <Text style={st.title}>{text}</Text>
+          {/* Activity text — centered, max 2 lines, won't clip on sides */}
+          <Text style={st.title} numberOfLines={2} ellipsizeMode="tail">{text}</Text>
 
           {/* Creator — avatar + name */}
           <View style={st.creatorRow}>
@@ -493,6 +493,8 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     color: c.dark,
     textAlign: 'center',
     marginBottom: s(2),
+    paddingHorizontal: s(10),   // breathing room on the sides so long titles don't touch the edges
+    alignSelf: 'stretch',       // ensure the text box spans full width so centering is true
   },
   creatorRow: {
     flexDirection: 'row',
