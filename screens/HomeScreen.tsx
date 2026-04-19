@@ -151,21 +151,59 @@ async function searchCities(q: string): Promise<CitySearchResult[]> {
 
 const RECENT_CITIES_KEY = 'nomadspeople_recent_cities';
 
-async function loadRecentCities(): Promise<CitySearchResult[]> {
+/* Recent cities — stored in Supabase (app_profiles.recent_cities jsonb).
+ * Previous version used AsyncStorage only, which proved unreliable across
+ * Expo Go reloads and bundle refreshes — user saw 'empty' even after
+ * searching many cities. DB-backed storage persists reliably and syncs
+ * if the user ever signs in on another device. AsyncStorage is kept as
+ * an instant warm cache so the chip row doesn't flash empty on cold open. */
+
+async function loadRecentCities(userId?: string | null): Promise<CitySearchResult[]> {
+  // 1. Warm cache from AsyncStorage for instant UI (no round-trip to DB)
+  let cached: CitySearchResult[] = [];
   try {
     const raw = await AsyncStorage.getItem(RECENT_CITIES_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+    cached = raw ? JSON.parse(raw) : [];
+  } catch { /* ignore */ }
+
+  if (!userId) return cached;
+
+  // 2. Pull canonical value from Supabase — source of truth.
+  try {
+    const { data } = await supabase
+      .from('app_profiles')
+      .select('recent_cities')
+      .eq('user_id', userId)
+      .maybeSingle();
+    const rc = ((data as any)?.recent_cities as CitySearchResult[]) || [];
+    if (Array.isArray(rc)) {
+      // Sync AsyncStorage so the next cold open hits the warm cache.
+      AsyncStorage.setItem(RECENT_CITIES_KEY, JSON.stringify(rc)).catch(() => {});
+      return rc;
+    }
+  } catch (e) {
+    console.warn('[recentCities] supabase load failed, using cache:', e);
+  }
+  return cached;
 }
 
-async function saveRecentCity(city: CitySearchResult): Promise<void> {
-  try {
-    const recents = await loadRecentCities();
-    // Remove duplicate if exists, add to front, keep max 5
-    const filtered = recents.filter(c => !(c.name === city.name && c.country === city.country));
-    const updated = [city, ...filtered].slice(0, 5);
-    await AsyncStorage.setItem(RECENT_CITIES_KEY, JSON.stringify(updated));
-  } catch {}
+async function saveRecentCity(city: CitySearchResult, userId?: string | null): Promise<void> {
+  const current = await loadRecentCities(userId);
+  // Dedupe by name + country, push to front, cap at 5.
+  const filtered = current.filter(c => !(c.name === city.name && c.country === city.country));
+  const updated = [city, ...filtered].slice(0, 5);
+
+  // Local cache for instant re-read
+  try { await AsyncStorage.setItem(RECENT_CITIES_KEY, JSON.stringify(updated)); } catch { /* ignore */ }
+
+  // Canonical write to Supabase (survives app reinstalls, different devices)
+  if (userId) {
+    try {
+      await supabase.from('app_profiles').update({ recent_cities: updated }).eq('user_id', userId);
+    } catch (e) {
+      console.warn('[recentCities] supabase save failed (cache still saved):', e);
+    }
+  }
 }
 
 /* ─── Pulse ring component — breathing animation for hot pins ─── */
@@ -455,8 +493,8 @@ export default function HomeScreen() {
           into recents, which makes "Recent" behave as "cities I've been on
           the map on" — matching the user's mental model. */
   useEffect(() => {
-    loadRecentCities().then(setRecentCities);
-  }, []);
+    loadRecentCities(userId).then(setRecentCities);
+  }, [userId]);
 
   useEffect(() => {
     if (!currentCity?.name) return;
@@ -466,8 +504,8 @@ export default function HomeScreen() {
       lat: currentCity.lat,
       lng: currentCity.lng,
     };
-    saveRecentCity(entry).then(() => loadRecentCities().then(setRecentCities));
-  }, [currentCity?.name, currentCity?.country]);
+    saveRecentCity(entry, userId).then(() => loadRecentCities(userId).then(setRecentCities));
+  }, [currentCity?.name, currentCity?.country, userId]);
 
   /* ── City search — debounced Photon autocomplete ── */
   useEffect(() => {
@@ -483,9 +521,9 @@ export default function HomeScreen() {
 
   /* ── Select a city from search results ── */
   const handleCitySearchSelect = useCallback(async (result: CitySearchResult) => {
-    // Save to recents
-    await saveRecentCity(result);
-    setRecentCities(await loadRecentCities());
+    // Save to recents (Supabase + AsyncStorage cache)
+    await saveRecentCity(result, userId);
+    setRecentCities(await loadRecentCities(userId));
     // Create a City object for the app
     const city: City = {
       id: `${result.name}-${result.country}`.toLowerCase().replace(/\s/g, '-'),
@@ -1210,7 +1248,7 @@ export default function HomeScreen() {
                 // Always re-read the Recents list from storage on focus so
                 // the dropdown reflects the truth AsyncStorage has (e.g.
                 // after switching users or after another screen mutated it).
-                loadRecentCities().then(setRecentCities);
+                loadRecentCities(userId).then(setRecentCities);
               }}
               returnKeyType="search"
             />
