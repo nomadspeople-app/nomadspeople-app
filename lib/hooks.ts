@@ -1325,7 +1325,11 @@ export async function createOrJoinStatusChat(
   statusOwnerId: string,
   statusText: string,
   metadata?: GroupMetadata,
-): Promise<{ conversationId: string; error: any }> {
+  // When the event is private (is_open=false), the member is inserted
+  // with status='pending' instead of 'active'. No join message, no
+  // member_count bump, no chat access yet — until the owner approves.
+  requiresApproval: boolean = false,
+): Promise<{ conversationId: string; memberStatus: 'active' | 'pending'; error: any }> {
   try {
     const groupName = statusText || 'Activity';
 
@@ -1349,39 +1353,41 @@ export async function createOrJoinStatusChat(
         .maybeSingle();
 
       if (!alreadyMember) {
+        // Private events land in 'pending' — owner must approve before the
+        // joiner sees the chat or gets counted. Public events go in as 'active'
+        // (the old behavior) and immediately see the chat + join message.
+        const newStatus = requiresApproval ? 'pending' : 'active';
         await supabase
           .from('app_conversation_members')
-          .insert({ conversation_id: foundConvId, user_id: myUserId, role: 'member', status: 'active' });
+          .insert({ conversation_id: foundConvId, user_id: myUserId, role: 'member', status: newStatus });
 
-        // Send a join message
-        await supabase.from('app_messages').insert({
-          conversation_id: foundConvId,
-          sender_id: myUserId,
-          content: `Joined the activity 🤙`,
-        });
-
-        // NOTE: Notification is handled by DB trigger `notify_on_activity_join`
-        // on app_conversation_members INSERT → calls create_notification()
-        // which checks self-action, user prefs, and snooze mode.
-        // DO NOT insert into app_notifications directly (causes duplicates).
-
-        // Increment member_count on the checkin
-        const { data: checkin } = await supabase
-          .from('app_checkins')
-          .select('member_count')
-          .eq('user_id', statusOwnerId)
-          .eq('is_active', true)
-          .maybeSingle();
-        if (checkin) {
-          await supabase
+        if (!requiresApproval) {
+          // Public: announce the join + bump member_count.
+          await supabase.from('app_messages').insert({
+            conversation_id: foundConvId,
+            sender_id: myUserId,
+            content: `Joined the activity 🤙`,
+          });
+          const { data: checkin } = await supabase
             .from('app_checkins')
-            .update({ member_count: (checkin.member_count ?? 1) + 1 })
+            .select('member_count')
             .eq('user_id', statusOwnerId)
-            .eq('is_active', true);
+            .eq('is_active', true)
+            .maybeSingle();
+          if (checkin) {
+            await supabase
+              .from('app_checkins')
+              .update({ member_count: (checkin.member_count ?? 1) + 1 })
+              .eq('user_id', statusOwnerId)
+              .eq('is_active', true);
+          }
         }
+        // For private events: no join message yet, no count bump. The DB
+        // trigger notify_on_activity_join still fires on the INSERT, which
+        // is what we want — it tells the owner someone requested to join.
       }
 
-      return { conversationId: foundConvId, error: null };
+      return { conversationId: foundConvId, memberStatus: (alreadyMember ? 'active' : (requiresApproval ? 'pending' : 'active')), error: null };
     }
 
     // No existing group — create a new one (with activity metadata)
@@ -1410,16 +1416,17 @@ export async function createOrJoinStatusChat(
 
     if (convError || !newConv) {
       console.warn('[createOrJoinStatusChat] conv create failed:', convError);
-      return { conversationId: '', error: convError };
+      return { conversationId: '', memberStatus: 'active' as const, error: convError };
     }
 
-    // Add both users as members
+    // Add both users as members. Owner is always 'active'; joiner's status
+    // depends on whether the event is private (needs approval).
+    const joinerStatus = requiresApproval && statusOwnerId !== myUserId ? 'pending' : 'active';
     const members = [
       { conversation_id: newConv.id, user_id: statusOwnerId, role: 'admin', status: 'active' },
     ];
-    // Add joiner as separate member (avoid duplicate if joining own status)
     if (statusOwnerId !== myUserId) {
-      members.push({ conversation_id: newConv.id, user_id: myUserId, role: 'member', status: 'active' });
+      members.push({ conversation_id: newConv.id, user_id: myUserId, role: 'member', status: joinerStatus });
     }
 
     const { error: memError } = await supabase
@@ -1436,18 +1443,15 @@ export async function createOrJoinStatusChat(
       }
     }
 
-    // Send a first message
+    // Send a first message — owner-created, always shows.
     await supabase.from('app_messages').insert({
       conversation_id: newConv.id,
-      sender_id: myUserId,
+      sender_id: statusOwnerId,        // owner gets credit for the announce
       content: `Created "${groupName}" 🎉`,
     });
 
-    // NOTE: Notification handled by DB trigger `notify_on_activity_join`
-    // DO NOT insert into app_notifications directly (causes duplicates).
-
-    // Increment member_count on the source checkin
-    if (statusOwnerId !== myUserId) {
+    // Bump member_count only if the joiner is actually IN (not pending).
+    if (statusOwnerId !== myUserId && joinerStatus === 'active') {
       const { data: checkinData } = await supabase
         .from('app_checkins')
         .select('member_count')
@@ -1463,10 +1467,81 @@ export async function createOrJoinStatusChat(
       }
     }
 
-    return { conversationId: newConv.id, error: null };
+    return { conversationId: newConv.id, memberStatus: joinerStatus, error: null };
   } catch (err) {
     console.warn('[createOrJoinStatusChat] error:', err);
-    return { conversationId: '', error: err };
+    return { conversationId: '', memberStatus: 'active' as const, error: err };
+  }
+}
+
+/**
+ * approvePendingMember — flip a pending member to active, post a join
+ * message, bump the event's member_count. Single closed-loop helper for
+ * the owner's "approve" tap.
+ */
+export async function approvePendingMember(
+  conversationId: string,
+  userId: string,
+  ownerUserId: string,
+): Promise<{ ok: boolean; error: any }> {
+  try {
+    const { error: updErr } = await supabase
+      .from('app_conversation_members')
+      .update({ status: 'active' })
+      .eq('conversation_id', conversationId)
+      .eq('user_id', userId);
+    if (updErr) return { ok: false, error: updErr };
+
+    // Find the linked checkin to bump member_count
+    const { data: conv } = await supabase
+      .from('app_conversations')
+      .select('checkin_id')
+      .eq('id', conversationId)
+      .maybeSingle();
+    if (conv?.checkin_id) {
+      const { data: checkin } = await supabase
+        .from('app_checkins')
+        .select('member_count')
+        .eq('id', conv.checkin_id)
+        .maybeSingle();
+      if (checkin) {
+        await supabase
+          .from('app_checkins')
+          .update({ member_count: (checkin.member_count ?? 1) + 1 })
+          .eq('id', conv.checkin_id);
+      }
+    }
+
+    // Announce in chat (system-style, sender = owner)
+    await supabase.from('app_messages').insert({
+      conversation_id: conversationId,
+      sender_id: ownerUserId,
+      content: `Welcome 👋  — your request was approved`,
+    });
+
+    return { ok: true, error: null };
+  } catch (e) {
+    return { ok: false, error: e };
+  }
+}
+
+/**
+ * denyPendingMember — flip a pending member to denied. They stay out of
+ * the chat and don't count toward member_count.
+ */
+export async function denyPendingMember(
+  conversationId: string,
+  userId: string,
+): Promise<{ ok: boolean; error: any }> {
+  try {
+    const { error } = await supabase
+      .from('app_conversation_members')
+      .update({ status: 'denied' })
+      .eq('conversation_id', conversationId)
+      .eq('user_id', userId);
+    return { ok: !error, error };
+  } catch (e) {
+    return { ok: false, error: e };
   }
 }
 

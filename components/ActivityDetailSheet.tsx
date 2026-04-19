@@ -85,6 +85,7 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
   const translateY = useRef(new Animated.Value(SH)).current;
   const [joined, setJoined] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [requestPending, setRequestPending] = useState(false);  // private-event request awaiting owner approval
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState('');
@@ -98,6 +99,7 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
       setJoined(false);
       setConversationId(null);
       setJoining(false);
+      setRequestPending(false);
       // Check if user already joined this activity's conversation
       (async () => {
         const statusText = checkin.status_text || checkin.activity_text || 'activity';
@@ -112,14 +114,21 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
         if (convId) {
           const { data: membership } = await supabase
             .from('app_conversation_members')
-            .select('conversation_id')
+            .select('conversation_id, status')
             .eq('conversation_id', convId)
             .eq('user_id', userId)
             .maybeSingle();
 
           if (membership) {
-            setJoined(true);
-            setConversationId(convId);
+            // Differentiate between approved members (joined) and pending
+            // requests (waiting for owner) so the UI shows the right state.
+            if ((membership as any).status === 'pending') {
+              setRequestPending(true);
+              setConversationId(convId);
+            } else {
+              setJoined(true);
+              setConversationId(convId);
+            }
           } else {
             setJoined(false);
             setConversationId(null);
@@ -162,7 +171,10 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
 
     const statusText = checkin.status_text || checkin.activity_text || 'activity';
     const catMeta = CAT_META[checkin.category || 'other'] || CAT_META.other;
-    const { conversationId: convId, error } = await createOrJoinStatusChat(
+    // Private event (is_open=false) → requires owner approval before the
+    // joiner gets chat access or counts as a member. Public → instant join.
+    const needsApproval = checkin.is_open === false;
+    const { conversationId: convId, memberStatus, error } = await createOrJoinStatusChat(
       userId,
       checkin.user_id,
       statusText,
@@ -176,11 +188,15 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
         longitude: checkin.longitude || undefined,
         scheduledFor: checkin.scheduled_for || undefined,
       },
+      needsApproval,
     );
 
     if (convId && !error) {
       setConversationId(convId);
-      setJoined(true);
+      // Only flip to "joined" if we were actually approved. Otherwise the
+      // user is waiting — show a "request sent" state and don't open chat.
+      if (memberStatus === 'active') setJoined(true);
+      else setRequestPending(true);
       trackEvent(userId, 'join_group', 'conversation', convId);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       // Stay open — show Chat | Leave buttons
@@ -418,6 +434,13 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
             <View style={st.expiredBar}>
               <Text style={st.expiredText}>this event has ended</Text>
             </View>
+          ) : requestPending ? (
+            // Private event: request sent, owner hasn't approved yet.
+            <View style={[st.expiredBar, { backgroundColor: '#FEF3C7' }]}>
+              <Text style={[st.expiredText, { color: '#B45309' }]}>
+                request sent — waiting for approval
+              </Text>
+            </View>
           ) : !joined ? (
             <TouchableOpacity
               style={st.joinBtn}
@@ -425,7 +448,9 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
               activeOpacity={0.8}
               disabled={joining}
             >
-              <Text style={st.joinBtnText}>{joining ? 'joining...' : 'join'}</Text>
+              <Text style={st.joinBtnText}>
+                {joining ? 'joining...' : (checkin.is_open === false ? 'request to join' : 'join')}
+              </Text>
             </TouchableOpacity>
           ) : (
             <View style={st.joinedRow}>

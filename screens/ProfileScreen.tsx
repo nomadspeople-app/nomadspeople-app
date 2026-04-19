@@ -14,7 +14,7 @@ import NomadIcon from '../components/NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList } from '../lib/types';
 import { postEventSystemMessage, eventSystemMsg } from '../lib/eventSystemMessages';
-import { useProfile, useFollow, usePhotoPosts, usePhotoLike, usePhotoComments, createOrJoinStatusChat, createOrFindDM, calcAge, getZodiac, blockUser, type FollowerPreview } from '../lib/hooks';
+import { useProfile, useFollow, usePhotoPosts, usePhotoLike, usePhotoComments, createOrJoinStatusChat, createOrFindDM, calcAge, getZodiac, blockUser, approvePendingMember, denyPendingMember, type FollowerPreview } from '../lib/hooks';
 import { AuthContext, useAuthContext } from '../App';
 import type { PhotoPost } from '../lib/hooks';
 import { pickAndUploadAvatar, pickAndUploadPostImage } from '../lib/imagePicker';
@@ -434,6 +434,8 @@ export default function ProfileScreen() {
   // Inline title edit — stages into `stagedChanges` below, does not write.
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
+  // Pending join requests for the currently-viewed event (private events only)
+  const [pendingRequests, setPendingRequests] = useState<Array<{ user_id: string; username: string | null; avatar_url: string | null; display_name: string | null; conversation_id: string }>>([]);
   // Staged changes buffer — all fields edited in the Activity Info modal
   // accumulate here until the user taps the floating Save button. Keys
   // correspond 1:1 to app_checkins columns. Empty object = no pending work.
@@ -1088,14 +1090,45 @@ export default function ProfileScreen() {
               key={checkin.id}
               style={styles.activeEvent}
               activeOpacity={isOwner ? 0.7 : 1}
-              onPress={() => {
+              onPress={async () => {
                 if (!isOwner) return;
                 setEditCheckin(checkin);
                 setEditPrivate(!checkin.is_open);
                 setEditMuted(false);
                 setStagedChanges({});         // fresh slate — nothing pending on open
                 setEditingTitle(false);
+                setPendingRequests([]);
                 setShowActivityInfo(true);
+                // Fetch pending join requests for this event's conversation.
+                // Only meaningful for private events — public events never
+                // produce pending rows.
+                try {
+                  const { data: conv } = await supabase
+                    .from('app_conversations')
+                    .select('id')
+                    .eq('checkin_id', checkin.id)
+                    .maybeSingle();
+                  if (conv?.id) {
+                    const { data: pendings } = await supabase
+                      .from('app_conversation_members')
+                      .select('user_id, profile:app_profiles!user_id(username, avatar_url, display_name, full_name)')
+                      .eq('conversation_id', conv.id)
+                      .eq('status', 'pending');
+                    if (pendings) {
+                      setPendingRequests(
+                        (pendings as any[]).map((p) => ({
+                          user_id: p.user_id,
+                          username: p.profile?.username ?? null,
+                          avatar_url: p.profile?.avatar_url ?? null,
+                          display_name: p.profile?.display_name ?? p.profile?.full_name ?? null,
+                          conversation_id: conv.id,
+                        })),
+                      );
+                    }
+                  }
+                } catch (e) {
+                  console.warn('[ActivityInfo] pending requests fetch failed:', e);
+                }
               }}
             >
               <View style={[styles.aeIcon, { backgroundColor: bgColor, borderWidth: 2, borderColor: accentColor }]}>
@@ -1447,6 +1480,76 @@ export default function ProfileScreen() {
                     </Text>
                   </>
                 )}
+              </View>
+            )}
+
+            {/* Pending join requests — horizontal avatar row, owner only,
+                 visible only for private events that have pending requesters.
+                 Tap avatar → open that user's profile (existing screen).
+                 Tap the green ✓ → approve in place. Tap × → deny. */}
+            {pendingRequests.length > 0 && (
+              <View style={{ marginBottom: s(6) }}>
+                <Text style={{ fontSize: s(6), fontWeight: FW.semi as any, color: colors.textSec, paddingHorizontal: s(10), marginBottom: s(3) }}>
+                  {pendingRequests.length} {pendingRequests.length === 1 ? 'request' : 'requests'} to join
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: s(10), gap: s(5) }}>
+                  {pendingRequests.map((r) => (
+                    <View key={r.user_id} style={{ alignItems: 'center', width: s(22) }}>
+                      <TouchableOpacity
+                        activeOpacity={0.7}
+                        onPress={() => {
+                          // Open the requester's profile so the owner can make an informed decision.
+                          nav.navigate('UserProfile' as any, { userId: r.user_id });
+                          setShowActivityInfo(false);
+                        }}
+                      >
+                        {r.avatar_url ? (
+                          <Image source={{ uri: r.avatar_url }} style={{ width: s(20), height: s(20), borderRadius: s(10) }} />
+                        ) : (
+                          <View style={{ width: s(20), height: s(20), borderRadius: s(10), backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' }}>
+                            <Text style={{ fontSize: s(8), fontWeight: FW.bold as any, color: colors.dark }}>
+                              {(r.display_name || r.username || '?')[0].toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                      <Text numberOfLines={1} style={{ fontSize: s(4.5), color: colors.textMuted, marginTop: s(1.5), maxWidth: s(22) }}>
+                        {r.display_name || r.username || '…'}
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: s(1.5), marginTop: s(2) }}>
+                        <TouchableOpacity
+                          activeOpacity={0.7}
+                          onPress={async () => {
+                            if (!profileUserId) return;
+                            const { ok, error } = await approvePendingMember(r.conversation_id, r.user_id, profileUserId);
+                            if (!ok) {
+                              Alert.alert('Approve failed', error?.message || 'Please try again.');
+                              return;
+                            }
+                            setPendingRequests((prev) => prev.filter((x) => x.user_id !== r.user_id));
+                          }}
+                          style={{ width: s(9), height: s(9), borderRadius: s(4.5), backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center' }}
+                        >
+                          <NomadIcon name="check" size={s(5)} color="#fff" strokeWidth={2.5} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          activeOpacity={0.7}
+                          onPress={async () => {
+                            const { ok, error } = await denyPendingMember(r.conversation_id, r.user_id);
+                            if (!ok) {
+                              Alert.alert('Deny failed', error?.message || 'Please try again.');
+                              return;
+                            }
+                            setPendingRequests((prev) => prev.filter((x) => x.user_id !== r.user_id));
+                          }}
+                          style={{ width: s(9), height: s(9), borderRadius: s(4.5), backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft, alignItems: 'center', justifyContent: 'center' }}
+                        >
+                          <NomadIcon name="close" size={s(5)} color={colors.textMuted} strokeWidth={2} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </ScrollView>
               </View>
             )}
 
