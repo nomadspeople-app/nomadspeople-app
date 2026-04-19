@@ -14,6 +14,7 @@ import NomadIcon from '../components/NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList } from '../lib/types';
 import { postEventSystemMessage, eventSystemMsg } from '../lib/eventSystemMessages';
+import { resolveCityFromCoordinates } from '../lib/cityResolver';
 import { useProfile, useFollow, usePhotoPosts, usePhotoLike, usePhotoComments, createOrJoinStatusChat, createOrFindDM, calcAge, getZodiac, blockUser, approvePendingMember, denyPendingMember, type FollowerPreview } from '../lib/hooks';
 import { AuthContext, useAuthContext } from '../App';
 import type { PhotoPost } from '../lib/hooks';
@@ -1673,19 +1674,19 @@ export default function ProfileScreen() {
                     <TouchableOpacity
                       key={i}
                       style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: s(4), paddingHorizontal: s(2), borderBottomWidth: 0.5, borderBottomColor: colors.borderSoft }}
-                      onPress={() => {
+                      onPress={async () => {
                         if (!editCheckin) return;
-                        // Stage — bottom Save button commits + posts system message.
-                        // CRITICAL: also stage `city` so the map filter (which
-                        // queries by city) shows the event in its NEW city.
-                        // Without this, picking a Jerusalem venue while the
-                        // event is tagged "Tel Aviv" leaves the pin on Tel Aviv.
+                        // Photon's p.city is unreliable in Israel (returns
+                        // the DISTRICT, not the city — e.g. Bat Yam → "מחוז
+                        // תל אביב"). Source-of-truth is the city resolver:
+                        // check the CITIES DB, fall back to Nominatim.
+                        const resolvedCity = await resolveCityFromCoordinates(r.lat, r.lng, r.city || r.name);
                         setStagedChanges({
                           ...stagedChanges,
                           location_name: `${r.name}, ${r.sub}`,
                           latitude: r.lat,
                           longitude: r.lng,
-                          ...(r.city ? { city: r.city } : {}),
+                          city: resolvedCity,
                         });
                         setShowLocationSearch(false);
                         setLocationQuery('');

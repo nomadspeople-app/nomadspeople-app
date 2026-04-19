@@ -493,10 +493,12 @@ export default function HomeScreen() {
       active: 0,
     };
     setCurrentCity(city);
-    // Animate map to new city
+    // Animate map close-in on the selected city. Was 0.08 (city + suburbs
+    // view ≈ 10km), now 0.035 — a proper city-center zoom so you actually
+    // see the pins of that city instead of zooming out over a region.
     mapRef.current?.animateToRegion({
       latitude: result.lat, longitude: result.lng,
-      latitudeDelta: 0.08, longitudeDelta: 0.08,
+      latitudeDelta: 0.035, longitudeDelta: 0.035,
     }, 800);
     // Close search
     setCityQuery('');
