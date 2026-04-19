@@ -119,10 +119,16 @@ export default function ChatScreen() {
   }, [messages.length]);
 
   const handleSend = async (imageUrl?: string) => {
-    if ((!inputText.trim() && !imageUrl) || !userId) return;
+    // Defensive: only accept a string that looks like an http(s) URL.
+    // Anything else (a touch event, undefined, '', a stray object) is
+    // treated as 'no image'. Without this, an event object passed in
+    // from a TouchableOpacity onPress turns into garbage in app_messages.
+    const safeImageUrl =
+      typeof imageUrl === 'string' && /^https?:\/\//i.test(imageUrl) ? imageUrl : undefined;
+    if ((!inputText.trim() && !safeImageUrl) || !userId) return;
     const text = inputText.trim();
     setInputText('');
-    const { error } = await send(userId, text, replyTo?.id, imageUrl);
+    const { error } = await send(userId, text, replyTo?.id, safeImageUrl);
     if (error) {
       // Surface the failure instead of swallowing it silently. Restore the
       // text so the user doesn't lose what they typed.
@@ -460,7 +466,7 @@ export default function ChatScreen() {
                   </View>
                 )}
 
-                {msg.image_url && (
+                {typeof msg.image_url === 'string' && /^https?:\/\//i.test(msg.image_url) && (
                   <TouchableOpacity style={st.imgHolder} activeOpacity={0.8}>
                     <Image
                       source={{ uri: msg.image_url }}
@@ -539,7 +545,12 @@ export default function ChatScreen() {
             <NomadIcon name="camera" size={s(7)} color={colors.primary} strokeWidth={1.8} />
           </TouchableOpacity>
           {inputText.trim() ? (
-            <TouchableOpacity style={st.sendBtn} activeOpacity={0.7} onPress={handleSend}>
+            // Wrap in arrow fn — TouchableOpacity passes the press event
+            // as the first arg, which handleSend treats as `imageUrl`.
+            // That's how messages like חחח and לללל ended up with
+            // image_url = '{"dispatchConfig":null,...}' and later crashed
+            // the iOS Image layout with 'URI parsing error'.
+            <TouchableOpacity style={st.sendBtn} activeOpacity={0.7} onPress={() => handleSend()}>
               <NomadIcon name="send" size={s(6.5)} color="#FFFFFF" strokeWidth={1.8} />
             </TouchableOpacity>
           ) : null}
