@@ -430,7 +430,13 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
           )}
 
           {/* Action button */}
-          {isExpired && !joined ? (
+          {userId === checkin.user_id ? (
+            // Viewer IS the owner — joining your own event makes no sense.
+            // Show a short "your event" indicator instead of the Join CTA.
+            <View style={[st.expiredBar, { backgroundColor: colors.primary + '14', borderColor: colors.primary + '40', borderWidth: 1 }]}>
+              <Text style={[st.expiredText, { color: colors.primary }]}>this is your event · manage from Profile</Text>
+            </View>
+          ) : isExpired && !joined ? (
             <View style={st.expiredBar}>
               <Text style={st.expiredText}>this event has ended</Text>
             </View>

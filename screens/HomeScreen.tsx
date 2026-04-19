@@ -234,7 +234,11 @@ function buildNomadMarker(
   return (
     <Marker
       key={c.id}
-      tracksViewChanges={isHot}
+      // Per CLAUDE.md: tracksViewChanges must be FALSE on all markers —
+      // the Marker view gets snapshotted once, no per-frame redraws, no
+      // flicker. The "hot" visual signal stays in the border color only;
+      // we don't animate the Marker itself any more.
+      tracksViewChanges={false}
       coordinate={{
         latitude: c.latitude ? c.latitude : scatter(cityLat, hashCode(c.id)),
         longitude: c.longitude ? c.longitude : scatter(cityLng, hashCode(c.id + '_lng')),
@@ -641,16 +645,23 @@ export default function HomeScreen() {
       longitudeDelta: 0.008,
     }, 400);
 
-    // After zoom animation completes → open the popup
+    // After zoom animation completes → open the right popup.
+    // Owner tapping their OWN status/event: never show the "Join" sheet —
+    // it's their own event, makes no sense. Send them to their profile
+    // where the Activity Info management modal lives.
     setTimeout(() => {
       if (isTimer) {
         setTimerBubbleCheckin(prev => prev?.id === checkin.id ? null : checkin);
-      } else {
-        setTimerBubbleCheckin(null);
-        setPopupData(checkin);
-        setJoined(false);
-        setShowPopup(true);
+        return;
       }
+      if (isOwn) {
+        nav.navigate('UserProfile' as any, { userId: checkin.user_id, openCheckinId: checkin.id });
+        return;
+      }
+      setTimerBubbleCheckin(null);
+      setPopupData(checkin);
+      setJoined(false);
+      setShowPopup(true);
     }, 450);
   };
 
