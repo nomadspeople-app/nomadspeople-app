@@ -633,6 +633,29 @@ export function useMessages(conversationId: string) {
   }, [conversationId]);
 
   const send = async (userId: string, content: string, replyToId?: string, imageUrl?: string) => {
+    // Defensive preconditions — surface the REAL reason a send can fail
+    // instead of letting it silently no-op further down.
+    if (!conversationId) {
+      return { error: new Error('No conversation selected. Close this chat and re-open it.') as any };
+    }
+    if (!userId) {
+      return { error: new Error('Not signed in. Please sign in and try again.') as any };
+    }
+
+    // Confirm the client actually has an auth session — if we send with
+    // sender_id = userId but the session's auth.uid() != userId, RLS
+    // silently rejects the INSERT (no row, no error on some SDK paths).
+    const { data: sessionData } = await supabase.auth.getSession();
+    const authedUserId = sessionData?.session?.user?.id;
+    if (!authedUserId) {
+      return { error: new Error('Your session expired. Close and re-open the app.') as any };
+    }
+    if (authedUserId !== userId) {
+      console.warn('[send] mismatch — authedUserId:', authedUserId, 'vs caller userId:', userId);
+      return { error: new Error('Session user mismatch. Sign out and sign back in.') as any };
+    }
+
+    console.log('[send] attempting insert', { conversationId, userId, contentLen: content.length });
     const { error } = await supabase
       .from('app_messages')
       .insert({
@@ -643,14 +666,21 @@ export function useMessages(conversationId: string) {
         ...(imageUrl ? { image_url: imageUrl } : {}),
       });
 
-    if (!error) {
-      await supabase
-        .from('app_conversations')
-        .update({ last_message_at: new Date().toISOString() })
-        .eq('id', conversationId);
+    if (error) {
+      console.warn('[send] insert failed', error);
+      return { error };
     }
 
-    return { error };
+    // Bump last_message_at so the chat list re-sorts.
+    const { error: updateError } = await supabase
+      .from('app_conversations')
+      .update({ last_message_at: new Date().toISOString() })
+      .eq('id', conversationId);
+    if (updateError) {
+      console.warn('[send] last_message_at update failed (message sent OK):', updateError);
+    }
+
+    return { error: null };
   };
 
   return { messages, loading, send, refetch: fetch };
