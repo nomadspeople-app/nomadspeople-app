@@ -430,6 +430,10 @@ export default function ProfileScreen() {
   const [editCheckin, setEditCheckin] = useState<any>(null);
   const [editPrivate, setEditPrivate] = useState(false);
   const [editMuted, setEditMuted] = useState(false);
+  // Inline title edit (replaces the cross-platform-broken Alert.prompt)
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
 
   // Inline pickers for Activity Info editing
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -1220,53 +1224,150 @@ export default function ProfileScreen() {
           </View>
 
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom + s(10) }}>
-            {/* Emoji + Title + Members — centered, padded, no side-clipping */}
+            {/* Emoji + Title (with inline editor) + Members — centered, padded */}
             {editCheckin && (
               <View style={{ alignItems: 'center', paddingTop: s(12), paddingBottom: s(8), paddingHorizontal: s(10) }}>
                 <Text style={{ fontSize: s(20) }}>{editCheckin.status_emoji || '📍'}</Text>
-                <Text
-                  style={{
-                    fontSize: s(8),
-                    fontWeight: FW.bold,
-                    color: colors.dark,
-                    textAlign: 'center',
-                    marginTop: s(4),
-                    paddingHorizontal: s(8),
-                  }}
-                  numberOfLines={2}
-                >
-                  {editCheckin.activity_text || editCheckin.status_text || 'Activity'}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    if (Alert.prompt) {
-                      Alert.prompt('Edit Title', '', (text: string) => {
-                        if (!text?.trim()) return;
-                        supabase.from('app_checkins').update({ activity_text: text.trim(), status_text: text.trim() }).eq('id', editCheckin.id).then(() => {
-                          setEditCheckin({ ...editCheckin, activity_text: text.trim(), status_text: text.trim() });
+
+                {editingTitle ? (
+                  /* ── EDIT MODE: TextInput + Save / Cancel ── */
+                  <View style={{ alignSelf: 'stretch', marginTop: s(4) }}>
+                    <TextInput
+                      value={titleDraft}
+                      onChangeText={setTitleDraft}
+                      placeholder="Activity title"
+                      placeholderTextColor={colors.textFaint}
+                      style={{
+                        fontSize: s(7),
+                        fontWeight: FW.bold,
+                        color: colors.dark,
+                        textAlign: 'center',
+                        backgroundColor: colors.surface,
+                        borderWidth: 1.5,
+                        borderColor: colors.primary,
+                        borderRadius: s(8),
+                        paddingHorizontal: s(5),
+                        paddingVertical: s(4),
+                      }}
+                      maxLength={80}
+                      autoFocus
+                      multiline={false}
+                      returnKeyType="done"
+                      onSubmitEditing={() => {
+                        const t = titleDraft.trim();
+                        if (!t || savingTitle) return;
+                        setSavingTitle(true);
+                        supabase.from('app_checkins').update({ activity_text: t, status_text: t }).eq('id', editCheckin.id).then(() => {
+                          setEditCheckin({ ...editCheckin, activity_text: t, status_text: t });
+                          setEditingTitle(false);
+                          setSavingTitle(false);
                           refetch();
                         });
-                      });
-                    } else {
-                      Alert.alert('Edit', 'Use the activity creation flow to edit the title');
-                    }
-                  }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: s(2),
-                    marginTop: s(2),
-                    paddingVertical: s(1.5),
-                    paddingHorizontal: s(3),
-                  }}
-                >
-                  <NomadIcon name="edit" size={s(5)} color={colors.primary} strokeWidth={1.8} />
-                  <Text style={{ fontSize: s(5), color: colors.primary, fontWeight: FW.semi }}>edit title</Text>
-                </TouchableOpacity>
-                <Text style={{ fontSize: s(5.5), color: colors.textMuted, marginTop: s(3) }}>
-                  {editCheckin.member_count || 1} member{(editCheckin.member_count || 1) > 1 ? 's' : ''}
-                </Text>
+                      }}
+                    />
+                    <View style={{ flexDirection: 'row', justifyContent: 'center', gap: s(4), marginTop: s(4) }}>
+                      <TouchableOpacity
+                        onPress={() => { setEditingTitle(false); setTitleDraft(''); }}
+                        disabled={savingTitle}
+                        style={{ paddingVertical: s(3), paddingHorizontal: s(8), borderRadius: s(8), backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft }}
+                      >
+                        <Text style={{ fontSize: s(6), fontWeight: FW.semi, color: colors.textMuted }}>{t('common.cancel')}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={async () => {
+                          const newText = titleDraft.trim();
+                          if (!newText || savingTitle) return;
+                          setSavingTitle(true);
+                          // 1. Update the check-in itself (map / people list / owner card).
+                          const { error } = await supabase
+                            .from('app_checkins')
+                            .update({ activity_text: newText, status_text: newText })
+                            .eq('id', editCheckin.id);
+                          if (error) {
+                            Alert.alert('Save failed', error.message);
+                            setSavingTitle(false);
+                            return;
+                          }
+                          // 2. If this check-in has a chat group, rename the conversation too
+                          //    so everyone who already joined sees the new title in their chat list.
+                          try {
+                            const { data: conv } = await supabase
+                              .from('app_conversations')
+                              .select('id')
+                              .eq('checkin_id', editCheckin.id)
+                              .maybeSingle();
+                            if (conv?.id) {
+                              await supabase
+                                .from('app_conversations')
+                                .update({ name: newText, activity_text: newText })
+                                .eq('id', conv.id);
+                            }
+                          } catch (e) {
+                            console.warn('[ActivityInfo] failed to sync conversation name:', e);
+                          }
+                          setEditCheckin({ ...editCheckin, activity_text: newText, status_text: newText });
+                          setEditingTitle(false);
+                          setSavingTitle(false);
+                          refetch();
+                        }}
+                        disabled={savingTitle || !titleDraft.trim()}
+                        style={{
+                          paddingVertical: s(3),
+                          paddingHorizontal: s(10),
+                          borderRadius: s(8),
+                          backgroundColor: titleDraft.trim() ? colors.primary : colors.surface,
+                          opacity: savingTitle ? 0.6 : 1,
+                        }}
+                      >
+                        <Text style={{ fontSize: s(6), fontWeight: FW.bold, color: titleDraft.trim() ? '#fff' : colors.textFaint }}>
+                          {savingTitle ? 'Saving…' : t('common.save')}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  /* ── DISPLAY MODE: title + edit pill ── */
+                  <>
+                    <Text
+                      style={{
+                        fontSize: s(8),
+                        fontWeight: FW.bold,
+                        color: colors.dark,
+                        textAlign: 'center',
+                        marginTop: s(4),
+                        paddingHorizontal: s(8),
+                      }}
+                      numberOfLines={2}
+                    >
+                      {editCheckin.activity_text || editCheckin.status_text || 'Activity'}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setTitleDraft(editCheckin.activity_text || editCheckin.status_text || '');
+                        setEditingTitle(true);
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: s(2),
+                        marginTop: s(3),
+                        paddingVertical: s(2),
+                        paddingHorizontal: s(4),
+                        borderRadius: s(20),
+                        backgroundColor: colors.primary + '14',
+                        borderWidth: 1,
+                        borderColor: colors.primary + '30',
+                      }}
+                    >
+                      <NomadIcon name="edit" size={s(5)} color={colors.primary} strokeWidth={2} />
+                      <Text style={{ fontSize: s(5), color: colors.primary, fontWeight: FW.semi }}>edit title</Text>
+                    </TouchableOpacity>
+                    <Text style={{ fontSize: s(5.5), color: colors.textMuted, marginTop: s(3) }}>
+                      {editCheckin.member_count || 1} member{(editCheckin.member_count || 1) > 1 ? 's' : ''}
+                    </Text>
+                  </>
+                )}
               </View>
             )}
 
