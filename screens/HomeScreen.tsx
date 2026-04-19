@@ -1205,7 +1205,13 @@ export default function HomeScreen() {
               placeholderTextColor="#AAA"
               value={cityQuery}
               onChangeText={setCityQuery}
-              onFocus={() => setSearchFocused(true)}
+              onFocus={() => {
+                setSearchFocused(true);
+                // Always re-read the Recents list from storage on focus so
+                // the dropdown reflects the truth AsyncStorage has (e.g.
+                // after switching users or after another screen mutated it).
+                loadRecentCities().then(setRecentCities);
+              }}
               returnKeyType="search"
             />
             {searchFocused && (
