@@ -19,8 +19,14 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 type FilterTab = 'All' | 'Groups' | 'Direct';
 
-const GROUP_COLORS = ['#1A1A2E', '#374151', '#1E3A5F', '#1A3C34', '#2D2B55', '#3F3322'];
+// Peach palette for group avatars — warm, pastel, on-brand with #E8614D.
+// Replaces the old navy/gray palette which felt corporate. Dark text on
+// these so the initials/emoji stay readable.
+const GROUP_COLORS = ['#FFCDB2', '#FFB4A2', '#FFAB91', '#FCC8B3', '#FFA07A', '#E5989B'];
 const getGroupColor = (i: number) => GROUP_COLORS[i % GROUP_COLORS.length];
+// Soft warm fallback for DM avatars when the other user has no
+// avatar_url. Matches the family but is distinct from group tones.
+const DM_FALLBACK_COLOR = '#F4A582';
 const getInitials = (name?: string | null) => name ? name.split(' ').map(w => w[0]).join('').slice(0, 3).toUpperCase() : '??';
 
 function timeAgo(date: string) {
@@ -185,7 +191,14 @@ function SwipeableConvRow({
     });
   };
 
-  const avatarColor = isDead ? '#D1D5DB' : getGroupColor(idx);
+  // DMs get the soft warm fallback (under the avatar_url Image, only
+  // visible when the other user has no avatar). Groups get the peach
+  // palette per index. Dead chats grey out either way.
+  const avatarColor = isDead
+    ? '#D1D5DB'
+    : isGroup
+      ? getGroupColor(idx)
+      : DM_FALLBACK_COLOR;
   const otherMember = conv.members?.find(m => m.user_id !== userId);
   const otherProfile = otherMember?.profile;
   const avatarUrl = isGroup ? null : (otherProfile as any)?.avatar_url || null;
@@ -205,27 +218,28 @@ function SwipeableConvRow({
       {/* Actions behind row */}
       {canSwipe && (
         <View style={st.swipeActionsContainer}>
-          {/* Mute button — available for all conversations */}
+          {/* Mute button — smaller icon for a lighter feel. Flips
+              bell → bell-active so the icon reflects the state. */}
           <TouchableOpacity style={[st.swipeAction, st.swipeActionMute]} activeOpacity={0.8} onPress={handleMute}>
-            <NomadIcon name={conv.is_muted ? "bell" : "bell"} size={s(7)} color="white" strokeWidth={2} />
+            <NomadIcon name={conv.is_muted ? "bell-active" : "bell"} size={s(6)} color="white" strokeWidth={2} />
             <Text style={st.swipeActionText}>{conv.is_muted ? 'unmute' : 'mute'}</Text>
           </TouchableOpacity>
 
           {/* Primary action button */}
           {isDM ? (
             <TouchableOpacity style={[st.swipeAction, st.swipeActionPrimary]} activeOpacity={0.8} onPress={handleDelete}>
-              <NomadIcon name="close" size={s(7)} color="white" strokeWidth={2} />
+              <NomadIcon name="close" size={s(6)} color="white" strokeWidth={2} />
               <Text style={st.swipeActionText}>delete</Text>
             </TouchableOpacity>
           ) : isGroup && isDead ? (
             isGroupMember ? (
               <TouchableOpacity style={[st.swipeAction, st.swipeActionPrimary]} activeOpacity={0.8} onPress={handleLeave}>
-                <NomadIcon name="logout" size={s(7)} color="white" strokeWidth={2} />
+                <NomadIcon name="logout" size={s(6)} color="white" strokeWidth={2} />
                 <Text style={st.swipeActionText}>leave</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity style={[st.swipeAction, st.swipeActionPrimary]} activeOpacity={0.8} onPress={handleDelete}>
-                <NomadIcon name="close" size={s(7)} color="white" strokeWidth={2} />
+                <NomadIcon name="close" size={s(6)} color="white" strokeWidth={2} />
                 <Text style={st.swipeActionText}>delete</Text>
               </TouchableOpacity>
             )
@@ -235,12 +249,12 @@ function SwipeableConvRow({
             // me out of the group" bug. To actually leave the group, use
             // the GroupInfoScreen → Leave action.
             <TouchableOpacity style={[st.swipeAction, st.swipeActionPrimary]} activeOpacity={0.8} onPress={handleHide}>
-              <NomadIcon name="eye-off" size={s(7)} color="white" strokeWidth={2} />
+              <NomadIcon name="eye-off" size={s(6)} color="white" strokeWidth={2} />
               <Text style={st.swipeActionText}>hide</Text>
             </TouchableOpacity>
           ) : (
             <TouchableOpacity style={[st.swipeAction, st.swipeActionPrimary]} activeOpacity={0.8} onPress={handleLock}>
-              <NomadIcon name="lock" size={s(7)} color="white" strokeWidth={2} />
+              <NomadIcon name="lock" size={s(6)} color="white" strokeWidth={2} />
               <Text style={st.swipeActionText}>close</Text>
             </TouchableOpacity>
           )}
@@ -314,7 +328,7 @@ function SwipeableConvRow({
           <View style={st.meta}>
             {conv.is_muted && (
               <View style={{ opacity: 0.4 }}>
-                <NomadIcon name="bell" size={s(5)} color={colors.textSec} strokeWidth={1.4} />
+                <NomadIcon name="bell" size={s(4)} color={colors.textSec} strokeWidth={1.4} />
               </View>
             )}
             {hasUnread ? (
@@ -629,7 +643,12 @@ export default function PulseScreen() {
               </View>
               <View style={[
                 st.avatar,
-                { backgroundColor: (conv.is_expired || conv.is_locked) ? '#D1D5DB' : getGroupColor(idx) },
+                { backgroundColor: (conv.is_expired || conv.is_locked)
+                    ? '#D1D5DB'
+                    : conv.type === 'group'
+                      ? getGroupColor(idx)
+                      : DM_FALLBACK_COLOR
+                },
                 conv.type === 'group' && st.avatarGroup,
               ]}>
                 {conv.type !== 'group' && (conv.members?.find(m => m.user_id !== userId)?.profile as any)?.avatar_url ? (
@@ -856,7 +875,9 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   avatarText: {
     fontSize: s(8),
     fontWeight: FW.bold,
-    color: c.white,
+    // Dark chocolate-brown reads well on peach pastels AND on the DM
+    // fallback. White (old value) washes out on these pastels.
+    color: '#3B1F1A',
   },
   avatarInitials: {
     fontSize: s(6.5),
@@ -917,16 +938,16 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
 
   /* ── Badge ── */
   badge: {
-    minWidth: s(10),
-    height: s(10),
-    borderRadius: s(5),
+    minWidth: s(7.5),
+    height: s(7.5),
+    borderRadius: s(4),
     backgroundColor: c.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: s(2.5),
+    paddingHorizontal: s(2),
   },
   badgeText: {
-    fontSize: s(5),
+    fontSize: s(4.2),
     fontWeight: FW.bold,
     color: c.white,
   },
