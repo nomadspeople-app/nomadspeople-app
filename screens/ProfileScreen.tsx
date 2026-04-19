@@ -1101,14 +1101,9 @@ export default function ProfileScreen() {
         )}
 
         {/* Photo Moments section removed — photos shown in grid below */}
-
-        {/* ─── Groups empty state (owner only) ─── */}
-        {isOwner && (
-          <View style={styles.groupsEmptyRow}>
-            <NomadIcon name="users" size={s(7)} color={colors.textFaint} strokeWidth={1.4} />
-            <Text style={styles.groupsEmptyText}>{t('profile.noGroups')}</Text>
-          </View>
-        )}
+        {/* "your groups will appear here" empty state removed
+            2026-04-19 — added no value for the user. Groups are
+            still surfaced via the GroupInfo screen + chat tab. */}
 
         {/* ─── Content Tabs ─── */}
         <View
