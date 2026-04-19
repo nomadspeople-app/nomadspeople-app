@@ -383,25 +383,19 @@ export default function TimerBubble({
       {/* Participants row — ALWAYS visible. Up to 4 avatars side-by-side
           (creator first), then "+N" pill if there are more. Plus the
           "X going" count next to it for an at-a-glance number. */}
-      {/* Facepile — pure visual stack, no usernames.
-          - Up to 3 circular avatars, 24×24, 2px white border.
-          - Overlap via marginLeft: -10 on each subsequent avatar.
-          - If total participants > 3, a final gray circle with
-            "+N" caps the stack. */}
+      {/* Facepile — pure visual stack, no usernames, no special
+          highlight on "me". Uniform 32×32 circles with a thick 2px
+          white border and heavy -14 overlap so they sit
+          "one on top of the other" like Instagram Stories. */}
       <View style={st.membersRow}>
         <View style={st.avatarStrip}>
           {shownAvatars.map((p, i) => (
-            <View key={p.user_id} style={i > 0 ? { marginLeft: -10 } : null}>
-              <MemberDot
-                url={p.avatar_url}
-                name={p.full_name}
-                st={st}
-                highlight={p.user_id === userId ? colors.primary : undefined}
-              />
+            <View key={p.user_id} style={i > 0 ? { marginLeft: -14 } : null}>
+              <MemberDot url={p.avatar_url} name={p.full_name} st={st} />
             </View>
           ))}
           {overflow > 0 && (
-            <View style={[st.memberDot, st.memberDotMore, { marginLeft: -10 }]}>
+            <View style={[st.memberDot, st.memberDotMore, { marginLeft: -14 }]}>
               <Text style={st.memberMoreText}>+{overflow}</Text>
             </View>
           )}
@@ -468,18 +462,19 @@ export default function TimerBubble({
   );
 }
 
-/* ─── Small member avatar dot (medium size, row) ─── */
+/* ─── Member avatar dot — uniform 32×32 for every participant.
+    No per-user styling differences; the only variation is the
+    image itself (or initials fallback). */
 function MemberDot({
-  url, name, st, highlight,
+  url, name, st,
 }: {
   url: string | null;
   name: string | null;
   st: ReturnType<typeof styles>;
-  highlight?: string;
 }) {
   const initials = (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   return (
-    <View style={[st.memberDot, highlight ? { borderColor: highlight, borderWidth: 2 } : null]}>
+    <View style={st.memberDot}>
       {url ? (
         <Image source={{ uri: url }} style={st.memberImg} />
       ) : (
@@ -535,12 +530,14 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     gap: 6,
   },
-  /* Instagram-style small member dot — 24px, 2px white border kept
-     so overlapping stack reads as separated circles. */
+  /* Member dot — uniform 32×32 for every participant (no size
+     difference for the current user). 2px white border makes the
+     overlap read as distinct circles even when they're 14px on
+     top of each other. */
   memberDot: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: '#F4A582',
     alignItems: 'center',
     justifyContent: 'center',
@@ -553,12 +550,12 @@ const styles = (c: ThemeColors) => StyleSheet.create({
   },
   memberImg: { width: '100%', height: '100%' },
   memberInitials: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '700',
     color: '#3B1F1A',
   },
   memberMoreText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '700',
     color: '#6B7280',
   },
