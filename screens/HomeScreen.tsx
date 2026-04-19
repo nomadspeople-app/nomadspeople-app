@@ -633,27 +633,28 @@ export default function HomeScreen() {
     const isTimer = (checkin as any).checkin_type === 'timer';
     const isOwn = checkin.user_id === userId;
 
-    // For own timer pins: prefer live GPS so map focuses on current position
-    const lat = (isOwn && isTimer && userLat) ? userLat : (checkin.latitude ?? currentCity.lat);
-    const lng = (isOwn && isTimer && userLng) ? userLng : (checkin.longitude ?? currentCity.lng);
+    // TIMER pins — open the bubble in place, do NOT move the map. The pin
+    // is already where it is; jumping the camera is disorienting and was
+    // previously sending the owner to their live GPS instead of the pin,
+    // which didn't match the bubble's actual location.
+    if (isTimer) {
+      setTimerBubbleCheckin(prev => prev?.id === checkin.id ? null : checkin);
+      return;
+    }
 
-    // Smooth zoom into the pin's area first
+    // STATUS / event pins — follow the locked map-pin-tap flow from
+    // CLAUDE.md: smooth 400ms zoom into the pin's neighborhood, then
+    // 450ms later open the popup. Owner tapping own event → Profile
+    // management; visitors → the visitor sheet.
+    const lat = checkin.latitude ?? currentCity.lat;
+    const lng = checkin.longitude ?? currentCity.lng;
     mapRef.current?.animateToRegion({
       latitude: lat,
       longitude: lng,
       latitudeDelta: 0.008,
       longitudeDelta: 0.008,
     }, 400);
-
-    // After zoom animation completes → open the right popup.
-    // Owner tapping their OWN status/event: never show the "Join" sheet —
-    // it's their own event, makes no sense. Send them to their profile
-    // where the Activity Info management modal lives.
     setTimeout(() => {
-      if (isTimer) {
-        setTimerBubbleCheckin(prev => prev?.id === checkin.id ? null : checkin);
-        return;
-      }
       if (isOwn) {
         nav.navigate('UserProfile' as any, { userId: checkin.user_id, openCheckinId: checkin.id });
         return;
