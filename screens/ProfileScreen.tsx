@@ -1675,7 +1675,7 @@ export default function ProfileScreen() {
                    (via the title editor above) and cancel. No Mute toggle,
                    no privacy (timers are always public), no location, no
                    date, no time. Per spec: "only status text editable". */}
-              {editCheckin?.checkin_type !== 'timer' && (<>
+              {editCheckin?.checkin_type !== 'timer' && (<View>
 
               <View style={aiStyles.divider} />
 
@@ -1969,7 +1969,7 @@ export default function ProfileScreen() {
                 </View>
               )}
 
-            </>)}
+            </View>)}
             {/* ↑ end of `checkin_type !== 'timer'` editor block */}
             </View>
             {/* ↑ closes the outer 'Action rows' wrapper that started above the Share button */}
