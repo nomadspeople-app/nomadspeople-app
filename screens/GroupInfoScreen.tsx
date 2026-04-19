@@ -94,26 +94,50 @@ export default function GroupInfoScreen() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
 
-    // Conversation metadata
+    // Conversation metadata — pull checkin_id too so the fallback below
+    // can pick the EXACT checkin linked to this conversation, not "any
+    // active checkin by the creator" (which is wrong when a user has a
+    // status + a timer open at the same time).
     const { data: conv } = await supabase
       .from('app_conversations')
-      .select('id, name, emoji, category, activity_text, location_name, latitude, longitude, is_general_area, scheduled_for, is_open, created_by, created_at')
+      .select('id, name, emoji, category, activity_text, location_name, latitude, longitude, is_general_area, scheduled_for, is_open, created_by, created_at, checkin_id')
       .eq('id', conversationId)
       .single();
 
     if (conv) {
       setGroup(conv as GroupData);
 
-      // If conversation has no coords but has a checkin_id or created_by, try to get coords from checkin
-      if (!conv.latitude && conv.created_by) {
-        const { data: checkin } = await supabase
-          .from('app_checkins')
-          .select('latitude, longitude, location_name')
-          .eq('user_id', conv.created_by)
-          .eq('is_active', true)
-          .maybeSingle();
-        if (checkin?.latitude && checkin?.longitude) {
-          setCheckinCoords({ lat: checkin.latitude, lng: checkin.longitude, locName: checkin.location_name || undefined });
+      // If the conversation row has no coords (typical — coords live on
+      // app_checkins), resolve via the linked checkin. Prefer checkin_id
+      // (exact link) over created_by (ambiguous when >1 active checkin).
+      if (!conv.latitude) {
+        let checkinRow: { latitude: number | null; longitude: number | null; location_name: string | null } | null = null;
+        if ((conv as any).checkin_id) {
+          const { data } = await supabase
+            .from('app_checkins')
+            .select('latitude, longitude, location_name')
+            .eq('id', (conv as any).checkin_id)
+            .maybeSingle();
+          checkinRow = data as any;
+        }
+        if (!checkinRow && conv.created_by) {
+          // Older chats may have no checkin_id — fall back to active-checkin lookup.
+          const { data } = await supabase
+            .from('app_checkins')
+            .select('latitude, longitude, location_name')
+            .eq('user_id', conv.created_by)
+            .eq('is_active', true)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          checkinRow = data as any;
+        }
+        if (checkinRow?.latitude && checkinRow?.longitude) {
+          setCheckinCoords({
+            lat: checkinRow.latitude,
+            lng: checkinRow.longitude,
+            locName: checkinRow.location_name || undefined,
+          });
         }
       }
     }

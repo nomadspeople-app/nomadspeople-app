@@ -211,10 +211,13 @@ export default function TimerBubble({
         );
         if (error || !conversationId) return;
         setChatId(conversationId);
-        // Navigate after setting chatId
+        // Navigate after setting chatId.
+        // isGroup:true is what unlocks the tappable chat header → GroupInfo
+        // (map / mute / member list). Without it the header is dead and the
+        // user can't reach the timer's location, mute toggle, or members.
         setTimeout(() => {
           onClose();
-          nav.navigate('Chat', { conversationId, title: firstName });
+          nav.navigate('Chat', { conversationId, title: firstName, isGroup: true });
         }, 50);
         return;
       } catch {}
@@ -223,7 +226,7 @@ export default function TimerBubble({
     // Normal flow: navigate to existing chat
     if (!chatId) return;
     onClose();
-    nav.navigate('Chat', { conversationId: chatId, title: firstName });
+    nav.navigate('Chat', { conversationId: chatId, title: firstName, isGroup: true });
   };
 
   /* ── Leave ── */
