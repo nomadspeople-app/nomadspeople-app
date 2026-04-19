@@ -312,9 +312,14 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
     const birthDate = birthYear ? `${birthYear}-${String(birthMonth).padStart(2, '0')}-${String(birthDay).padStart(2, '0')}` : null;
     const igHandle = extractInstagramHandle(instagramRaw);
 
+    // UPSERT, not UPDATE: brand-new users coming from AuthScreen may not
+    // have an app_profiles row yet. UPDATE + .eq would silently no-op and
+    // the onboarding would appear to complete but save nothing — the bug
+    // that sent users back to step 0 on refresh.
     await supabase
       .from('app_profiles')
-      .update({
+      .upsert({
+        user_id: userId,
         full_name: displayName.trim() || username || null,
         display_name: displayName.trim() || null,
         username: username || null,
@@ -330,8 +335,7 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
         interests: selectedInterests,
         looking_for: lookingFor,
         app_language: appLanguage,
-      })
-      .eq('user_id', userId);
+      }, { onConflict: 'user_id' });
 
     animateTransition(11); // go to permissions step
   };
@@ -346,13 +350,14 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
     const depStr = tripDepartureDate ? formatDate(tripDepartureDate) : null;
     const flag = COUNTRIES.find(c => c.name === tripCountry)?.flag || '';
 
-    // Save trip to profile
-    await supabase.from('app_profiles').update({
+    // Save trip to profile (upsert so brand-new users never silently no-op)
+    await supabase.from('app_profiles').upsert({
+      user_id: userId,
       next_destination: tripCountry,
       next_destination_date: arrStr,
       next_destination_flag: flag,
       next_departure_date: depStr,
-    }).eq('user_id', userId);
+    }, { onConflict: 'user_id' });
 
     handleFinishOnboarding();
   };

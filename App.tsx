@@ -272,12 +272,12 @@ export default function App() {
   const [justFinishedSetup, setJustFinishedSetup] = useState(false);
 
   const handleOnboardingComplete = async () => {
-    // Mark onboarding as done in DB
+    // Mark onboarding as done in DB (upsert — brand-new users may not yet
+    // have an app_profiles row; plain UPDATE would silently no-op).
     if (userId) {
       await supabase
         .from('app_profiles')
-        .update({ onboarding_done: true })
-        .eq('user_id', userId);
+        .upsert({ user_id: userId, onboarding_done: true }, { onConflict: 'user_id' });
     }
     setJustFinishedSetup(true);
     setOnboardingDone(true);
