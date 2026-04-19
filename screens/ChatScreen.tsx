@@ -122,7 +122,20 @@ export default function ChatScreen() {
     if ((!inputText.trim() && !imageUrl) || !userId) return;
     const text = inputText.trim();
     setInputText('');
-    await send(userId, text, replyTo?.id, imageUrl);
+    const { error } = await send(userId, text, replyTo?.id, imageUrl);
+    if (error) {
+      // Surface the failure instead of swallowing it silently. Restore the
+      // text so the user doesn't lose what they typed.
+      console.warn('[ChatScreen] send failed:', error);
+      setInputText(text);
+      const msg = error.message || 'Could not send message. Check your connection and try again.';
+      if (Platform.OS === 'web') {
+        window.alert(msg);
+      } else {
+        Alert.alert('Message not sent', msg);
+      }
+      return;
+    }
     setReplyTo(null);
   };
 
