@@ -797,9 +797,21 @@ export default function HomeScreen() {
         .eq('is_active', true)
         .eq('checkin_type', 'status');
 
-      // Calculate expires_at based on chosen duration
+      // expires_at logic — TWO cases:
+      //  A) Scheduled event (the user picked a future date + time):
+      //     stay visible until the event actually happens + 12h grace.
+      //     Ignores durationMinutes — it's meaningless for a scheduled
+      //     event. This is the fix for "my event for next Sunday vanished
+      //     an hour after I created it."
+      //  B) Immediate status ("I'm here now"): use durationMinutes (default
+      //     60 min). Short-lived, disappears on time.
+      const SCHEDULED_GRACE_MS = 12 * 60 * 60 * 1000;
+      const scheduledFor = data.scheduledFor ?? null;
+      const isFutureScheduled = scheduledFor instanceof Date && scheduledFor.getTime() > Date.now();
       const durationMs = (data.durationMinutes || 60) * 60 * 1000;
-      const expiresAt = new Date(Date.now() + durationMs).toISOString();
+      const expiresAt = isFutureScheduled
+        ? new Date(scheduledFor!.getTime() + SCHEDULED_GRACE_MS).toISOString()
+        : new Date(Date.now() + durationMs).toISOString();
 
       // Resolve correct city based on actual GPS (prevents wrong-city bug)
       const resolvedCity = await resolveCheckinCity(data.latitude, data.longitude);
