@@ -434,9 +434,34 @@ export default function HomeScreen() {
   // NEVER a floating element; it's always tied to the exact pin the
   // user just tapped.
   const [timerBubbleAnchor, setTimerBubbleAnchor] = useState<{ x: number; y: number } | null>(null);
+  // Tracks pending anchor-computation timers so rapid pin-taps don't
+  // stack onto each other (tap A fires its timer, user taps B before
+  // A's timer lands → we cancel A and start fresh for B).
+  const pendingAnchorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Separate timer that clears the anchor 180ms AFTER dismiss, so the
+  // Bubble can animate out at its anchored position. Tracked so a new
+  // tap can cancel it — otherwise a stale "clear" would wipe the
+  // freshly-set anchor of the new bubble.
+  const pendingAnchorClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Dismiss the timer bubble.
+   *  Clears the checkin immediately (so the Bubble component receives
+   *  `visible={false}` and starts its exit animation). The anchor is
+   *  cleared AFTER the 160ms exit completes — without this delay, the
+   *  bubble would re-position to mid-screen mid-fade and look like a
+   *  glitch. Fixes the "short-circuit disappearance" the user flagged. */
   const dismissTimerBubble = () => {
+    if (pendingAnchorTimer.current) {
+      clearTimeout(pendingAnchorTimer.current);
+      pendingAnchorTimer.current = null;
+    }
+    if (pendingAnchorClearTimer.current) {
+      clearTimeout(pendingAnchorClearTimer.current);
+    }
     setTimerBubbleCheckin(null);
-    setTimerBubbleAnchor(null);
+    pendingAnchorClearTimer.current = setTimeout(() => {
+      setTimerBubbleAnchor(null);
+      pendingAnchorClearTimer.current = null;
+    }, 180);
   };
   /* ── פניני חוכמה — Wisdom state ── */
   const [showWisdom, setShowWisdom] = useState(false);
@@ -683,33 +708,81 @@ export default function HomeScreen() {
     // TIMER pins — Waze-style anchored Bubble.
     //
     // Unified flow for BOTH owner and visitor (per ux skill's
-    // one-screen-per-concept rule): tap pin → Bubble appears above it
-    // with tail pointing at the pin. Tap the bubble → deeper surface
-    // (Profile for owner, ActivityDetailSheet for visitor).
+    // one-screen-per-concept rule): tap pin → short map pan to bring
+    // the pin higher on screen + haptic → Bubble pops in anchored to
+    // the pin's new screen position with a spring scale + fade.
     //
-    // We do NOT zoom the map on pin tap for timers — the whole point of
-    // an anchored popup is context preservation. Zoom happens only if
-    // the user opens the full detail sheet after tapping the bubble.
+    // Motion matters. A popup that appears without any map movement
+    // feels dead ("everything stops"). A soft 450ms pan gives the tap
+    // a felt response before the popup lands.
     if (isTimer) {
+      // Re-tap on the same pin → dismiss. Feels natural (user is
+      // cancelling their own tap) and preserves the old toggle UX.
+      if (timerBubbleCheckin?.id === checkin.id) {
+        dismissTimerBubble();
+        return;
+      }
+      // Cancel any in-flight anchor resolution from a previous tap so
+      // the new tap wins. Without this, a rapid A→B tap would briefly
+      // flash bubble A before landing on bubble B.
+      if (pendingAnchorTimer.current) {
+        clearTimeout(pendingAnchorTimer.current);
+        pendingAnchorTimer.current = null;
+      }
+      // If a different bubble is currently showing, start its exit
+      // animation now (clear checkin, let the 160ms fade-out play)
+      // and — critically — cancel the deferred anchor-clear timer it
+      // would have scheduled. Otherwise that stale timer fires AFTER
+      // we've set the new anchor and wipes it, making the new bubble
+      // vanish ~180ms after it appears.
+      if (timerBubbleCheckin) {
+        if (pendingAnchorClearTimer.current) {
+          clearTimeout(pendingAnchorClearTimer.current);
+          pendingAnchorClearTimer.current = null;
+        }
+        setTimerBubbleCheckin(null);
+        // Anchor stays where it was so the old bubble fades out
+        // gracefully at its original position. It gets overwritten
+        // below when the new bubble's anchor is computed.
+      }
+
       const lat = checkin.latitude ?? currentCity.lat;
       const lng = checkin.longitude ?? currentCity.lng;
-      // pointForCoordinate returns a promise in iOS, synchronous-feel in
-      // Android but typed as Promise. Both work here.
-      const p = mapRef.current?.pointForCoordinate({ latitude: lat, longitude: lng });
-      Promise.resolve(p)
-        .then((pt: any) => {
-          if (!pt || typeof pt.x !== 'number' || typeof pt.y !== 'number') {
-            // Fallback: mid-screen. Rare — usually pointForCoordinate works.
-            setTimerBubbleAnchor({ x: screenW / 2, y: 200 });
-          } else {
-            setTimerBubbleAnchor({ x: pt.x, y: pt.y });
-          }
-          setTimerBubbleCheckin(checkin);
-        })
-        .catch(() => {
-          setTimerBubbleAnchor({ x: SW / 2, y: 200 });
-          setTimerBubbleCheckin(checkin);
-        });
+
+      // 1. Immediate haptic — confirms the tap registered.
+      Haptics.selectionAsync().catch(() => {});
+
+      // 2. Soft map pan: shift the camera slightly SOUTH of the pin
+      //    so the pin moves UP on screen, leaving the upper ~65% of
+      //    the map free for the bubble (which renders above the pin).
+      //    Modest zoom-in so neighboring context stays visible.
+      mapRef.current?.animateToRegion({
+        latitude: lat - 0.0035,
+        longitude: lng,
+        latitudeDelta: 0.014,
+        longitudeDelta: 0.014,
+      }, 450);
+
+      // 3. After the pan, compute the pin's new screen position and
+      //    pop the bubble in. The Bubble does its own spring scale +
+      //    fade entrance so the appearance has feel, not a cut.
+      pendingAnchorTimer.current = setTimeout(() => {
+        pendingAnchorTimer.current = null;
+        const p = mapRef.current?.pointForCoordinate({ latitude: lat, longitude: lng });
+        Promise.resolve(p)
+          .then((pt: any) => {
+            if (!pt || typeof pt.x !== 'number' || typeof pt.y !== 'number') {
+              setTimerBubbleAnchor({ x: screenW / 2, y: 280 });
+            } else {
+              setTimerBubbleAnchor({ x: pt.x, y: pt.y });
+            }
+            setTimerBubbleCheckin(checkin);
+          })
+          .catch(() => {
+            setTimerBubbleAnchor({ x: screenW / 2, y: 280 });
+            setTimerBubbleCheckin(checkin);
+          });
+      }, 470);
       return;
     }
 

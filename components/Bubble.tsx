@@ -68,16 +68,56 @@ export default function Bubble({
   const st = useMemo(() => makeStyles(colors), [colors]);
   const [bubbleH, setBubbleH] = useState(180); // estimate; onLayout corrects
   const opacity = useRef(new Animated.Value(0)).current;
+  // Subtle scale range — big enough to feel alive, small enough that
+  // the tail stays visually attached to the pin through the whole
+  // animation. Heavy scaling would read as "the bubble detached".
+  const scale = useRef(new Animated.Value(0.92)).current;
+  // Stays mounted through the exit animation. Without this, dropping
+  // `visible` would unmount the view mid-fade and you'd see a glitchy
+  // disappearance — exactly the "short-circuit" the user reported.
+  const [mounted, setMounted] = useState(visible);
 
   useEffect(() => {
-    Animated.timing(opacity, {
-      toValue: visible ? 1 : 0,
-      duration: visible ? 160 : 100,
-      useNativeDriver: true,
-    }).start();
-  }, [visible, opacity]);
+    if (visible) {
+      setMounted(true);
+      // Pop-in: spring scale + opacity fade. The spring gives a tiny
+      // overshoot that reads as "alive", not just "appeared".
+      Animated.parallel([
+        Animated.spring(scale, {
+          toValue: 1,
+          useNativeDriver: true,
+          friction: 6,
+          tension: 90,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      // Exit: scale down + fade in parallel. Slightly faster than entry
+      // so dismissal feels decisive. Unmount AFTER the animation ends
+      // so the parent can clear the anchor without the bubble jumping
+      // to a default screen position.
+      Animated.parallel([
+        Animated.timing(scale, {
+          toValue: 0.94,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished) setMounted(false);
+      });
+    }
+  }, [visible, opacity, scale]);
 
-  if (!visible && (opacity as any)._value === 0) return null;
+  if (!mounted) return null;
 
   // Total height incl. the avatar that pops ABOVE the bubble (25 px) and
   // the tail that hangs BELOW (20 px). We anchor the TAIL TIP to the pin.
@@ -110,6 +150,11 @@ export default function Bubble({
             top: topOfBubble,
             width: BUBBLE_MAX_WIDTH,
             opacity,
+            // Subtle scale gives the popup a "pop" on entry without
+            // visually detaching from the pin (range is 0.92→1, only
+            // 8% shrink at worst). No transform-origin trick needed —
+            // the tail remains close enough to the pin throughout.
+            transform: [{ scale }],
           },
         ]}
         onLayout={(e) => {
