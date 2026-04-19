@@ -448,7 +448,7 @@ export default function ProfileScreen() {
   const [editMinute, setEditMinute] = useState(0);
   const [editDay, setEditDay] = useState(0);
   const [locationQuery, setLocationQuery] = useState('');
-  const [locationResults, setLocationResults] = useState<{ name: string; sub: string; lat: number; lng: number }[]>([]);
+  const [locationResults, setLocationResults] = useState<{ name: string; sub: string; lat: number; lng: number; city: string | null }[]>([]);
   const locationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Build next 7 days for date picker
@@ -1532,6 +1532,10 @@ export default function ProfileScreen() {
                                 sub: [p.city, p.state, p.country].filter(Boolean).join(', '),
                                 lat: coords[1],
                                 lng: coords[0],
+                                // Capture the city (or fall back to state/name) so the
+                                // event's city field gets rewritten on save and the
+                                // event shows on the NEW city's map, not the old one.
+                                city: p.city || p.state || p.name || null,
                               };
                             });
                             setLocationResults(results);
@@ -1548,11 +1552,16 @@ export default function ProfileScreen() {
                       onPress={() => {
                         if (!editCheckin) return;
                         // Stage — bottom Save button commits + posts system message.
+                        // CRITICAL: also stage `city` so the map filter (which
+                        // queries by city) shows the event in its NEW city.
+                        // Without this, picking a Jerusalem venue while the
+                        // event is tagged "Tel Aviv" leaves the pin on Tel Aviv.
                         setStagedChanges({
                           ...stagedChanges,
                           location_name: `${r.name}, ${r.sub}`,
                           latitude: r.lat,
                           longitude: r.lng,
+                          ...(r.city ? { city: r.city } : {}),
                         });
                         setShowLocationSearch(false);
                         setLocationQuery('');
