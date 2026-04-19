@@ -1,5 +1,5 @@
-import { useRef, useCallback, useState, useMemo } from 'react';
-import { View, Text, StyleSheet, PanResponder, LayoutChangeEvent, findNodeHandle, UIManager } from 'react-native';
+import React, { useRef, useCallback, useState, useMemo } from 'react';
+import { View, Text, StyleSheet, PanResponder, LayoutChangeEvent, findNodeHandle, UIManager, Platform } from 'react-native';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 
 interface DualThumbSliderProps {
@@ -130,6 +130,51 @@ export default function DualThumbSlider({
   const leftPos = valueToPx(valueMin);
   const rightPos = valueToPx(valueMax);
 
+  // Web: PanResponder can't handle mouse drag reliably through react-native-web,
+  // so fall back to two native HTML <input type="range"> elements stacked.
+  // They respond to mouse, trackpad, and keyboard (arrow keys) out of the box.
+  if (Platform.OS === 'web') {
+    const rangeStyle: any = {
+      width: '100%',
+      accentColor: activeColorFinal,
+      cursor: 'pointer',
+      height: 24,
+    };
+    const handleMinChange = (e: any) => {
+      const v = Number(e.target.value);
+      if (v < valueMax) onChangeMin(v);
+      else onChangeMin(Math.max(min, valueMax - step));
+    };
+    const handleMaxChange = (e: any) => {
+      const v = Number(e.target.value);
+      if (v > valueMin) onChangeMax(v);
+      else onChangeMax(Math.min(max, valueMin + step));
+    };
+    return (
+      <View style={styles.container}>
+        <View style={styles.labelsRow}>
+          <Text style={[styles.label, { color: activeColorFinal }]}>{valueMin}</Text>
+          <Text style={styles.dash}>—</Text>
+          <Text style={[styles.label, { color: activeColorFinal }]}>
+            {valueMax >= max ? `${max}+` : String(valueMax)}
+          </Text>
+        </View>
+        <View style={styles.webRangesWrapper}>
+          {React.createElement('input', {
+            type: 'range', min, max, step, value: valueMin,
+            onChange: handleMinChange, style: rangeStyle,
+            'aria-label': 'Minimum age',
+          })}
+          {React.createElement('input', {
+            type: 'range', min, max, step, value: valueMax,
+            onChange: handleMaxChange, style: rangeStyle,
+            'aria-label': 'Maximum age',
+          })}
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* Labels */}
@@ -252,5 +297,9 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     height: THUMB_SIZE * 0.35,
     borderRadius: THUMB_SIZE * 0.175,
     backgroundColor: c.white,
+  },
+  webRangesWrapper: {
+    gap: s(3),
+    paddingTop: s(2),
   },
 });
