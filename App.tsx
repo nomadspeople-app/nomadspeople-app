@@ -73,11 +73,16 @@ const TAB_ICONS: Record<string, NomadIconName> = {
  * Now DEV_MODE actually authenticates as the dev user.
  * Before enabling DEV_MODE in a fresh Supabase project, create matching rows
  * in auth.users + app_profiles with the passwords below. ───────────────── */
+// Product decision (2026-04-19): one dev account only — barakperez@gmail.com.
+// Every change in dev is tested against real data from the founder's own
+// account, not dummy data. Test accounts (barak_test / test_nomad) are kept
+// commented below so they can be re-enabled for multi-user scenarios
+// (testing chat between two users, etc.) without re-creating DB rows.
 const DEV_MODE = __DEV__;
 const DEV_USERS = [
-  { id: '88888888-8888-8888-8888-888888888888', label: 'Barak (test)',  email: 'barak_test@nomadspeople.dev',  password: 'NomadsPeopleDev2026!' },
-  { id: '99999999-9999-9999-9999-999999999999', label: 'Test Nomad',    email: 'test_nomad@nomadspeople.dev',  password: 'NomadsPeopleDev2026!' },
-  { id: '91bfaacb-aea4-40d4-af67-7421b05be39d', label: 'Barak (real)',  email: 'barakperez@gmail.com',         password: 'NomadsPeopleDev2026!' },
+  { id: '91bfaacb-aea4-40d4-af67-7421b05be39d', label: 'Barak', email: 'barakperez@gmail.com', password: 'NomadsPeopleDev2026!' },
+  // { id: '88888888-8888-8888-8888-888888888888', label: 'Barak (test)', email: 'barak_test@nomadspeople.dev', password: 'NomadsPeopleDev2026!' },
+  // { id: '99999999-9999-9999-9999-999999999999', label: 'Test Nomad',   email: 'test_nomad@nomadspeople.dev', password: 'NomadsPeopleDev2026!' },
 ];
 const DEV_USER_ID = DEV_USERS[0].id;
 
