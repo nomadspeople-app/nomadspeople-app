@@ -441,10 +441,25 @@ export default function HomeScreen() {
     return () => clearInterval(gpsInterval);
   }, [refreshGPS]);
 
-  /* ── Load recent cities on mount ── */
+  /* ── Recent cities: load on mount AND auto-record the current city so
+          the dropdown always has at least one item (even first-timers who
+          never searched). Every time currentCity changes we also push it
+          into recents, which makes "Recent" behave as "cities I've been on
+          the map on" — matching the user's mental model. */
   useEffect(() => {
     loadRecentCities().then(setRecentCities);
   }, []);
+
+  useEffect(() => {
+    if (!currentCity?.name) return;
+    const entry: CitySearchResult = {
+      name: currentCity.name,
+      country: currentCity.country || '',
+      lat: currentCity.lat,
+      lng: currentCity.lng,
+    };
+    saveRecentCity(entry).then(() => loadRecentCities().then(setRecentCities));
+  }, [currentCity?.name, currentCity?.country]);
 
   /* ── City search — debounced Photon autocomplete ── */
   useEffect(() => {
