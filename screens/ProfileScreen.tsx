@@ -22,7 +22,6 @@ import type { PhotoPost } from '../lib/hooks';
 import { pickAndUploadAvatar, pickAndUploadPostImage } from '../lib/imagePicker';
 import { supabase } from '../lib/supabase';
 import { trackProfileView } from '../lib/tracking';
-import StatusCreationFlow, { type ActivityData } from '../components/StatusCreationFlow';
 import FlightRouteStrip from '../components/profile/FlightRouteStrip';
 import NextDestinationSection from '../components/profile/NextDestinationSection';
 import TripManagerSheet from '../components/TripManagerSheet';
@@ -418,15 +417,22 @@ export default function ProfileScreen() {
     }
   };
 
-  /* ─── Status / Activity creation flow ─── */
-  const [showStatusFlow, setShowStatusFlow] = useState(false);
+  /* ─── Status / Activity creation flow — REMOVED ───
+   *
+   * ProfileScreen used to render its own <StatusCreationFlow/> with
+   * `showStatusFlow` + `checkinRefreshKey` + `handlePublishActivity`,
+   * but nothing in the app ever flipped `showStatusFlow` to true —
+   * the modal rendered invisible forever. It was a dead second
+   * creation flow duplicating everything HomeScreen already does
+   * via QuickStatusSheet / TimerSheet. Per CLAUDE.md Rule Zero, we
+   * don't keep two competing pipelines for the same feature.
+   * Status creation happens EXCLUSIVELY through HomeScreen now.  */
 
   /* ─── Active checkins (user can have status + timer at same time) ─── */
   const [activeStatus, setActiveStatus] = useState<any>(null);
   const [activeTimer, setActiveTimer] = useState<any>(null);
   const activeCheckin = activeStatus || activeTimer; // backward compat: first non-null
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [checkinRefreshKey, setCheckinRefreshKey] = useState(0);
   const [showActivityInfo, setShowActivityInfo] = useState(false);
   const [showTripManager, setShowTripManager] = useState(false);
   const [tripMeta, setTripMeta] = useState<{ tripVibe: string | null; tripCompanion: string | null }>({ tripVibe: null, tripCompanion: null });
@@ -501,7 +507,12 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     fetchActiveCheckin();
-  }, [profileUserId, showStatusFlow, checkinRefreshKey]);
+    // useFocusEffect below also refetches whenever the screen is
+    // focused, so we don't need a separate trigger when the user
+    // creates a status (creation now lives in HomeScreen and the
+    // user is navigated back to it post-publish — focusing
+    // ProfileScreen later picks the new state up automatically).
+  }, [profileUserId, fetchActiveCheckin]);
 
   // Also refresh when the screen comes back into focus
   useFocusEffect(
@@ -510,100 +521,12 @@ export default function ProfileScreen() {
     }, [fetchActiveCheckin])
   );
 
-  const handlePublishActivity = async (data: ActivityData) => {
-    if (!myUserId || publishing) return;
-    setPublishing(true);
-    try {
-      // Expire only active STATUS checkins (keep timers alive)
-      const { error: updateErr } = await supabase
-        .from('app_checkins')
-        .update({ is_active: false })
-        .eq('user_id', myUserId)
-        .eq('is_active', true)
-        .eq('checkin_type', 'status');
-
-      if (updateErr) console.error('Error expiring old checkin:', updateErr);
-
-      // expires_at policy — same spec as HomeScreen.handleQuickPublish:
-      //   A) Specific time → expires_at = scheduled_for (exact).
-      //   B) Flexible time → expires_at = 23:59:59 of that date.
-      //   C) Immediate    → now + 60 min.
-      const isFutureScheduled = data.scheduledFor instanceof Date && data.scheduledFor.getTime() > Date.now();
-      let expiresAt: string;
-      if (isFutureScheduled) {
-        if (data.isFlexibleTime) {
-          const endOfDay = new Date(data.scheduledFor!);
-          endOfDay.setHours(23, 59, 59, 999);
-          expiresAt = endOfDay.toISOString();
-        } else {
-          expiresAt = data.scheduledFor!.toISOString();
-        }
-      } else {
-        expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-      }
-
-      // Insert new activity checkin — always public (user chose to post)
-      const { data: newCheckin, error: insertErr } = await supabase.from('app_checkins').insert({
-        user_id: myUserId,
-        city: profile?.current_city || 'Unknown',
-        checkin_type: 'status',
-        status_text: data.activityText,
-        status_emoji: data.emoji,
-        category: data.category,
-        activity_text: data.activityText,
-        location_name: data.locationName,
-        latitude: data.latitude,
-        longitude: data.longitude,
-        scheduled_for: data.scheduledFor?.toISOString() ?? null,
-        expires_at: expiresAt,
-        is_flexible_time: data.isFlexibleTime,
-        is_open: data.isOpen,
-        visibility: 'public',
-        is_active: true,
-        member_count: 1,
-        age_min: data.ageMin,
-        age_max: data.ageMax,
-      }).select('id').single();
-
-      if (insertErr) {
-        console.error('Error creating checkin:', insertErr);
-        return;
-      }
-
-      // Auto-create group chat with all activity metadata
-      const { conversationId } = await createOrJoinStatusChat(
-        myUserId,
-        myUserId,
-        data.activityText,
-        {
-          emoji: data.emoji,
-          category: data.category,
-          activityText: data.activityText,
-          locationName: data.locationName,
-          latitude: data.latitude,
-          longitude: data.longitude,
-          isGeneralArea: data.isGeneralArea,
-          scheduledFor: data.scheduledFor?.toISOString() ?? null,
-          isOpen: data.isOpen,
-          checkinId: newCheckin?.id || undefined,
-        },
-      );
-
-      // Refresh profile + active checkin, then navigate to Home with popup
-      setShowStatusFlow(false);
-      setTimeout(() => {
-        refetch();
-        setCheckinRefreshKey(k => k + 1); // force re-fetch active checkin
-        nav.navigate('Home' as any, {
-          newActivity: { text: data.activityText, emoji: data.emoji, category: data.category },
-        });
-      }, 200);
-    } catch (err) {
-      console.error('Unexpected error publishing activity:', err);
-    } finally {
-      setPublishing(false);
-    }
-  };
+  /* handlePublishActivity was the dead counterpart to
+   * <StatusCreationFlow/>. Creation logic now lives exclusively in
+   * HomeScreen.handleQuickPublish / handleTimerPublish, which use
+   * the shared lib/locationServices. Do not re-add a second insert
+   * path here — doing so would diverge again the first time we
+   * touch expires_at or the chat-creation payload. */
 
   // Derive display values
   const displayName = profile?.display_name || profile?.full_name || profile?.username || 'Nomad';
@@ -1400,15 +1323,8 @@ export default function ProfileScreen() {
         <View style={{ height: s(20) }} />
       </ScrollView>
 
-      {/* ═══ STATUS / ACTIVITY CREATION FLOW ═══ */}
-      <StatusCreationFlow
-        visible={showStatusFlow}
-        onClose={() => setShowStatusFlow(false)}
-        onPublish={handlePublishActivity}
-        userCity={profile?.current_city || 'Tel Aviv'}
-        cityLat={32.0853}
-        cityLng={34.7818}
-      />
+      {/* StatusCreationFlow block removed — see note near the
+           deleted state declarations above. */}
 
       {/* ═══ ACTIVITY INFO — full management sheet ═══ */}
       <Modal visible={showActivityInfo && !!editCheckin} transparent animationType="slide">
