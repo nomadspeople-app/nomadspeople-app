@@ -243,7 +243,12 @@ export default function PhotoViewerScreen() {
   const handleShare = useCallback(async (caption?: string | null) => {
     try {
       await Share.share({ message: caption ? `${caption} — NomadsPeople` : 'Check this out on NomadsPeople!' });
-    } catch {}
+    } catch (err) {
+      // Share.share rejects only on real failures; user cancel
+      // returns a clean object. Log so a broken share doesn't
+      // vanish silently.
+      console.warn('[PhotoViewerScreen] share failed:', err);
+    }
   }, []);
 
   // FlatList ref to scroll to the tapped photo

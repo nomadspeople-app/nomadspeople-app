@@ -1,7 +1,7 @@
 import { useState, useRef, useContext, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, Image, StyleSheet, TouchableOpacity, ScrollView, StatusBar,
-  Modal, Animated, TextInput, Keyboard, FlatList, Dimensions, Easing,
+  Modal, Animated, TextInput, Keyboard, FlatList, Dimensions, Easing, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -1774,7 +1774,14 @@ export default function HomeScreen() {
                     name: cityName, country, flag: '', lat, lng, active: 0,
                   });
                 }
-              } catch {}
+              } catch (err) {
+                // Non-fatal: the city label simply stays on its
+                // previous value. The map still pans to `lat,lng`.
+                // (This direct fetch to nominatim predates the
+                // lib/locationServices wrapper and should migrate
+                // to it — tracked separately.)
+                console.warn('[HomeScreen] reverse geocode for "my location" failed:', err);
+              }
             };
             if (userLat && userLng) {
               goToMyLocation(userLat, userLng);
@@ -1782,12 +1789,28 @@ export default function HomeScreen() {
               (async () => {
                 try {
                   const { status } = await Location.requestForegroundPermissionsAsync();
-                  if (status !== 'granted') return;
+                  if (status !== 'granted') {
+                    // Tell the user WHY nothing happened — silent
+                    // failure on a direct button tap is the worst
+                    // kind of UX. The message mirrors iOS/Android
+                    // native copy so it reads familiar.
+                    Alert.alert(
+                      'Location access needed',
+                      'Turn on location in your system settings to center the map on where you are.',
+                    );
+                    return;
+                  }
                   const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
                   setUserLat(pos.coords.latitude);
                   setUserLng(pos.coords.longitude);
                   goToMyLocation(pos.coords.latitude, pos.coords.longitude);
-                } catch {}
+                } catch (err) {
+                  console.warn('[HomeScreen] "my location" GPS fetch failed:', err);
+                  Alert.alert(
+                    'Could not find your location',
+                    'Check your internet and GPS, then try again.',
+                  );
+                }
               })();
             }
           }}

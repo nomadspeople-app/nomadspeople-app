@@ -800,7 +800,13 @@ export default function ProfileScreen() {
   const handleShare = useCallback(async (caption?: string | null) => {
     try {
       await Share.share({ message: caption ? `${caption} — NomadsPeople` : 'Check this out on NomadsPeople!' });
-    } catch {}
+    } catch (err) {
+      // Share.share rejects only on real failures (native-module
+      // error, etc.); user-cancellation returns a clean result
+      // object. A silent catch meant a genuinely broken share
+      // would vanish. Log it so we see regressions.
+      console.warn('[ProfileScreen] share failed:', err);
+    }
   }, []);
 
   const screenW = Dimensions.get('window').width;

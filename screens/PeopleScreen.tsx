@@ -201,7 +201,12 @@ export default function PeopleScreen() {
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
         setUserLat(pos.coords.latitude);
         setUserLng(pos.coords.longitude);
-      } catch {}
+      } catch (err) {
+        // Non-fatal: distance-to-other-people badges simply won't
+        // render. Log so we notice if it starts failing in
+        // production (e.g., after an expo-location version bump).
+        console.warn('[PeopleScreen] GPS fetch failed:', err);
+      }
     })();
   }, []);
 
