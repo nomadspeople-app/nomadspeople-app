@@ -48,7 +48,7 @@ import { detectCategories } from '../lib/categoryDetector';
 import { searchAddress as searchPhotonAddress, type GeoResult } from '../lib/locationServices';
 
 export type CreationKind = 'status' | 'timer';
-export type CreationStep = 'what' | 'when' | 'where' | 'who' | 'publish';
+export type CreationStep = 'what' | 'when' | 'where' | 'who' | 'publish' | 'success';
 
 /** The user's "when?" answer. Only two options — "today" is
  *  absorbed into "now" as a duration chip ("until end of day")
@@ -384,6 +384,11 @@ export default function CreationBubble({
     if (publishing) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     onPublish(derivePublishPayload());
+    // Show the in-bubble success confirmation for ~1.5 s so the
+    // creator gets the same "your post is live" feedback whether
+    // it's a timer or a scheduled event — one language, same flow.
+    setStep('success');
+    setTimeout(() => { onClose(); }, 1500);
   };
 
   const handleBack = () => {
@@ -559,6 +564,23 @@ export default function CreationBubble({
             </View>
           </TouchableOpacity>
         </View>
+
+        {/* Conflict banner — appears the moment the user selects
+            an option that clashes with something they already
+            have live. Same amber visual language as everywhere
+            else. One banner in one place; we do NOT repeat it at
+            PUBLISH. */}
+        {((whenChoice === 'now' && hasActiveTimer) ||
+          (whenChoice === 'later' && hasActiveScheduled)) && (
+          <View style={st.replaceBanner}>
+            <NomadIcon name="alert" size={s(6)} color="#B45309" strokeWidth={1.8} />
+            <Text style={st.replaceBannerText}>
+              {whenChoice === 'now'
+                ? t('creation.publish.replaceTimer')
+                : t('creation.publish.replaceScheduled')}
+            </Text>
+          </View>
+        )}
 
         {/* Inline day+hour picker — only while scheduling. */}
         {isLater && (
@@ -882,11 +904,9 @@ export default function CreationBubble({
 
   const renderPublish = () => {
     const isNow = whenChoice === 'now';
-    // Conflict detection — does the derived kind overlap with
-    // something the user already has live? If yes, publishing
-    // will expire the old and replace with the new. The banner
-    // tells them; the Publish button label confirms the action.
-    const willReplace = (isNow && hasActiveTimer) || (!isNow && hasActiveScheduled);
+    // Conflict was already surfaced on the WHEN step; we don't
+    // re-warn here. Publish button stays plain "publish" — one
+    // language, one flow, per product-owner directive.
     const whenSummary = isNow
       ? (durationMinutes === EOD_SENTINEL ? t('creation.who.allDay') : `${durationMinutes}m`)
       : (scheduledAt
@@ -908,18 +928,6 @@ export default function CreationBubble({
           <SummaryPill icon="users" text={`${ageMin}–${ageMax}`} colors={colors} />
         </View>
 
-        {/* One-active-per-type banner. Appears only when the
-            user's answer conflicts with something they already
-            have live. No second modal, no separate dialog. */}
-        {willReplace && (
-          <View style={st.replaceBanner}>
-            <NomadIcon name="alert" size={s(6)} color="#B45309" strokeWidth={1.8} />
-            <Text style={st.replaceBannerText}>
-              {isNow ? t('creation.publish.replaceTimer') : t('creation.publish.replaceScheduled')}
-            </Text>
-          </View>
-        )}
-
         <View style={st.rowCtaWrap}>
           <TouchableOpacity
             activeOpacity={0.7}
@@ -940,9 +948,7 @@ export default function CreationBubble({
             ) : (
               <>
                 <NomadIcon name="zap" size={s(6)} color="#fff" strokeWidth={1.8} />
-                <Text style={st.ctaText}>
-                  {willReplace ? t('creation.publish.replace') : t('creation.publish')}
-                </Text>
+                <Text style={st.ctaText}>{t('creation.publish')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -964,6 +970,27 @@ export default function CreationBubble({
       {step === 'where' && renderWhere()}
       {step === 'who' && renderWho()}
       {step === 'publish' && renderPublish()}
+      {step === 'success' && (
+        <View style={st.stepBody}>
+          <View style={st.successWrap}>
+            <View style={st.successCheck}>
+              <NomadIcon name="check" size={s(14)} color="#fff" strokeWidth={2.4} />
+            </View>
+            <Text style={st.successTitle}>
+              {whenChoice === 'now'
+                ? t('creation.success.timer')
+                : t('creation.success.scheduled')}
+            </Text>
+            <Text style={st.successSub}>
+              {whenChoice === 'now'
+                ? t('creation.success.timerSub')
+                : (scheduledAt
+                    ? scheduledAt.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+                    : t('creation.success.scheduledSub'))}
+            </Text>
+          </View>
+        </View>
+      )}
     </Bubble>
   );
 }
@@ -1161,6 +1188,42 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     lineHeight: 17,
     fontWeight: '600',
     color: '#78350F',
+  },
+
+  /* Success step — the in-bubble "your post is live" moment.
+     Shows for ~1.5 s after Publish then the bubble auto-closes.
+     Kept minimal: checkmark in a green circle, one-line title,
+     one-line sub. Same visual grammar as everywhere else. */
+  successWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  successCheck: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#10B981',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#10B981',
+    shadowOpacity: 0.35,
+    shadowOffset: { width: 0, height: 6 },
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  successTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'center',
+  },
+  successSub: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6B7280',
+    textAlign: 'center',
   },
   whatCtaSlot: {
     // Bottom-pinned fixed-height slot so Continue appearing /
