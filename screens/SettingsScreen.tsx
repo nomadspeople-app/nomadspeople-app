@@ -1,8 +1,13 @@
 import { useState, useContext, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch,
-  Alert, Linking, Modal, TextInput,
+  Alert, Linking, Modal, TextInput, LayoutAnimation, Platform, UIManager,
 } from 'react-native';
+
+// Enable LayoutAnimation on Android — iOS has it on by default.
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -136,9 +141,41 @@ export default function SettingsScreen() {
   const [socialLi, setSocialLi] = useState('');
   // Website moved to My Work section per product decision — no need to duplicate.
 
-  /* ─── Section Header ─── */
-  function SectionHeader({ title }: { title: string }) {
-    return <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>{title}</Text>;
+  /* ─── Accordion state ─── Only one section open at a time. Default null
+     (all collapsed) so the screen loads as a clean short list of titles. */
+  const [openSection, setOpenSection] = useState<string | null>(null);
+  const toggleSection = (key: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(
+      220, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity,
+    ));
+    setOpenSection((prev) => (prev === key ? null : key));
+  };
+
+  /* ─── Collapsible Section Header ───
+     Tappable row with title + chevron. When the matching `sectionKey`
+     is open, renders `children` below. Styled as a clean list item so
+     the page reads as a short inventory of settings categories when
+     everything is collapsed. */
+  function Section({ title, sectionKey, children }: { title: string; sectionKey: string; children: React.ReactNode }) {
+    const isOpen = openSection === sectionKey;
+    return (
+      <View>
+        <TouchableOpacity
+          style={[styles.sectionHeader, { backgroundColor: colors.card, borderBottomColor: colors.borderSoft }]}
+          activeOpacity={0.6}
+          onPress={() => toggleSection(sectionKey)}
+        >
+          <Text style={[styles.sectionHeaderTitle, { color: colors.dark }]}>{title}</Text>
+          <NomadIcon
+            name={isOpen ? 'minus' : 'plus'}
+            size={s(6)}
+            color={colors.textMuted}
+            strokeWidth={1.8}
+          />
+        </TouchableOpacity>
+        {isOpen && <View style={styles.sectionBody}>{children}</View>}
+      </View>
+    );
   }
 
   /* ─── Row with icon + label + right element ─── */
@@ -755,8 +792,8 @@ export default function SettingsScreen() {
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
 
         {/* ═══ YOUR DNA ═══ */}
-        <SectionHeader title={t('settings.yourDna')} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title={t('settings.yourDna')} sectionKey="dna">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           {editingUsername ? (
             <View style={styles.usernameEditRow}>
               <Text style={[styles.usernameAt, { color: colors.textMuted }]}>@</Text>
@@ -825,10 +862,11 @@ export default function SettingsScreen() {
             onPress={() => setShowDNAEditor(true)}
           />
         </View>
+        </Section>
 
         {/* ═══ YOUR SOCIAL LINKS ═══ */}
-        <SectionHeader title="your links" />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title="your links" sectionKey="links">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="link"
             label="social & website"
@@ -836,13 +874,14 @@ export default function SettingsScreen() {
             onPress={openSocialLinks}
           />
         </View>
+        </Section>
 
         {/* ═══ VISIBILITY ═══ */}
         {/* Show-on-map row removed for v1.0 — see screens/SettingsScreen.removed.tsx.
             Snooze mode below is the single user-facing visibility toggle;
             handleToggleSnooze syncs show_on_map internally. */}
-        <SectionHeader title="visibility" />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title="visibility" sectionKey="visibility">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="moon-stars"
             label="Snooze mode"
@@ -901,10 +940,11 @@ export default function SettingsScreen() {
             onPress={() => Alert.alert('Blocked Users', 'No blocked users yet.')}
           />
         </View>
+        </Section>
 
         {/* ═══ APPEARANCE ═══ */}
-        <SectionHeader title={t('settings.appearance')} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title={t('settings.appearance')} sectionKey="appearance">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="moon-stars"
             label={t('settings.darkMode')}
@@ -941,10 +981,11 @@ export default function SettingsScreen() {
             }
           />
         </View>
+        </Section>
 
         {/* ═══ LANGUAGE ═══ */}
-        <SectionHeader title={t('settings.language')} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title={t('settings.language')} sectionKey="language">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="globe"
             label={t('settings.appLanguage')}
@@ -952,10 +993,11 @@ export default function SettingsScreen() {
             onPress={() => setShowLangPicker(true)}
           />
         </View>
+        </Section>
 
         {/* ═══ ACTIVITY NOTIFICATIONS ═══ */}
-        <SectionHeader title={t('settings.notifications')} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title={t('settings.notifications')} sectionKey="notifications">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="bell"
             label={t('settings.notifyNearby')}
@@ -1019,10 +1061,11 @@ export default function SettingsScreen() {
           />
           {/* "DNA matches" notification removed for v1.0 — see SettingsScreen.removed.tsx */}
         </View>
+        </Section>
 
         {/* ═══ SOCIAL ═══ */}
-        <SectionHeader title={t('settings.social')} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title={t('settings.social')} sectionKey="social">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="camera"
             iconColor="#E4405F"
@@ -1036,10 +1079,11 @@ export default function SettingsScreen() {
             onPress={() => Linking.openURL('https://tiktok.com/@nomadspeople')}
           />
         </View>
+        </Section>
 
         {/* ═══ FEEDBACK ═══ */}
-        <SectionHeader title={t('settings.feedback')} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title={t('settings.feedback')} sectionKey="feedback">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="chat"
             label={t('settings.messageFounder')}
@@ -1052,10 +1096,11 @@ export default function SettingsScreen() {
             onPress={() => Linking.openURL('https://apps.apple.com/app/nomadspeople')}
           />
         </View>
+        </Section>
 
         {/* ═══ SUPPORT ═══ */}
-        <SectionHeader title="support" />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title="support" sectionKey="support">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="alert"
             iconColor="#F59E0B"
@@ -1064,10 +1109,11 @@ export default function SettingsScreen() {
             onPress={() => Linking.openURL('mailto:nomadspeople1@gmail.com?subject=NomadsPeople Bug Report')}
           />
         </View>
+        </Section>
 
         {/* ═══ LEGAL ═══ */}
-        <SectionHeader title={t('settings.legal')} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title={t('settings.legal')} sectionKey="legal">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="shield"
             label="Legal & Safety"
@@ -1075,38 +1121,18 @@ export default function SettingsScreen() {
             onPress={() => nav.navigate('Legal', { type: 'terms' })}
           />
         </View>
+        </Section>
 
-        {/* ═══ DEV MODE ═══ */}
-        <SectionHeader title={t('settings.devMode')} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
-          {switchDevUser && (
-            <>
-              <SettingsRow
-                icon="users"
-                iconColor={colors.accent}
-                label={`Switch User (now: ${devUserLabel})`}
-                sublabel="Toggle between test accounts"
-                onPress={switchDevUser}
-              />
-              <View style={styles.divider} />
-            </>
-          )}
-          <SettingsRow
-            icon="refresh"
-            iconColor="#FF9500"
-            label={t('settings.resetTest')}
-            sublabel={t('settings.resetTestSub')}
-            onPress={handleResetAndTest}
-          />
-        </View>
+        {/* DEV MODE section removed 2026-04-20 — DEV_MODE flag retired. */}
 
         {/* ═══ ACCOUNT ═══ */}
-        <SectionHeader title={t('settings.account')} />
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+        <Section title={t('settings.account')} sectionKey="account">
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow icon="logout" label={t('settings.logout')} danger onPress={handleLogout} />
           <View style={styles.divider} />
           <SettingsRow icon="trash" label={t('settings.deleteAccount')} danger onPress={handleDeleteAccount} />
         </View>
+        </Section>
 
         {/* ─── Footer ─── */}
         <View style={styles.footer}>
@@ -1238,6 +1264,29 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     fontSize: s(5.5), fontWeight: FW.bold, color: c.textMuted, letterSpacing: 0.5,
     textTransform: 'uppercase',
     paddingHorizontal: s(12), paddingTop: s(10), paddingBottom: s(4),
+  },
+
+  /* Collapsible section header — tappable row with title + plus/minus
+     icon. When all sections are closed, the screen reads as a clean
+     short list of categories — no heavy cards competing for attention. */
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: s(10),
+    paddingVertical: s(6),
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: c.borderSoft,
+  },
+  sectionHeaderTitle: {
+    fontSize: s(7),
+    fontWeight: FW.semi,
+    color: c.dark,
+    textTransform: 'lowercase',
+  },
+  sectionBody: {
+    paddingTop: s(3),
+    paddingBottom: s(4),
   },
 
   card: {
