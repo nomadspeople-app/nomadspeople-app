@@ -11,6 +11,43 @@ interface Props {
   onSuccess: () => void;
 }
 
+/** Turn a Supabase auth error into a single short human sentence.
+ *  The Supabase SDK sometimes stuffs the entire non-JSON response body
+ *  (Cloudflare 522/503 HTML, etc.) into `.message`, which would render
+ *  as a wall of JSON on our form. This maps the common cases to clean
+ *  copy and swallows everything else into a generic retry message. */
+function friendlyAuthError(err: any): string {
+  // Pull what we can from the object without trusting any single field.
+  const raw = typeof err === 'string' ? err : (err?.message || '');
+  const status: number | undefined = err?.status;
+  const text = String(raw).toLowerCase();
+
+  // Cloudflare / gateway / any 5xx → server-side hiccup, come back later.
+  if (
+    status === 522 || status === 523 || status === 524 ||
+    status === 502 || status === 503 || status === 504 ||
+    text.includes('cloudflare') || text.includes('timeout') ||
+    text.includes('gateway') || text.includes('<html') || text.startsWith('{')
+  ) {
+    return 'Server is busy right now. Please try again in a minute.';
+  }
+  // Explicit bad-credential messages Supabase returns
+  if (text.includes('invalid login') || text.includes('invalid credentials')) {
+    return 'Wrong email or password.';
+  }
+  if (text.includes('email not confirmed')) {
+    return 'Please confirm your email before signing in.';
+  }
+  if (text.includes('user already registered')) {
+    return 'This email already has an account. Try logging in instead.';
+  }
+  if (text.includes('network') || text.includes('failed to fetch') || text.includes('abort')) {
+    return 'No connection. Check your internet and try again.';
+  }
+  // Anything else — a short, safe default. Never leak raw error objects.
+  return 'Something went wrong. Please try again.';
+}
+
 export default function AuthScreen({ onSuccess }: Props) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -39,56 +76,68 @@ export default function AuthScreen({ onSuccess }: Props) {
 
     setLoading(true);
 
-    if (mode === 'signup') {
-      const { data, error: signUpErr } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
-        password,
-        options: {
-          data: { full_name: fullName.trim() },
-        },
-      });
+    // The outer try/catch handles thrown exceptions from the Supabase SDK
+    // (happens when the auth endpoint returns HTML / 522 — the SDK can
+    // throw instead of returning a clean { error } object). Either way,
+    // we route the message through friendlyAuthError so the form NEVER
+    // renders a raw JSON dump.
+    try {
+      if (mode === 'signup') {
+        const { data, error: signUpErr } = await supabase.auth.signUp({
+          email: email.trim().toLowerCase(),
+          password,
+          options: {
+            data: { full_name: fullName.trim() },
+          },
+        });
 
-      if (signUpErr) {
-        setError(signUpErr.message);
-        setLoading(false);
-        return;
-      }
-
-      // Create profile in app_profiles
-      if (data.user) {
-        const { error: profileErr } = await supabase
-          .from('app_profiles')
-          .insert({
-            user_id: data.user.id,
-            full_name: fullName.trim(),
-            username: email.trim().split('@')[0],
-            onboarding_done: false,
-            show_on_map: true,
-            creator_tag: false,
-            is_premium: false,
-            visibility: 'public',
-          });
-
-        if (profileErr) {
-          console.warn('[Auth] Profile creation error:', profileErr.message);
+        if (signUpErr) {
+          setError(friendlyAuthError(signUpErr));
+          setLoading(false);
+          return;
         }
+
+        // Create profile in app_profiles
+        if (data.user) {
+          const { error: profileErr } = await supabase
+            .from('app_profiles')
+            .insert({
+              user_id: data.user.id,
+              full_name: fullName.trim(),
+              username: email.trim().split('@')[0],
+              onboarding_done: false,
+              show_on_map: true,
+              creator_tag: false,
+              is_premium: false,
+              visibility: 'public',
+            });
+
+          if (profileErr) {
+            console.warn('[Auth] Profile creation error:', profileErr.message);
+          }
+        }
+
+        onSuccess();
+      } else {
+        // Login
+        const { error: signInErr } = await supabase.auth.signInWithPassword({
+          email: email.trim().toLowerCase(),
+          password,
+        });
+
+        if (signInErr) {
+          setError(friendlyAuthError(signInErr));
+          setLoading(false);
+          return;
+        }
+
+        onSuccess();
       }
-
-      onSuccess();
-    } else {
-      // Login
-      const { data, error: signInErr } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
-        password,
-      });
-
-      if (signInErr) {
-        setError(signInErr.message);
-        setLoading(false);
-        return;
-      }
-
-      onSuccess();
+    } catch (ex) {
+      // Supabase SDK threw (usually on 5xx HTML bodies it can't parse).
+      // Log for debugging, show the user a clean retry message.
+      console.warn('[Auth] submit threw:', ex);
+      setError(friendlyAuthError(ex));
     }
 
     setLoading(false);
