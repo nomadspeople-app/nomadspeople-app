@@ -154,6 +154,15 @@ const CATEGORY_EMOJI: Record<string, string> = {
 const EOD_SENTINEL = -1;
 const DURATION_PRESETS: number[] = [30, 60, 120, 240, EOD_SENTINEL];
 
+/* Unified "selected" palette — used across every chip / row /
+ * picker option in the CreationBubble. Soft pale-green fill +
+ * medium-green border so a selection feels like a check-mark,
+ * not a loud brand shout. Applied consistently per product-
+ * owner directive ("ברגע שבחרת שיהיה ירוק ממש עדין"). */
+const SELECTED_BG = '#ECFDF5';   // very pale green fill
+const SELECTED_BORDER = '#86EFAC'; // soft green border
+const SELECTED_TEXT = '#047857';   // dark green for text on the fill
+
 export default function CreationBubble({
   visible, userName, sessionKey, userAvatarUrl, userFallback, userFallbackColor,
   seedLat, seedLng, seedAddress, cityName, publishing,
@@ -522,11 +531,11 @@ export default function CreationBubble({
               activeOpacity={0.8}
               style={[
                 st.whenRow,
-                { borderColor: colors.primary, backgroundColor: colors.card, borderWidth: 1.5 },
+                { borderColor: SELECTED_BORDER, backgroundColor: SELECTED_BG, borderWidth: 1.5 },
               ]}
             >
-              <View style={[st.whenRadio, { borderColor: colors.primary }]}>
-                <View style={[st.whenRadioDot, { backgroundColor: colors.primary }]} />
+              <View style={[st.whenRadio, { borderColor: SELECTED_BORDER }]}>
+                <View style={[st.whenRadioDot, { backgroundColor: SELECTED_BORDER }]} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[st.whenRowLabel, { color: colors.dark }]}>{t('creation.when.now')}</Text>
@@ -549,14 +558,14 @@ export default function CreationBubble({
             style={[
               st.whenRow,
               {
-                borderColor: isLater ? colors.primary : colors.borderSoft,
-                backgroundColor: colors.card,
+                borderColor: isLater ? SELECTED_BORDER : colors.borderSoft,
+                backgroundColor: isLater ? SELECTED_BG : colors.card,
                 borderWidth: isLater ? 1.5 : 0.5,
               },
             ]}
           >
-            <View style={[st.whenRadio, { borderColor: isLater ? colors.primary : colors.borderSoft }]}>
-              {isLater && <View style={[st.whenRadioDot, { backgroundColor: colors.primary }]} />}
+            <View style={[st.whenRadio, { borderColor: isLater ? SELECTED_BORDER : colors.borderSoft }]}>
+              {isLater && <View style={[st.whenRadioDot, { backgroundColor: SELECTED_BORDER }]} />}
             </View>
             <View style={{ flex: 1 }}>
               <Text style={[st.whenRowLabel, { color: colors.dark }]}>{t('creation.when.later')}</Text>
@@ -594,11 +603,11 @@ export default function CreationBubble({
                     onPress={() => setDay(d.date)}
                     style={[
                       st.scheduleChip,
-                      active && { backgroundColor: colors.primary, borderColor: colors.primary },
+                      active && { backgroundColor: SELECTED_BG, borderColor: SELECTED_BORDER },
                     ]}
                     activeOpacity={0.8}
                   >
-                    <Text style={[st.scheduleChipText, { color: active ? '#fff' : colors.dark }]}>
+                    <Text style={[st.scheduleChipText, { color: active ? SELECTED_TEXT : colors.dark }]}>
                       {i === 0 ? t('creation.when.tomorrow') : d.label}
                     </Text>
                     <Text style={[st.scheduleChipSub, { color: active ? '#fff' : colors.textMuted }]}>
@@ -626,11 +635,11 @@ export default function CreationBubble({
                     onPress={() => setHour(h)}
                     style={[
                       st.scheduleHourChip,
-                      active && { backgroundColor: colors.primary, borderColor: colors.primary },
+                      active && { backgroundColor: SELECTED_BG, borderColor: SELECTED_BORDER },
                     ]}
                     activeOpacity={0.8}
                   >
-                    <Text style={[st.scheduleChipText, { color: active ? '#fff' : colors.dark }]}>
+                    <Text style={[st.scheduleChipText, { color: active ? SELECTED_TEXT : colors.dark }]}>
                       {`${h < 10 ? '0' : ''}${h}`}
                     </Text>
                   </TouchableOpacity>
@@ -821,7 +830,7 @@ export default function CreationBubble({
                 >
                   <Text style={[
                     st.chipCompactText,
-                    { color: active ? '#fff' : colors.dark },
+                    { color: active ? SELECTED_TEXT : colors.dark },
                   ]}>
                     {label}
                   </Text>
@@ -836,19 +845,19 @@ export default function CreationBubble({
           <View style={st.chipWrap}>
             <TouchableOpacity
               onPress={() => { Haptics.selectionAsync().catch(() => {}); setIsOpen(true); }}
-              style={[st.chip, isOpen && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+              style={[st.chip, isOpen && { backgroundColor: SELECTED_BG, borderColor: SELECTED_BORDER }]}
               activeOpacity={0.8}
             >
-              <Text style={[st.chipText, { color: isOpen ? '#fff' : colors.dark }]}>
+              <Text style={[st.chipText, { color: isOpen ? SELECTED_TEXT : colors.dark }]}>
                 {t('creation.who.openAll')}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => { Haptics.selectionAsync().catch(() => {}); setIsOpen(false); }}
-              style={[st.chip, !isOpen && { backgroundColor: colors.primary, borderColor: colors.primary }]}
+              style={[st.chip, !isOpen && { backgroundColor: SELECTED_BG, borderColor: SELECTED_BORDER }]}
               activeOpacity={0.8}
             >
-              <Text style={[st.chipText, { color: !isOpen ? '#fff' : colors.dark }]}>
+              <Text style={[st.chipText, { color: !isOpen ? SELECTED_TEXT : colors.dark }]}>
                 {t('creation.who.private')}
               </Text>
             </TouchableOpacity>
