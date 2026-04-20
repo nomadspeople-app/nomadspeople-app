@@ -14,9 +14,14 @@ import * as FileSystem from 'expo-file-system';
 import { Linking, Platform, Share, Alert } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 
-/* ─── Capture EventShareCard to image file ─── */
+/* ─── Capture EventShareCard to image file ───
+ *
+ * Ref shape matches React's useRef<ViewShot>(null) default — the
+ * initial value is null until the ViewShot component mounts, so
+ * the type must allow null. Tightening this to `RefObject<ViewShot>`
+ * (non-null) is wrong and was the source of a stale tsc error. */
 export async function captureCard(
-  viewShotRef: React.RefObject<ViewShot>
+  viewShotRef: React.RefObject<ViewShot | null>
 ): Promise<string | null> {
   try {
     if (!viewShotRef.current) {
@@ -69,9 +74,11 @@ export async function shareToInstagramStory(imageUri: string): Promise<boolean> 
 /* ─── iOS: Use pasteboard to pass image to Instagram Stories ─── */
 async function shareToInstagramStoryIOS(imageUri: string): Promise<boolean> {
   try {
-    // Read the image file as base64
+    // Read the image file as base64. Newer expo-file-system dropped
+    // the `EncodingType` re-export — the string literal 'base64' is
+    // the documented value and works across versions.
     const base64Data = await FileSystem.readAsStringAsync(imageUri, {
-      encoding: FileSystem.EncodingType.Base64,
+      encoding: 'base64',
     });
 
     // Copy to pasteboard

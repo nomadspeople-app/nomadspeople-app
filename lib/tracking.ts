@@ -17,8 +17,11 @@ export type TrackAction =
   | 'view_checkin'        // Tapped on a checkin/activity card
   | 'join_group'          // Joined a group activity
   | 'leave_group'         // Left a group activity
+  | 'join_timer'          // Tapped "Join" inside a TimerBubble
+  | 'join_event'          // Joined a status/event
   | 'send_message'        // Sent a chat message
   | 'create_status'       // Published a status
+  | 'create_event'        // Created an event
   | 'create_timer'        // Started a timer
   | 'follow_user'         // Followed someone
   | 'unfollow_user'       // Unfollowed someone
@@ -29,10 +32,10 @@ export type TrackAction =
   | 'open_chat'           // Opened a conversation
   | 'block_user'          // Blocked someone
   | 'share_profile'       // Shared a profile
+  | 'share_event'         // Shared an event from the activity sheet
+  | 'share_story'         // Shared an event as a story image
   | 'add_travel_place'    // Added a place to flight strip
   | 'update_profile'      // Updated own profile
-  | 'create_event'        // Created an event
-  | 'join_event'          // Joined an event
   | 'app_open'            // Opened the app
   | 'onboarding_complete'; // Completed onboarding
 

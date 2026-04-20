@@ -60,6 +60,10 @@ interface MemberRow {
   role: string;
   rsvp: string;
   profile: {
+    /** User's chosen display name — preferred over full_name in
+     *  UI per the "display_name over full_name" rule (stale
+     *  'Deleted User' defaults live in full_name). */
+    display_name: string | null;
     full_name: string | null;
     username: string | null;
     avatar_url: string | null;
@@ -526,7 +530,7 @@ export default function GroupInfoScreen() {
               const isCreator = m.user_id === group?.created_by || m.role === 'admin';
               const name = m.profile?.display_name || m.profile?.full_name || m.profile?.username || 'Nomad';
               const avatarUrl = m.profile?.avatar_url || null;
-              const ini = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+              const ini = name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase();
 
               return (
                 <TouchableOpacity

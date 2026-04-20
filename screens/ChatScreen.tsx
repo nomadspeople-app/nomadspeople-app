@@ -159,14 +159,18 @@ export default function ChatScreen() {
         const asset = result.assets[0];
         const fileName = `chat/${conversationId}/${Date.now()}.jpg`;
 
-        // Upload to Supabase storage
+        // Upload to Supabase storage.
+        // React Native supports passing a { uri, type, name } object
+        // as the body, which the JS SDK types don't know about
+        // (they expect Blob/FormData). Cast to any so the runtime
+        // path works while the type noise stays quiet.
         const { data, error: uploadError } = await supabase.storage
           .from('post-images')
           .upload(fileName, {
             uri: asset.uri,
             type: 'image/jpeg',
             name: fileName,
-          });
+          } as any);
 
         if (uploadError) {
           Alert.alert('Upload failed', uploadError.message);

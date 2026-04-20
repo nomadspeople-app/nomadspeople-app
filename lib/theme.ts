@@ -128,6 +128,7 @@ export const TAB_BAR_HEIGHT = 56;
 
 /* ─── Font weights ─── */
 export const FW = {
+  light:   '300' as const,
   regular: '400' as const,
   medium:  '500' as const,
   semi:    '600' as const,

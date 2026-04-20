@@ -1871,14 +1871,17 @@ export default function HomeScreen() {
       />
       {/* CityPickerSheet removed — replaced by inline search */}
 
-      {/* ── Nomads List Sheet ── */}
+      {/* ── Nomads List Sheet ──
+           nearbyIds + bubbleTop used to be passed here but the
+           component never consumed them — the sheet computes its
+           own layout and shows everyone in the city. Removed to
+           silence TS errors that were masking the unused-prop
+           drift. */}
       <NomadsListSheet
         visible={showNomadsList}
         onClose={() => setShowNomadsList(false)}
         nomads={nomadsInCity}
-        nearbyIds={visibleNomadIds}
         cityName={currentCity.name}
-        bubbleTop={cityTop}
         onViewProfile={(uid, name) => {
           setShowNomadsList(false);
           setTimeout(() => nav.navigate('UserProfile', { userId: uid, name }), 200);

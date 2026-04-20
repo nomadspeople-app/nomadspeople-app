@@ -75,9 +75,14 @@ interface Props {
   creatorName: string;
   creatorAvatarUrl?: string | null;
   onClose: () => void;
+  /** Optional pre-join gate. If provided, the sheet calls it with
+   *  the current checkin and a `doJoin` callback instead of joining
+   *  directly. Home uses this to show the wisdom prompt before a
+   *  visitor actually enters a status. */
+  onBeforeJoin?: (checkin: AppCheckin, doJoin: () => void) => void;
 }
 
-export default function ActivityDetailSheet({ visible, checkin, creatorName, creatorAvatarUrl, onClose }: Props) {
+export default function ActivityDetailSheet({ visible, checkin, creatorName, creatorAvatarUrl, onClose, onBeforeJoin }: Props) {
   const { colors } = useTheme();
   const st = useMemo(() => makeStyles(colors), [colors]);
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -187,7 +192,11 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
     trackEvent(userId || '', 'share_event', 'checkin', checkin.id);
   }, [checkin, userId]);
 
-  const handleJoin = useCallback(async () => {
+  /** The actual join flow — inserted/updated in Supabase, then
+   *  the sheet flips to "joined" or "pending approval". Split out
+   *  so callers can gate it (onBeforeJoin) without forking the
+   *  DB logic. */
+  const performJoin = useCallback(async () => {
     if (!checkin || !userId || joining) return;
     setJoining(true);
 
@@ -225,6 +234,18 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
     }
     setJoining(false);
   }, [checkin, userId, joining]);
+
+  /** Public entry point. If the parent provided an onBeforeJoin
+   *  gate (e.g. the wisdom prompt on HomeScreen), route through
+   *  it; otherwise join immediately. */
+  const handleJoin = useCallback(async () => {
+    if (!checkin || !userId || joining) return;
+    if (onBeforeJoin) {
+      onBeforeJoin(checkin, performJoin);
+      return;
+    }
+    performJoin();
+  }, [checkin, userId, joining, onBeforeJoin, performJoin]);
 
   const handleChat = useCallback(() => {
     if (!conversationId || !checkin) return;

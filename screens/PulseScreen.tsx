@@ -171,7 +171,11 @@ function SwipeableConvRow({
   const handleMute = () => {
     Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
     onMute(conv.id);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Light).catch(() => {});
+    // expo-haptics has no NotificationFeedbackType.Light — the
+    // three valid types are Success / Warning / Error. A "mute"
+    // feels more like a subtle selection tick than a hard
+    // success, so we use selectionAsync() instead.
+    Haptics.selectionAsync().catch(() => {});
   };
 
   const handleLeave = () => {
