@@ -50,12 +50,14 @@ import { searchAddress as searchPhotonAddress, type GeoResult } from '../lib/loc
 export type CreationKind = 'status' | 'timer';
 export type CreationStep = 'what' | 'when' | 'where' | 'who' | 'publish';
 
-/** The user's "when?" answer — decides the server-side kind (timer
- *  vs status) and the expires_at math:
- *    - 'now'   → timer,   expires_at = now + durationMinutes
- *    - 'today' → status, flexible, expires_at = today 23:59
+/** The user's "when?" answer. Only two options — "today" is
+ *  absorbed into "now" as a duration chip ("until end of day")
+ *  so the user doesn't have to guess the difference between
+ *  "now" and "today". One decision: happening now, or
+ *  scheduled for later.
+ *    - 'now'   → timer, expires_at = now + durationMinutes
  *    - 'later' → status, scheduled at pickedDate/Time */
-export type WhenChoice = 'now' | 'today' | 'later';
+export type WhenChoice = 'now' | 'later';
 
 /** Data emitted when the user hits Publish — identical shape to
  *  what QuickStatusSheet / TimerSheet used to emit, so the parent's
@@ -134,10 +136,13 @@ const CATEGORY_EMOJI: Record<string, string> = {
   beach: '🏖', sport: '🏃', bar: '🍺', other: '✨',
 };
 
-// Duration presets for the Timer flow — start at 30 min (15 min
-// is too short to be useful for a "I'm at X for a while" signal)
-// and top out at 120. Five options, all fit in one row.
-const DURATION_PRESETS = [30, 45, 60, 90, 120];
+// Duration presets for the Timer flow. -1 is the "all day"
+// sentinel — at publish time it becomes the number of minutes
+// until today's 23:59, so the checkin's expires_at lands
+// exactly at end of day. Four fixed intervals + "all day" fit
+// in a single chip row on every phone width we target.
+const EOD_SENTINEL = -1;
+const DURATION_PRESETS: number[] = [30, 60, 120, 240, EOD_SENTINEL];
 
 export default function CreationBubble({
   visible, userName, sessionKey, userAvatarUrl, userFallback, userFallbackColor,
@@ -318,20 +323,30 @@ export default function CreationBubble({
 
   /** Map the user's WHEN answer to the server-side shape. Timer vs
    *  status is derived, not pre-selected — the user never has to
-   *  know the distinction exists. */
+   *  know the distinction exists.
+   *
+   *  Timer (today) math:
+   *    - normal duration   → expires_at = now + durationMinutes
+   *    - "all day" (-1)    → expires_at = today 23:59 (captured
+   *                          as `allDayDurationMinutes` below) */
   const derivePublishPayload = (): CreationPayload => {
     let derivedKind: CreationKind;
     let derivedScheduledFor: Date | null;
+    let effectiveDuration = durationMinutes;
+
     if (whenChoice === 'now') {
       derivedKind = 'timer';
       derivedScheduledFor = null;
-    } else if (whenChoice === 'today') {
-      derivedKind = 'status';
-      // End-of-day — flexible window, no specific hour.
-      const eod = new Date();
-      eod.setHours(23, 59, 59, 999);
-      derivedScheduledFor = eod;
+      if (durationMinutes === EOD_SENTINEL) {
+        // "All day" — compute minutes until today's 23:59 so the
+        // checkin naturally expires at end-of-day.
+        const now = new Date();
+        const eod = new Date(now);
+        eod.setHours(23, 59, 0, 0);
+        effectiveDuration = Math.max(30, Math.floor((eod.getTime() - now.getTime()) / 60000));
+      }
     } else {
+      // "later" — always a scheduled status for tomorrow+.
       derivedKind = 'status';
       derivedScheduledFor = scheduledAt;
     }
@@ -345,7 +360,7 @@ export default function CreationBubble({
       longitude: lng,
       ageMin, ageMax,
       isOpen,
-      durationMinutes,
+      durationMinutes: effectiveDuration,
       scheduledFor: derivedScheduledFor,
     };
   };
@@ -411,49 +426,172 @@ export default function CreationBubble({
     </View>
   );
 
-  /* ═══ WHEN — the choice that drives timer vs. status ═══
+  /* ═══ WHEN — now or later. Two options, not three. ═══
    *
-   * Three chips. User picks one, Continue advances. "Later" also
-   * reveals a compact picker for the specific time; until a valid
-   * time is set the Continue button stays disabled. */
+   * When "later" is selected, an inline day+hour picker appears
+   * right under it. The "now" row collapses away so the picker
+   * has room to breathe inside the 280-tall template. Picking
+   * both a day AND an hour enables Continue. */
   const renderWhen = () => {
-    const chips: { key: WhenChoice; label: string; sub: string }[] = [
-      { key: 'now',   label: t('creation.when.now'),   sub: t('creation.when.nowSub') },
-      { key: 'today', label: t('creation.when.today'), sub: t('creation.when.todaySub') },
-      { key: 'later', label: t('creation.when.later'), sub: t('creation.when.laterSub') },
-    ];
+    // Build five relative day chips starting tomorrow — covers
+    // "this week" planning without needing a full calendar.
+    const dayOptions: { date: Date; label: string; short: string }[] = [];
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    for (let i = 1; i <= 5; i++) {
+      const d = new Date(base);
+      d.setDate(d.getDate() + i);
+      const weekday = d.toLocaleDateString([], { weekday: 'short' });
+      dayOptions.push({
+        date: d,
+        label: weekday,
+        short: i === 1 ? t('creation.when.tomorrow') : `${weekday} ${d.getDate()}`,
+      });
+    }
+    // Hour chips — five common social hours.
+    const hourOptions = [9, 12, 15, 18, 21];
+
+    // Extract currently-chosen day (0-indexed in dayOptions) and
+    // hour from `scheduledAt` so the picker reflects state.
+    const pickedDayIdx = scheduledAt
+      ? dayOptions.findIndex(d => d.date.toDateString() === new Date(scheduledAt).toDateString())
+      : -1;
+    const pickedHour = scheduledAt ? new Date(scheduledAt).getHours() : -1;
+
+    const setDay = (d: Date) => {
+      const next = new Date(scheduledAt || new Date());
+      next.setFullYear(d.getFullYear(), d.getMonth(), d.getDate());
+      // If no hour was set yet, default to 18:00 — reasonable
+      // "meet up later today/tomorrow" default.
+      if (!scheduledAt) next.setHours(18, 0, 0, 0);
+      next.setSeconds(0, 0);
+      setScheduledAt(next);
+      Haptics.selectionAsync().catch(() => {});
+    };
+    const setHour = (h: number) => {
+      const next = new Date(scheduledAt || new Date());
+      // If no day chosen yet, default to tomorrow.
+      if (!scheduledAt) {
+        next.setTime(dayOptions[0].date.getTime());
+      }
+      next.setHours(h, 0, 0, 0);
+      setScheduledAt(next);
+      Haptics.selectionAsync().catch(() => {});
+    };
+
+    const isLater = whenChoice === 'later';
+    const canContinue = whenChoice === 'now' || (isLater && !!scheduledAt && pickedDayIdx >= 0);
+
     return (
       <View style={st.stepBody}>
-        <Text style={st.stepEcho} numberOfLines={1}>"{text.trim()}"</Text>
         <Text style={st.stepLabel}>{t('creation.when.label')}</Text>
+
         <View style={st.whenList}>
-          {chips.map((c) => {
-            const active = whenChoice === c.key;
-            return (
-              <TouchableOpacity
-                key={c.key}
-                onPress={() => {
-                  Haptics.selectionAsync().catch(() => {});
-                  setWhenChoice(c.key);
-                }}
-                activeOpacity={0.8}
-                style={[
-                  st.whenRow,
-                  { borderColor: active ? colors.primary : colors.borderSoft, backgroundColor: colors.card },
-                  active && { borderWidth: 1.5 },
-                ]}
-              >
-                <View style={[st.whenRadio, { borderColor: active ? colors.primary : colors.borderSoft }]}>
-                  {active && <View style={[st.whenRadioDot, { backgroundColor: colors.primary }]} />}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[st.whenRowLabel, { color: colors.dark }]}>{c.label}</Text>
-                  <Text style={[st.whenRowSub, { color: colors.textMuted }]}>{c.sub}</Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
+          {/* NOW row — hidden when "later" is active so the picker
+              has room. Tapping the "later" row again OR using the
+              Back button is how the user gets back to "now". */}
+          {!isLater && (
+            <TouchableOpacity
+              onPress={() => { Haptics.selectionAsync().catch(() => {}); setWhenChoice('now'); }}
+              activeOpacity={0.8}
+              style={[
+                st.whenRow,
+                { borderColor: colors.primary, backgroundColor: colors.card, borderWidth: 1.5 },
+              ]}
+            >
+              <View style={[st.whenRadio, { borderColor: colors.primary }]}>
+                <View style={[st.whenRadioDot, { backgroundColor: colors.primary }]} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[st.whenRowLabel, { color: colors.dark }]}>{t('creation.when.now')}</Text>
+                <Text style={[st.whenRowSub, { color: colors.textMuted }]}>{t('creation.when.nowSub')}</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {/* LATER row — always visible. Tapping toggles to
+              scheduling mode and reveals the day/hour picker. */}
+          <TouchableOpacity
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => {});
+              setWhenChoice(isLater ? 'now' : 'later');
+              if (!isLater && !scheduledAt) {
+                // Pre-seed with tomorrow 18:00 so Continue can
+                // enable immediately — user can still change
+                // before advancing.
+                const seed = new Date(dayOptions[0].date);
+                seed.setHours(18, 0, 0, 0);
+                setScheduledAt(seed);
+              }
+            }}
+            activeOpacity={0.8}
+            style={[
+              st.whenRow,
+              {
+                borderColor: isLater ? colors.primary : colors.borderSoft,
+                backgroundColor: colors.card,
+                borderWidth: isLater ? 1.5 : 0.5,
+              },
+            ]}
+          >
+            <View style={[st.whenRadio, { borderColor: isLater ? colors.primary : colors.borderSoft }]}>
+              {isLater && <View style={[st.whenRadioDot, { backgroundColor: colors.primary }]} />}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[st.whenRowLabel, { color: colors.dark }]}>{t('creation.when.later')}</Text>
+              <Text style={[st.whenRowSub, { color: colors.textMuted }]}>{t('creation.when.laterSub')}</Text>
+            </View>
+          </TouchableOpacity>
         </View>
+
+        {/* Inline day+hour picker — only while scheduling. */}
+        {isLater && (
+          <View style={st.scheduleWrap}>
+            <View style={st.scheduleRow}>
+              {dayOptions.map((d, i) => {
+                const active = pickedDayIdx === i;
+                return (
+                  <TouchableOpacity
+                    key={d.date.toISOString()}
+                    onPress={() => setDay(d.date)}
+                    style={[
+                      st.scheduleChip,
+                      active && { backgroundColor: colors.primary, borderColor: colors.primary },
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[st.scheduleChipText, { color: active ? '#fff' : colors.dark }]}>
+                      {i === 0 ? t('creation.when.tomorrow') : d.label}
+                    </Text>
+                    <Text style={[st.scheduleChipSub, { color: active ? '#fff' : colors.textMuted }]}>
+                      {d.date.getDate()}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <View style={st.scheduleRow}>
+              {hourOptions.map((h) => {
+                const active = pickedHour === h;
+                return (
+                  <TouchableOpacity
+                    key={h}
+                    onPress={() => setHour(h)}
+                    style={[
+                      st.scheduleChip,
+                      active && { backgroundColor: colors.primary, borderColor: colors.primary },
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[st.scheduleChipText, { color: active ? '#fff' : colors.dark }]}>
+                      {`${h}:00`}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
         <View style={st.rowCtaWrap}>
           <TouchableOpacity
@@ -466,13 +604,8 @@ export default function CreationBubble({
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={handleContinueFromWhen}
-            disabled={whenChoice === 'later' && !scheduledAt}
-            style={[
-              st.cta,
-              st.ctaJoin,
-              { flex: 2 },
-              whenChoice === 'later' && !scheduledAt && { opacity: 0.5 },
-            ]}
+            disabled={!canContinue}
+            style={[st.cta, st.ctaJoin, { flex: 2 }, !canContinue && { opacity: 0.5 }]}
           >
             <Text style={st.ctaText}>{t('creation.continue')}</Text>
           </TouchableOpacity>
@@ -620,6 +753,12 @@ export default function CreationBubble({
           <View style={st.chipRowSingle}>
             {DURATION_PRESETS.map((mins) => {
               const active = durationMinutes === mins;
+              const label =
+                mins === EOD_SENTINEL
+                  ? t('creation.who.allDay')
+                  : mins < 60
+                    ? `${mins}m`
+                    : `${mins / 60}h`;
               return (
                 <TouchableOpacity
                   key={mins}
@@ -633,14 +772,11 @@ export default function CreationBubble({
                   ]}
                   activeOpacity={0.8}
                 >
-                  {/* Uniform "Nm" labels (15m / 30m / 45m / 60m /
-                       90m / 120m) — same pattern, predictable
-                       width, six in one row. */}
                   <Text style={[
                     st.chipCompactText,
                     { color: active ? '#fff' : colors.dark },
                   ]}>
-                    {`${mins}m`}
+                    {label}
                   </Text>
                 </TouchableOpacity>
               );
@@ -904,6 +1040,36 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     fontSize: 12,
     fontWeight: '400',
     marginTop: 2,
+  },
+
+  /* Schedule picker (visible only when "scheduled" is active) */
+  scheduleWrap: {
+    marginTop: 8,
+    gap: 6,
+  },
+  scheduleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 4,
+  },
+  scheduleChip: {
+    flex: 1,
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    borderRadius: 10,
+    borderWidth: 0.5,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+  },
+  scheduleChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  scheduleChipSub: {
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 1,
   },
   whatCtaSlot: {
     // Bottom-pinned fixed-height slot so Continue appearing /
