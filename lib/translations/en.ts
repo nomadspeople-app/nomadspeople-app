@@ -50,6 +50,17 @@ export const en: Record<string, string> = {
   'home.activityLive': 'your activity is now live on the map',
   'home.wantsTo': '{{name}} wants to {{activity}}',
 
+  /* ── Pick mode overlay (one-map location picker) ── */
+  'pickMode.titleStatus': 'Pick status location',
+  'pickMode.titleTimer': 'Pick timer location',
+  'pickMode.resolving': 'Finding address…',
+  'pickMode.continue': 'Continue',
+  'pickMode.cancel': 'Cancel',
+
+  /* ── Collapsible section headers (Settings, etc) ── */
+  'section.tapToOpen': 'tap to open',
+  'section.tapToClose': 'tap to close',
+
   /* ── People Screen ── */
   'people.title': 'people',
   'people.activeIn': 'active in {{city}}',

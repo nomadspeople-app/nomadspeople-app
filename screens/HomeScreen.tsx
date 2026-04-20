@@ -1397,7 +1397,7 @@ export default function HomeScreen() {
                 strokeWidth={2}
               />
               <Text style={[st.pickPanelTitle, { color: colors.dark }]}>
-                {pickMode === 'timer' ? 'Pick timer location' : 'Pick status location'}
+                {pickMode === 'timer' ? t('pickMode.titleTimer') : t('pickMode.titleStatus')}
               </Text>
             </View>
             <Text
@@ -1405,7 +1405,7 @@ export default function HomeScreen() {
               numberOfLines={2}
             >
               {pickResolving
-                ? 'Finding address…'
+                ? t('pickMode.resolving')
                 : pickAddr || currentCity.name}
             </Text>
             <View style={st.pickPanelRow}>
@@ -1415,7 +1415,7 @@ export default function HomeScreen() {
                 onPress={exitPickMode}
               >
                 <Text style={[st.pickPanelCancelText, { color: colors.textMuted }]}>
-                  Cancel
+                  {t('pickMode.cancel')}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -1429,7 +1429,7 @@ export default function HomeScreen() {
                 activeOpacity={0.8}
                 onPress={commitPick}
               >
-                <Text style={st.pickPanelContinueText}>Continue</Text>
+                <Text style={st.pickPanelContinueText}>{t('pickMode.continue')}</Text>
               </TouchableOpacity>
             </View>
           </View>

@@ -50,6 +50,17 @@ export const he: Record<string, string> = {
   'home.activityLive': 'הפעילות שלך פעילה על המפה',
   'home.wantsTo': '{{name}} רוצה {{activity}}',
 
+  /* ── Pick mode overlay (בחירת מיקום על המפה הראשית) ── */
+  'pickMode.titleStatus': 'בחירת מיקום לסטטוס',
+  'pickMode.titleTimer': 'בחירת מיקום לטיימר',
+  'pickMode.resolving': 'מאתר כתובת…',
+  'pickMode.continue': 'המשך',
+  'pickMode.cancel': 'ביטול',
+
+  /* ── כותרות מתקפלות ── */
+  'section.tapToOpen': 'הקש לפתיחה',
+  'section.tapToClose': 'הקש לסגירה',
+
   /* ── People Screen ── */
   'people.title': 'אנשים',
   'people.activeIn': 'פעילים ב{{city}}',

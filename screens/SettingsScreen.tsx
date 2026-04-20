@@ -192,7 +192,7 @@ export default function SettingsScreen() {
           </View>
           <Text style={[styles.sectionHeaderTitle, { color: colors.dark }]} numberOfLines={1}>{title}</Text>
           <Text style={[styles.sectionHint, { color: colors.textMuted }]}>
-            {isOpen ? 'tap to close' : 'tap to open'}
+            {isOpen ? t('section.tapToClose') : t('section.tapToOpen')}
           </Text>
           <View style={[
             styles.sectionToggleBtn,

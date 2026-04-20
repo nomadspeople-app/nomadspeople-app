@@ -50,6 +50,17 @@ export const ru: Record<string, string> = {
   'home.activityLive': 'ваша активность теперь на карте',
   'home.wantsTo': '{{name}} хочет {{activity}}',
 
+  /* ── Pick mode overlay (выбор места на главной карте) ── */
+  'pickMode.titleStatus': 'Выбери место для статуса',
+  'pickMode.titleTimer': 'Выбери место для таймера',
+  'pickMode.resolving': 'Ищу адрес…',
+  'pickMode.continue': 'Продолжить',
+  'pickMode.cancel': 'Отмена',
+
+  /* ── Сворачиваемые секции ── */
+  'section.tapToOpen': 'нажми чтобы открыть',
+  'section.tapToClose': 'нажми чтобы закрыть',
+
   /* ── People Screen ── */
   'people.title': 'люди',
   'people.activeIn': 'активные в {{city}}',
