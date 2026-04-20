@@ -682,45 +682,73 @@ export default function HomeScreen() {
     })();
   }, [userLat, userLng, currentCity.lat, currentCity.lng, currentCity.name]);
 
-  /** Called by CreationBubble when the user taps the "change
-   *  location" row. We hide the bubble, enter pickMode on the
-   *  main map, and kick off a FRESH GPS resolve. We seed the map
-   *  with the bubble's current coords for instant feedback, then
-   *  as soon as live GPS returns we snap the map and pin to the
-   *  real location — no more "pin a few streets away" because we
-   *  fell back to city center when userLat was momentarily null. */
+  /** Called by CreationBubble when the user taps the "set pin"
+   *  row. Opens pickMode on the main map using the BEST GPS coord
+   *  we have right now — last-known for instant feedback, then
+   *  high-accuracy for refinement. Never relies on a possibly-
+   *  stale bubble seed (which could be city center if userLat
+   *  was null at bubble open), so the pin lands on the user's
+   *  real location from frame one instead of city center + snap.
+   *
+   *  Priority order:
+   *    1. Location.getLastKnownPositionAsync — instant, matches
+   *       the iOS blue dot.
+   *    2. Bubble's current coord — only if last-known is null.
+   *    3. Location.getCurrentPositionAsync(High) — refines the
+   *       map to the freshest fix; animates only if it drifts
+   *       more than ~10 m from the initial snap so the map
+   *       doesn't jiggle pointlessly. */
   const handleCreationRequestPick = useCallback(
     (current: { lat: number; lng: number; address: string }) => {
       setCreationPickInFlight(true);
       setShowCreation(false);
-      setPickLat(current.lat);
-      setPickLng(current.lng);
-      setPickAddr(current.address || '');
       setPickResolving(true);
       setPickMode(creationKind);
-      // Instant: map flies to whatever we have (bubble seed).
-      mapRef.current?.animateToRegion({
-        latitude: current.lat, longitude: current.lng,
-        latitudeDelta: 0.006, longitudeDelta: 0.006,
-      }, 400);
-      // Async: fetch a FRESH GPS + IP + spoof result. When it
-      // lands, re-animate the map to those coords — this is what
-      // fixes the "pin landed a few streets away" bug.
+
       (async () => {
+        let initialLat = current.lat;
+        let initialLng = current.lng;
+
+        // Step 1 — last-known for an INSTANT accurate snap.
         try {
-          const res = await resolveLiveLocation(current.lat, current.lng);
-          if (!res.usedFallback) {
-            mapRef.current?.animateToRegion({
-              latitude: res.latitude,
-              longitude: res.longitude,
-              latitudeDelta: 0.006,
-              longitudeDelta: 0.006,
-            }, 450);
-            // onRegionChangeComplete below will pick up the new
-            // center and update pickLat/Lng + reverseGeocode.
+          const last = await Location.getLastKnownPositionAsync();
+          if (last) {
+            initialLat = last.coords.latitude;
+            initialLng = last.coords.longitude;
           }
         } catch (err) {
-          console.warn('[HomeScreen] fresh GPS for pickMode failed:', err);
+          console.warn('[HomeScreen] last-known GPS failed:', err);
+        }
+
+        setPickLat(initialLat);
+        setPickLng(initialLng);
+        setPickAddr(current.address || '');
+        mapRef.current?.animateToRegion({
+          latitude: initialLat, longitude: initialLng,
+          latitudeDelta: 0.005, longitudeDelta: 0.005,
+        }, 300);
+
+        // Step 2 — high-accuracy fresh fix. Only re-animate if the
+        // drift vs. initial snap is > ~10 m (0.0001° lat ≈ 11 m);
+        // otherwise the map would visibly twitch for a handful of
+        // meters of GPS jitter.
+        try {
+          const fresh = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.High,
+          });
+          const dLat = Math.abs(fresh.coords.latitude - initialLat);
+          const dLng = Math.abs(fresh.coords.longitude - initialLng);
+          if (dLat > 0.0001 || dLng > 0.0001) {
+            mapRef.current?.animateToRegion({
+              latitude: fresh.coords.latitude,
+              longitude: fresh.coords.longitude,
+              latitudeDelta: 0.004, longitudeDelta: 0.004,
+            }, 350);
+          }
+          // onRegionChangeComplete picks up the settled region and
+          // handles pickLat/Lng + reverse geocode.
+        } catch (err) {
+          console.warn('[HomeScreen] fresh GPS refine failed:', err);
         }
       })();
     },

@@ -169,18 +169,33 @@ export default function Bubble({
           )}
         </View>
 
-        {/* The card itself — white, rounded, shadowed. Whole surface
-            is tappable when onPress is provided (parent decides). */}
-        <TouchableOpacity
-          activeOpacity={onPress ? 0.94 : 1}
-          onPress={onPress}
-          style={st.card}
-          disabled={!onPress}
-        >
-          <View style={st.content}>
-            {children}
+        {/* The card itself — white, rounded, shadowed.
+             When a parent provides `onPress`, we wrap the surface
+             in a TouchableOpacity so the whole card is tappable
+             (TimerBubble pattern — tap anywhere to join).
+             When no onPress is given (CreationBubble), we render
+             a plain View. A disabled TouchableOpacity in RN still
+             intercepts touches before they reach children, which
+             broke TextInputs inside the card — the optional
+             address line in the WHERE step couldn't receive taps
+             at all. A View passes everything through. */}
+        {onPress ? (
+          <TouchableOpacity
+            activeOpacity={0.94}
+            onPress={onPress}
+            style={st.card}
+          >
+            <View style={st.content}>
+              {children}
+            </View>
+          </TouchableOpacity>
+        ) : (
+          <View style={st.card}>
+            <View style={st.content}>
+              {children}
+            </View>
           </View>
-        </TouchableOpacity>
+        )}
       </Animated.View>
     </>
   );
