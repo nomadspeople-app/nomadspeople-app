@@ -61,6 +61,22 @@ export const ru: Record<string, string> = {
   'section.tapToOpen': 'нажми чтобы открыть',
   'section.tapToClose': 'нажми чтобы закрыть',
 
+  /* ── Пузырь создания (общий поток для статуса/таймера) ── */
+  'creation.continue': 'далее',
+  'creation.back': 'назад',
+  'creation.publish': 'опубликовать',
+  'creation.publishing': 'публикую…',
+  'creation.what.statusPlaceholder': 'что ты делаешь?',
+  'creation.what.timerPlaceholder': 'что ты делаешь прямо сейчас?',
+  'creation.where.label': 'где?',
+  'creation.where.tapToChange': 'нажми чтобы изменить',
+  'creation.where.fallback': 'неизвестно',
+  'creation.who.duration': 'на сколько?',
+  'creation.who.audience': 'кто может присоединиться?',
+  'creation.who.openAll': 'все',
+  'creation.who.private': 'нужно одобрение',
+  'creation.who.ageRange': 'возрастной диапазон',
+
   /* ── People Screen ── */
   'people.title': 'люди',
   'people.activeIn': 'активные в {{city}}',

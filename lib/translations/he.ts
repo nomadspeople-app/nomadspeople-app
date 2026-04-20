@@ -61,6 +61,22 @@ export const he: Record<string, string> = {
   'section.tapToOpen': 'הקש לפתיחה',
   'section.tapToClose': 'הקש לסגירה',
 
+  /* ── באבל יצירה (זרימה אחידה לסטטוס/טיימר) ── */
+  'creation.continue': 'המשך',
+  'creation.back': 'חזרה',
+  'creation.publish': 'פרסם',
+  'creation.publishing': 'מפרסם…',
+  'creation.what.statusPlaceholder': 'מה אתה עושה?',
+  'creation.what.timerPlaceholder': 'מה אתה עושה ממש עכשיו?',
+  'creation.where.label': 'איפה?',
+  'creation.where.tapToChange': 'הקש לשינוי',
+  'creation.where.fallback': 'לא ידוע',
+  'creation.who.duration': 'לכמה זמן?',
+  'creation.who.audience': 'מי יכול להצטרף?',
+  'creation.who.openAll': 'כולם',
+  'creation.who.private': 'דורש אישור',
+  'creation.who.ageRange': 'טווח גילאים',
+
   /* ── People Screen ── */
   'people.title': 'אנשים',
   'people.activeIn': 'פעילים ב{{city}}',

@@ -32,6 +32,7 @@ import NotificationsSheet from '../components/NotificationsSheet';
 import CityPickerSheet, { CITIES, type City } from '../components/CityPickerSheet';
 import QuickStatusSheet, { type QuickActivityData } from '../components/QuickStatusSheet';
 import TimerSheet, { type TimerData } from '../components/TimerSheet';
+import CreationBubble, { type CreationPayload } from '../components/CreationBubble';
 import NomadsListSheet from '../components/NomadsListSheet';
 import ActivityDetailSheet from '../components/ActivityDetailSheet';
 import TimerBubble from '../components/TimerBubble';
@@ -539,6 +540,94 @@ export default function HomeScreen() {
     if (kind === 'status') setShowQuickStatus(true);
     if (kind === 'timer') setShowTimer(true);
   }, [pickMode, pickLat, pickLng, pickAddr, exitPickMode]);
+
+  /* ═══ CREATION BUBBLE — the unified Status / Timer flow ═══════════
+   *
+   * The user asked for the creation experience to live inside the
+   * same docked Bubble that pops up when tapping a pin. One visual
+   * language for "viewing" and "creating" — what you upload looks
+   * like what people see. The CreationBubble component owns the
+   * multi-step wizard; HomeScreen owns the map and the publish
+   * handlers.
+   *
+   * When the user taps the "change location" row inside the bubble,
+   * we TEMPORARILY hide the bubble, flip into pickMode on the main
+   * map, and on Continue push the new coords back into the bubble
+   * via a ref-based updater so the bubble doesn't unmount. This
+   * keeps the typed text, category, age range, etc. intact across
+   * the location pick — nothing the user entered is lost.
+   */
+  const [showCreation, setShowCreation] = useState(false);
+  const [creationKind, setCreationKind] = useState<'status' | 'timer'>('status');
+  const [creationSeedLat, setCreationSeedLat] = useState<number>(currentCity.lat);
+  const [creationSeedLng, setCreationSeedLng] = useState<number>(currentCity.lng);
+  const [creationSeedAddr, setCreationSeedAddr] = useState<string>('');
+  // When we enter pickMode FROM the creation bubble, we stash the
+  // kind here so commit-back re-opens the bubble at the right step.
+  const [creationPickInFlight, setCreationPickInFlight] = useState(false);
+  // Exposed by CreationBubble — parent calls it after pickMode
+  // commits so the bubble can update its internal location state
+  // without unmounting. Stays null when the bubble isn't mounted.
+  const creationLocationUpdater = useRef<
+    ((loc: { lat: number; lng: number; address: string }) => void) | null
+  >(null);
+
+  /** Open the creation bubble for status or timer. Seeds location
+   *  from the user's GPS (if available) or the current city. */
+  const openCreation = useCallback((kind: 'status' | 'timer') => {
+    setCreationKind(kind);
+    setCreationSeedLat(userLat ?? currentCity.lat);
+    setCreationSeedLng(userLng ?? currentCity.lng);
+    setCreationSeedAddr(currentCity.name);
+    setShowCreation(true);
+    Haptics.selectionAsync().catch(() => {});
+  }, [userLat, userLng, currentCity.lat, currentCity.lng, currentCity.name]);
+
+  /** Called by CreationBubble when the user taps the "change
+   *  location" row. We hide the bubble, enter pickMode on the main
+   *  map, and wait for commit / cancel. */
+  const handleCreationRequestPick = useCallback(
+    (current: { lat: number; lng: number; address: string }) => {
+      setCreationPickInFlight(true);
+      setShowCreation(false);
+      setPickLat(current.lat);
+      setPickLng(current.lng);
+      setPickAddr(current.address || '');
+      setPickResolving(false);
+      setPickMode(creationKind);
+      mapRef.current?.animateToRegion({
+        latitude: current.lat, longitude: current.lng,
+        latitudeDelta: 0.006, longitudeDelta: 0.006,
+      }, 400);
+    },
+    [creationKind],
+  );
+
+  /** Called when the user commits a pick that originated from the
+   *  creation bubble. Pushes the new coords into the bubble and
+   *  re-shows it. No state loss — text / category / etc. are still
+   *  in the bubble's local state because the component stayed
+   *  mounted (just invisible while pickMode was on top). */
+  const commitPickFromCreation = useCallback(() => {
+    const snap = { lat: pickLat, lng: pickLng, address: pickAddr };
+    exitPickMode();
+    setCreationPickInFlight(false);
+    creationLocationUpdater.current?.(snap);
+    setShowCreation(true);
+  }, [pickLat, pickLng, pickAddr, exitPickMode]);
+
+  /** Called when the user cancels pickMode that originated from
+   *  creation. Re-show the bubble with the PREVIOUS location intact. */
+  const cancelPickFromCreation = useCallback(() => {
+    exitPickMode();
+    setCreationPickInFlight(false);
+    setShowCreation(true);
+  }, [exitPickMode]);
+
+  /* handleCreationPublish is declared LATER in this file — after
+   * handleQuickPublish and handleTimerPublish — because it routes
+   * into them. See the "creation publish bridge" block further
+   * down near the other publish handlers. */
 
   const refreshGPS = useCallback(async () => {
     try {
@@ -1192,6 +1281,51 @@ export default function HomeScreen() {
     }
   };
 
+  /* ── Creation publish bridge ──
+   *
+   * CreationBubble emits a kind-tagged CreationPayload; we fan it
+   * out to the existing per-kind publish handlers so the DB insert
+   * logic stays in one place (avoiding yet another duplicate
+   * publish pipeline, which would violate CLAUDE.md Rule Zero).
+   *
+   * Declared here (not higher in the file) so the closure captures
+   * the fresh handleQuickPublish / handleTimerPublish identities —
+   * they're re-created on every render, and a too-early useCallback
+   * would capture stale closures. */
+  const handleCreationPublish = (data: CreationPayload) => {
+    if (data.kind === 'timer') {
+      handleTimerPublish({
+        category: data.category,
+        emoji: data.emoji,
+        statusText: data.text,
+        locationName: data.locationName,
+        latitude: data.latitude,
+        longitude: data.longitude,
+        durationMinutes: data.durationMinutes,
+        ageMin: data.ageMin,
+        ageMax: data.ageMax,
+      });
+    } else {
+      handleQuickPublish({
+        category: data.category,
+        activityText: data.text,
+        emoji: data.emoji,
+        locationName: data.locationName,
+        latitude: data.latitude,
+        longitude: data.longitude,
+        isGeneralArea: false,
+        scheduledFor: data.scheduledFor,
+        isFlexibleTime: true,
+        isNow: !data.scheduledFor,
+        isOpen: data.isOpen,
+        ageMin: data.ageMin,
+        ageMax: data.ageMax,
+        durationMinutes: data.durationMinutes,
+      });
+    }
+    setShowCreation(false);
+  };
+
   /* ── Cancel active timer with reason ── */
   const CANCEL_REASONS = [
     { key: 'found_company', label: 'Found company', emoji: '🤝' },
@@ -1415,7 +1549,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[st.pickPanelCancel, { borderColor: colors.borderSoft }]}
                 activeOpacity={0.7}
-                onPress={exitPickMode}
+                onPress={creationPickInFlight ? cancelPickFromCreation : exitPickMode}
               >
                 <Text style={[st.pickPanelCancelText, { color: colors.textMuted }]}>
                   {t('pickMode.cancel')}
@@ -1430,7 +1564,7 @@ export default function HomeScreen() {
                   },
                 ]}
                 activeOpacity={0.8}
-                onPress={commitPick}
+                onPress={creationPickInFlight ? commitPickFromCreation : commitPick}
               >
                 <Text style={st.pickPanelContinueText}>{t('pickMode.continue')}</Text>
               </TouchableOpacity>
@@ -1710,11 +1844,13 @@ export default function HomeScreen() {
                       setShowCancelTimer(true);
                     }, () => setShowCancelTimer(true));
                 } else {
-                  // No active timer — enter pickMode on the main map
-                  // instead of opening a sheet with a second map.
-                  enterPickMode('timer');
+                  // No active timer — open the creation bubble.
+                  // The bubble walks the user through WHAT → WHERE
+                  // → WHO → PUBLISH on top of the main map (no
+                  // second map anywhere).
+                  openCreation('timer');
                 }
-              }, () => enterPickMode('timer'));
+              }, () => openCreation('timer'));
           }}
         >
           <NomadIcon name="timer" size={s(10)} color="#FF6B6B" strokeWidth={1.8} />
@@ -1742,9 +1878,9 @@ export default function HomeScreen() {
                 if (activeStatus) {
                   setShowReplaceStatus(true);
                 } else {
-                  enterPickMode('status');
+                  openCreation('status');
                 }
-              }, () => enterPickMode('status'));
+              }, () => openCreation('status'));
           }}
         >
           <NomadIcon name="plus" size={s(10)} color="#4ADE80" strokeWidth={2} />
@@ -1888,6 +2024,30 @@ export default function HomeScreen() {
         }}
       />
 
+      {/* ── Creation Bubble — the unified Status / Timer flow ──
+           Single bottom-docked bubble that walks the user through
+           WHAT → WHERE → WHO → PUBLISH using the exact same shell
+           as TimerBubble. Replaces the old sheets for normal
+           creation flows. The old sheets below are kept rendered
+           but never opened in the happy path — they stay as a
+           safety valve for any legacy entry point. */}
+      <CreationBubble
+        visible={showCreation}
+        kind={creationKind}
+        userAvatarUrl={avatarUri(myProfile?.avatar_url)}
+        userFallback={myInitials}
+        userFallbackColor={colors.primary}
+        seedLat={creationSeedLat}
+        seedLng={creationSeedLng}
+        seedAddress={creationSeedAddr}
+        cityName={currentCity.name}
+        publishing={creationKind === 'timer' ? timerPublishing : quickPublishing}
+        onClose={() => setShowCreation(false)}
+        onRequestLocationPick={handleCreationRequestPick}
+        onPublish={handleCreationPublish}
+        locationUpdaterRef={creationLocationUpdater}
+      />
+
       {/* ── Quick Status Sheet ──
            Receives `initialPick` from pickMode — when set, the sheet
            skips its own internal map page entirely and the user sees
@@ -1974,10 +2134,10 @@ export default function HomeScreen() {
               activeOpacity={0.7}
               onPress={() => {
                 setShowReplaceStatus(false);
-                // Enter pickMode on the main map — the replace itself
+                // Open the creation bubble — the replace itself
                 // happens inside handleQuickPublish, which expires the
                 // old status before inserting the new one.
-                enterPickMode('status');
+                openCreation('status');
               }}
             >
               <Text style={st.cancelReasonEmoji}>🔄</Text>

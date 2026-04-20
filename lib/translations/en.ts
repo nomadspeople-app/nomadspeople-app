@@ -61,6 +61,22 @@ export const en: Record<string, string> = {
   'section.tapToOpen': 'tap to open',
   'section.tapToClose': 'tap to close',
 
+  /* ── Creation bubble (unified Status / Timer flow) ── */
+  'creation.continue': 'continue',
+  'creation.back': 'back',
+  'creation.publish': 'publish',
+  'creation.publishing': 'publishing…',
+  'creation.what.statusPlaceholder': 'what are you doing?',
+  'creation.what.timerPlaceholder': 'what are you doing right now?',
+  'creation.where.label': 'where?',
+  'creation.where.tapToChange': 'tap to change',
+  'creation.where.fallback': 'unknown',
+  'creation.who.duration': 'for how long?',
+  'creation.who.audience': 'who can join?',
+  'creation.who.openAll': 'anyone',
+  'creation.who.private': 'approval needed',
+  'creation.who.ageRange': 'age range',
+
   /* ── People Screen ── */
   'people.title': 'people',
   'people.activeIn': 'active in {{city}}',
