@@ -616,12 +616,9 @@ export default function HomeScreen() {
    * the location pick — nothing the user entered is lost.
    */
   const [showCreation, setShowCreation] = useState(false);
-  // creationKind used to distinguish the two old buttons; after
-  // the unification in Stage 17 the bubble itself picks
-  // timer/status from its WHEN step. We keep this state only to
-  // color the pickMode center pin (green) consistently — future
-  // commits can remove it entirely once the UI is settled.
-  const [creationKind] = useState<'status' | 'timer'>('status');
+  // (creationKind removed — Stage 18 cleanup. pickMode always
+  //  uses the green-pin color now that the bubble picks
+  //  timer/status internally.)
   const [creationSeedLat, setCreationSeedLat] = useState<number>(currentCity.lat);
   const [creationSeedLng, setCreationSeedLng] = useState<number>(currentCity.lng);
   const [creationSeedAddr, setCreationSeedAddr] = useState<string>('');
@@ -708,7 +705,10 @@ export default function HomeScreen() {
       setCreationPickInFlight(true);
       setShowCreation(false);
       setPickResolving(true);
-      setPickMode(creationKind);
+      // pickMode value is only used by the pickMode overlay to
+      // decide the center-pin color. Always 'status' (green) now
+      // that the unified flow picks timer/status inside the bubble.
+      setPickMode('status');
 
       (async () => {
         let initialLat = current.lat;
@@ -757,7 +757,7 @@ export default function HomeScreen() {
         }
       })();
     },
-    [creationKind],
+    [],
   );
 
   /** Called when the user commits a pick that originated from the
@@ -912,19 +912,21 @@ export default function HomeScreen() {
   }, [checkins, activeVibe]);
 
   /* ── Own active checkins — derived, fed into CreationBubble
-   *    so it can show the "replace" banner on the PUBLISH step
-   *    when the user's answer conflicts with something they
-   *    already have live. No separate fetch, no modal. */
-  const myActiveTimer = useMemo(
-    () => checkins.find(c => c.user_id === userId && (c as any).checkin_type === 'timer'),
-    [checkins, userId],
-  );
-  const myActiveScheduled = useMemo(
-    () => checkins.find(c => c.user_id === userId && (c as any).checkin_type === 'status'),
-    [checkins, userId],
-  );
-  const hasActiveTimer = !!myActiveTimer;
-  const hasActiveScheduled = !!myActiveScheduled;
+   *    so it can show the "replace" banner on the PUBLISH step.
+   *    useMemo so re-renders triggered by unrelated state don't
+   *    re-filter the whole checkin list. */
+  const { hasActiveTimer, hasActiveScheduled } = useMemo(() => {
+    let timer = false;
+    let scheduled = false;
+    for (const c of checkins) {
+      if (c.user_id !== userId) continue;
+      const kind = (c as any).checkin_type;
+      if (kind === 'timer') timer = true;
+      else if (kind === 'status') scheduled = true;
+      if (timer && scheduled) break;
+    }
+    return { hasActiveTimer: timer, hasActiveScheduled: scheduled };
+  }, [checkins, userId]);
 
   const { profile: myProfile, refetch: refetchProfile } = useProfile(userId);
   const myName = myProfile?.display_name || myProfile?.full_name || myProfile?.username || 'You';
@@ -1052,7 +1054,12 @@ export default function HomeScreen() {
     // No anchor math, no pointForCoordinate, no map pan. The sheet
     // always lands in the same place, which makes the interaction
     // predictable and familiar (same pattern as Apple/Google Maps).
-    if (isTimer) {
+    // One path for both cases that open the TimerBubble:
+    //   - Any timer pin (visitor or owner)
+    //   - Any status pin owned by the user
+    // All land on the same docked bubble; the bubble itself
+    // branches on isOwn to show "end now" vs "join/chat/leave".
+    if (isTimer || isOwn) {
       if (timerBubbleCheckin?.id === checkin.id) {
         dismissTimerBubble();
         return;
@@ -1062,26 +1069,11 @@ export default function HomeScreen() {
       return;
     }
 
-    // STATUS / event pins —
-    //   Visitors: smooth 400 ms zoom into the pin's neighborhood,
-    //     then 450 ms later open the visitor sheet
-    //     (ActivityDetailSheet).
-    //   Owners:  skip the zoom and the sheet — show the same
-    //     TimerBubble the visitors see when tapping a timer. This
-    //     is the unified "management popup" the product owner
-    //     requested. NEVER navigate away from the map on an own-
-    //     pin tap; the user's context (where they are looking)
-    //     must stay intact.
-    if (isOwn) {
-      if (timerBubbleCheckin?.id === checkin.id) {
-        dismissTimerBubble();
-        return;
-      }
-      Haptics.selectionAsync().catch(() => {});
-      setTimerBubbleCheckin(checkin);
-      return;
-    }
-
+    // Visitor on a status pin — smooth 400 ms zoom into the
+    // neighborhood, then 450 ms later open ActivityDetailSheet.
+    // We keep this zoom ONLY for the visitor path because the
+    // ActivityDetailSheet relies on the map being focused on the
+    // pin. Own-pin taps above skip the zoom on purpose.
     const lat = checkin.latitude ?? currentCity.lat;
     const lng = checkin.longitude ?? currentCity.lng;
     mapRef.current?.animateToRegion({
@@ -1096,7 +1088,7 @@ export default function HomeScreen() {
       setJoined(false);
       setShowPopup(true);
     }, 450);
-  }, [userId, currentCity.lat, currentCity.lng, timerBubbleCheckin?.id, nav]);
+  }, [userId, currentCity.lat, currentCity.lng, timerBubbleCheckin?.id]);
 
   /** The marker list — MEMOIZED so it doesn't rebuild on every
    *  parent re-render. HomeScreen re-renders constantly (GPS

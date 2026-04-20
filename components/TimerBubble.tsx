@@ -314,23 +314,21 @@ export default function TimerBubble({
     );
   };
 
-  /* ── Owner actions (creator tapping their own pin) ──
+  /* ── Owner action — "End now"
    *
-   *  "End now" — confirm alert, then parent's onOwnerEnd expires
-   *  the checkin in Supabase. Stays on the map; no navigation
-   *  away. This is the unified management action for both
-   *  timers and scheduled statuses.
+   *  Confirm alert, then parent's onOwnerEnd expires the checkin
+   *  in Supabase. Stays on the map; no navigation away. Unified
+   *  action for both timers and scheduled statuses.
    *
-   *  If onOwnerEnd isn't provided (legacy callers), we fall back
-   *  to the old nav-to-profile behavior. */
+   *  onOwnerEnd is a required-in-practice prop — every real
+   *  caller passes one. We assert existence at call time rather
+   *  than ship a fallback nav path (that would be a band-aid
+   *  that rots the moment someone forgets to wire the prop). */
   const handleEnd = () => {
     if (!checkin) return;
     if (!onOwnerEnd) {
-      Haptics.selectionAsync().catch(() => {});
-      onClose();
-      setTimeout(() => {
-        nav.navigate('UserProfile' as any, { userId: checkin.user_id, openCheckinId: checkin.id });
-      }, 80);
+      // Visible log so the wiring break is obvious in dev.
+      console.warn('[TimerBubble] onOwnerEnd missing — End now is a no-op');
       return;
     }
     Alert.alert(
