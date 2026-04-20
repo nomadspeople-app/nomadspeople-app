@@ -2268,7 +2268,10 @@ export default function HomeScreen() {
         sessionKey={creationSessionKey}
         userAvatarUrl={avatarUri(myProfile?.avatar_url)}
         userFallback={myInitials}
-        userFallbackColor={colors.primary}
+        // Neutral dark-grey fallback (not the brand coral) so the
+        // avatar circle doesn't make the whole bubble read as
+        // "reddish" when the user has no profile picture yet.
+        userFallbackColor={'#374151'}
         seedLat={creationSeedLat}
         seedLng={creationSeedLng}
         seedAddress={creationSeedAddr}

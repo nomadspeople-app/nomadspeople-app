@@ -13,6 +13,12 @@ interface DualThumbSliderProps {
   trackColor?: string;
   activeColor?: string;
   thumbColor?: string;
+  /** Override font size for the numeric labels above the thumbs.
+   *  Default s(11) which renders around 22px on a 390-wide
+   *  screen — fine for Settings / Onboarding, too loud for the
+   *  CreationBubble. Pass a smaller integer (e.g. 12) to quiet
+   *  them down. */
+  labelFontSize?: number;
 }
 
 const THUMB_SIZE = s(14);
@@ -26,6 +32,7 @@ export default function DualThumbSlider({
   trackColor,
   activeColor,
   thumbColor,
+  labelFontSize,
 }: DualThumbSliderProps) {
   const { colors } = useTheme();
   const trackColorFinal = trackColor ?? '#E5E7EB';
@@ -153,7 +160,7 @@ export default function DualThumbSlider({
     return (
       <View style={styles.container}>
         <View style={styles.labelsRow}>
-          <Text style={[styles.label, { color: activeColorFinal }]}>{valueMin}</Text>
+          <Text style={[styles.label, { color: activeColorFinal }, labelFontSize != null && { fontSize: labelFontSize }]}>{valueMin}</Text>
           <Text style={styles.dash}>—</Text>
           <Text style={[styles.label, { color: activeColorFinal }]}>
             {valueMax >= max ? `${max}+` : String(valueMax)}
@@ -179,9 +186,9 @@ export default function DualThumbSlider({
     <View style={styles.container}>
       {/* Labels */}
       <View style={styles.labelsRow}>
-        <Text style={[styles.label, { color: activeColorFinal }]}>{valueMin}</Text>
+        <Text style={[styles.label, { color: activeColorFinal }, labelFontSize != null && { fontSize: labelFontSize }]}>{valueMin}</Text>
         <Text style={styles.dash}>—</Text>
-        <Text style={[styles.label, { color: activeColorFinal }]}>
+        <Text style={[styles.label, { color: activeColorFinal }, labelFontSize != null && { fontSize: labelFontSize }]}>
           {valueMax >= max ? `${max}+` : String(valueMax)}
         </Text>
       </View>

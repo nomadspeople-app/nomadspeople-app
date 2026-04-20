@@ -440,16 +440,18 @@ export default function TimerBubble({
           doesn't grow/shrink between "not joined" and "joined". */}
       <View style={st.ctaWrap}>
         {isOwn ? (
-          /* Owner: full-width "End now" button. Stays on the map
-             — no navigation. Firing onOwnerEnd from the parent
-             expires the checkin in Supabase. */
+          /* Owner: full-width "End now". Soft neutral fill + red
+             text — destructive but not shouting, lets the user
+             dismiss their own post calmly. ctaLeave is reserved
+             for the visitor "leave the group" flow where a louder
+             red is appropriate. */
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={handleEnd}
-            style={[st.cta, st.ctaLeave]}
+            style={[st.cta, st.ctaEnd]}
           >
-            <NomadIcon name="close" size={s(6)} color="#fff" strokeWidth={2} />
-            <Text style={st.ctaText}>end now</Text>
+            <NomadIcon name="close" size={s(6)} color="#DC2626" strokeWidth={2} />
+            <Text style={[st.ctaText, st.ctaEndText]}>end now</Text>
           </TouchableOpacity>
         ) : iAmMember ? (
           /* Joined visitor: chat (blue, wide) + leave (red, narrow)
@@ -653,6 +655,18 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 8,
     elevation: 3,
+  },
+  /* End now — soft neutral fill with red text. Used on the
+     owner-on-own-pin path where the action is destructive but
+     personal (I'm ending MY post) and doesn't need to scream. */
+  ctaEnd: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#FEE2E2',
+    // no shadow — keeps the button quiet inside the bubble
+  },
+  ctaEndText: {
+    color: '#DC2626',
   },
   ctaText: {
     fontSize: 17,

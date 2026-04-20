@@ -1,4 +1,4 @@
-import { useState, useContext, useEffect, useMemo } from 'react';
+import { useState, useContext, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch,
   Alert, Linking, Modal, TextInput, LayoutAnimation, Platform, UIManager,
@@ -570,10 +570,22 @@ export default function SettingsScreen() {
     }
   };
 
+  /* handleAgeChange — debounced save.
+   *
+   * DualThumbSlider fires onChangeMin/Max on every PanResponder
+   * move (many times per second). Calling Supabase update on
+   * every tick made the slider feel stuck/jumpy because each
+   * drag triggered a DB write on the render path. We now update
+   * local state immediately for smooth motion, and only fire
+   * the save 400 ms after the user stops dragging. */
+  const ageSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleAgeChange = (min: number, max: number) => {
     setAgeMin(min);
     setAgeMax(max);
-    save({ age_min: min, age_max: max });
+    if (ageSaveTimer.current) clearTimeout(ageSaveTimer.current);
+    ageSaveTimer.current = setTimeout(() => {
+      save({ age_min: min, age_max: max });
+    }, 400);
   };
 
   const handleToggleProfileView = (val: boolean) => {
@@ -971,6 +983,9 @@ export default function SettingsScreen() {
                   onChangeMin={(v) => handleAgeChange(v, ageMax)}
                   onChangeMax={(v) => handleAgeChange(ageMin, v)}
                   step={1}
+                  activeColor="#1A1A1A"
+                  thumbColor="#1A1A1A"
+                  labelFontSize={13}
                 />
               </View>
             </View>
