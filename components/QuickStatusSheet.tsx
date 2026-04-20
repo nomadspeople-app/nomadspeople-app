@@ -10,26 +10,20 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, Modal,
-  Dimensions, Platform, ScrollView, FlatList, Keyboard,
+  Dimensions, Platform, ScrollView, Keyboard,
   Animated, UIManager, LayoutAnimation,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import MapView from 'react-native-maps';
 import NomadIcon from './NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import DualThumbSlider from './DualThumbSlider';
 import { useI18n } from '../lib/i18n';
 import * as Haptics from 'expo-haptics';
 import { detectCategories } from '../lib/categoryDetector';
-// Location helpers live in ONE module now (CLAUDE.md Rule Zero).
-// Status and Timer share the same code path; a fix in one is a fix
-// in both, automatically.
-import {
-  type GeoResult,
-  searchAddress,
-  reverseGeocode,
-  resolveLiveLocation,
-} from '../lib/locationServices';
+// After Stage 7 this sheet no longer uses MapView / search /
+// reverse-geocode / resolveLiveLocation — every location concern
+// moved to HomeScreen's pickMode. Nothing from locationServices
+// is imported here any more.
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const OFFSCREEN = SH;
@@ -172,45 +166,22 @@ export default function QuickStatusSheet({
   const [isOpen, setIsOpen] = useState(true);
 
   /* ── Page 3: Where (map) ── */
+  /* Location state — shrunk to the minimum required by
+   * handlePublish. After Stage 7 the sheet no longer owns a
+   * MapView, no address search, no map-ref, no reverse-geocode
+   * debounce. All of that lives on HomeScreen's pickMode. */
   const [pinLat, setPinLat] = useState(cityLat);
   const [pinLng, setPinLng] = useState(cityLng);
   const [locationName, setLocationName] = useState('');
-  const [addressQuery, setAddressQuery] = useState('');
-  const [addressResults, setAddressResults] = useState<GeoResult[]>([]);
-  const [searching, setSearching] = useState(false);
-  const mapRef = useRef<MapView>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* ── Fetch real GPS on open ──
+  /* ── Reset on open ──
    *
-   * Thin wrapper around `resolveLiveLocation` in locationServices.
-   * Same flow as TimerSheet — GPS + IP in parallel, 5 km drift
-   * spoof check, graceful fallback to the city center. The shared
-   * resolver also covers the "both providers failed" branch that
-   * the old simpler fetch silently returned from. */
-  const fetchGPS = useCallback(async () => {
-    try {
-      const res = await resolveLiveLocation(cityLat, cityLng);
-      // If we actually got a live signal, move the pin and the
-      // map to match. If we had to fall back (permission denied
-      // AND both providers failed) we leave the map where it was
-      // — staying on the city center is a better landing than
-      // jerking the camera.
-      if (res.usedFallback) return;
-      setPinLat(res.latitude);
-      setPinLng(res.longitude);
-      mapRef.current?.animateToRegion({
-        latitude: res.latitude,
-        longitude: res.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      }, 500);
-    } catch (e) {
-      console.warn('[StatusSheet] GPS error:', e);
-    }
-  }, [cityLat, cityLng]);
-
-  /* ── Reset on open ── */
+   * With Stage 7 there is no legacy-fallback path any more:
+   * HomeScreen's commitPick always fires `setInitialPick(snapshot)`
+   * right before `setShowQuickStatus(true)`, so the sheet always
+   * sees a valid pick on open. If someone ever opens the sheet
+   * without one we log a warn and fall back to city center — but
+   * we do NOT start any legacy GPS fetch. */
   useEffect(() => {
     if (visible) {
       setPage(1);
@@ -226,60 +197,25 @@ export default function QuickStatusSheet({
       setAgeMax(80);
       setIsOpen(true);
       setPublished(false);
-      // If HomeScreen pickMode already resolved a location, use it
-      // and DO NOT hit GPS again — the pin is frozen at what the
-      // user confirmed on the main map. Otherwise fall back to the
-      // old "seed with cached coords then refresh with GPS" path,
-      // kept for safety in case the sheet is ever opened without
-      // initialPick (e.g. an old flow or a deep link).
       if (initialPick) {
         setPinLat(initialPick.latitude);
         setPinLng(initialPick.longitude);
         setLocationName(initialPick.address || '');
       } else {
+        console.warn('[QuickStatusSheet] opened without initialPick — falling back to city center');
         setPinLat(userLat ?? cityLat);
         setPinLng(userLng ?? cityLng);
         setLocationName('');
       }
-      setAddressQuery('');
-      setAddressResults([]);
       Animated.spring(translateY, {
         toValue: 0, useNativeDriver: true, tension: 65, friction: 11,
       }).start();
-      // Background GPS refresh only when we DON'T have a pre-picked
-      // location. With initialPick, hitting GPS would defeat the
-      // whole point of the unified-map flow (the user already chose).
-      if (!initialPick) fetchGPS();
     } else {
       Animated.timing(translateY, {
         toValue: OFFSCREEN, duration: 250, useNativeDriver: true,
       }).start();
     }
   }, [visible]);
-
-  /* ── Address search — fast debounce with Photon autocomplete ── */
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (addressQuery.trim().length < 2) { setAddressResults([]); setSearching(false); return; }
-    setSearching(true);
-    // 300ms debounce — Photon handles partial queries natively
-    searchTimer.current = setTimeout(async () => {
-      const results = await searchAddress(addressQuery.trim(), pinLat, pinLng, cityName);
-      setAddressResults(results);
-      setSearching(false);
-    }, 300);
-  }, [addressQuery, pinLat, pinLng, cityName]);
-
-  /* ── Select address result ── */
-  const selectAddress = useCallback((result: GeoResult) => {
-    const lat = parseFloat(result.lat);
-    const lng = parseFloat(result.lon);
-    setPinLat(lat); setPinLng(lng);
-    setLocationName(result.subLine ? `${result.mainLine}, ${result.subLine}` : result.mainLine);
-    setAddressQuery(''); setAddressResults([]);
-    Keyboard.dismiss();
-    mapRef.current?.animateToRegion({ latitude: lat, longitude: lng, latitudeDelta: 0.005, longitudeDelta: 0.005 }, 600);
-  }, []);
 
   /* ── Time display ── */
   const formatTime = (h: number, m: number) => {
@@ -598,134 +534,12 @@ export default function QuickStatusSheet({
             </ScrollView>
           )}
 
-          {/* ═══ PAGE 3 — WHERE (full-screen map) ═══ */}
-          {page === 3 && (
-            <View style={st.mapFull}>
-              <MapView
-                ref={mapRef}
-                style={StyleSheet.absoluteFillObject}
-                initialRegion={{
-                  latitude: pinLat, longitude: pinLng,
-                  latitudeDelta: 0.012, longitudeDelta: 0.012,
-                }}
-                showsUserLocation
-                showsCompass={false}
-                showsMyLocationButton={false}
-                onRegionChangeComplete={(region) => {
-                  setPinLat(region.latitude);
-                  setPinLng(region.longitude);
-                  // Reverse geocode after map stops moving
-                  if (searchTimer.current) clearTimeout(searchTimer.current);
-                  searchTimer.current = setTimeout(async () => {
-                    const addr = await reverseGeocode(region.latitude, region.longitude);
-                    if (addr) setLocationName(addr);
-                  }, 600);
-                }}
-                // @ts-ignore
-                mapLanguage="en"
-              />
-
-              {/* Center pin overlay (moves with map) */}
-              <View style={st.pinOverlay} pointerEvents="none">
-                <NomadIcon name="pin" size={36} strokeWidth={1.8} color={colors.primary}  />
-                <View style={st.pinDot} />
-              </View>
-
-              {/* Top bar: back + step */}
-              <View style={[st.mapTopBar, { top: insets.top + 8 }]}>
-                <TouchableOpacity onPress={goBack} style={st.mapBackBtn}>
-                  <NomadIcon name="back" size={18} strokeWidth={1.8} color="#1A1A1A"  />
-                </TouchableOpacity>
-                <View style={{ flex: 1 }} />
-                <View style={st.stepBadgeMap}>
-                  <Text style={st.stepText}>3/3</Text>
-                </View>
-              </View>
-
-              {/* Search bar — always visible */}
-              <View style={[st.searchWrap, { top: insets.top + 56 }]}>
-                <View style={st.searchBar}>
-                  <NomadIcon name="search" size={18} strokeWidth={1.8} color="#aaa"  />
-                  <TextInput
-                    style={st.searchInput}
-                    placeholder="Search address or place..."
-                    placeholderTextColor="#AAA"
-                    value={addressQuery}
-                    onChangeText={setAddressQuery}
-                    returnKeyType="search"
-                  />
-                  {addressQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => { setAddressQuery(''); setAddressResults([]); }}>
-                      <NomadIcon name="close" size={18} strokeWidth={1.8} color="#aaa"  />
-                    </TouchableOpacity>
-                  )}
-                </View>
-                {(searching || addressResults.length > 0) && (
-                  <View style={st.dropdown}>
-                    {searching ? (
-                      <View style={st.dropItem}><Text style={st.dropTextMuted}>Searching...</Text></View>
-                    ) : (
-                      <FlatList
-                        data={addressResults}
-                        keyExtractor={(_, i) => `r${i}`}
-                        keyboardShouldPersistTaps="handled"
-                        style={{ maxHeight: 200 }}
-                        renderItem={({ item }) => (
-                          <TouchableOpacity style={st.dropItem} onPress={() => selectAddress(item)} activeOpacity={0.7}>
-                            <View style={{ marginTop: 2 }}><NomadIcon name="pin" size={14} strokeWidth={1.8} color={colors.primary} /></View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={st.dropText} numberOfLines={1}>{item.mainLine}</Text>
-                              {item.subLine ? <Text style={st.dropSub} numberOfLines={1}>{item.subLine}</Text> : null}
-                            </View>
-                          </TouchableOpacity>
-                        )}
-                      />
-                    )}
-                  </View>
-                )}
-              </View>
-
-              {/* Hint — below search when no results showing */}
-              {!(searching || addressResults.length > 0) && (
-                <View style={[st.hintCard, { top: insets.top + 116 }]}>
-                  <NomadIcon name="info" size={14} strokeWidth={1.8} color="#888"  />
-                  <Text style={st.hintText}>Drag the map to move pin, or search above</Text>
-                </View>
-              )}
-
-              {/* Bottom: address pill + buttons (hidden when published) */}
-              {!published && (
-              <View style={[st.mapBottom, { paddingBottom: insets.bottom + 12 }]}>
-                <View style={st.addrPill}>
-                  <NomadIcon name="pin" size={14} strokeWidth={1.8} color="#00A699"  />
-                  <Text style={st.addrText} numberOfLines={1}>
-                    {locationName || cityName || 'Move map to set location'}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={[st.primaryBtn, { marginTop: 10 }, publishing && st.btnDisabled]}
-                  onPress={() => {
-                    if (!locationName) {
-                      reverseGeocode(pinLat, pinLng).then(addr => {
-                        if (addr) setLocationName(addr);
-                        handlePublish();
-                      });
-                    } else {
-                      handlePublish();
-                    }
-                  }}
-                  disabled={publishing}
-                  activeOpacity={0.8}
-                >
-                  <NomadIcon name="zap" size={18} strokeWidth={1.8} color="white"  />
-                  <Text style={st.primaryBtnText}>
-                    {publishing ? '...' : 'Add to Map!'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              )}
-            </View>
-          )}
+          {/* PAGE 3 (the internal MapView) has been removed.
+               Location picking happens exclusively on HomeScreen's
+               pickMode, which passes a frozen initialPick into
+               this sheet. There is no longer any code path that
+               sets page to 3, so the block is dead. Do not re-add
+               a MapView here — see CLAUDE.md "One Map" rule. */}
 
         </Animated.View>
 

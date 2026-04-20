@@ -1,25 +1,22 @@
 import {
   View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions,
-  Modal, TextInput, Platform, Keyboard, FlatList, ScrollView,
+  Modal, TextInput, Platform, Keyboard, ScrollView,
   UIManager, LayoutAnimation,
 } from 'react-native';
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NomadIcon from './NomadIcon';
-import MapView, { Region } from 'react-native-maps';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { useI18n } from '../lib/i18n';
 import { detectCategories } from '../lib/categoryDetector';
 import * as Haptics from 'expo-haptics';
 // Location helpers live in ONE module now (CLAUDE.md Rule Zero).
-// Any change to geocoding, GPS handling, or spoof detection must
-// happen in lib/locationServices.ts and ripples here automatically.
-import {
-  type GeoResult,
-  searchAddress,
-  reverseGeocode,
-  resolveLiveLocation,
-} from '../lib/locationServices';
+// MapView / Region / GeoResult / searchAddress / reverseGeocode are
+// gone from this file after Stage 7 — the sheet does not own a map
+// any more. resolveLiveLocation stays ONLY for the legacy fallback
+// path when initialPick is undefined (which should not happen in
+// normal user flow, but we keep the safety net).
+import { resolveLiveLocation } from '../lib/locationServices';
 
 const { height: SH, width: SW } = Dimensions.get('window');
 const OFFSCREEN = SH;
@@ -133,20 +130,20 @@ export default function TimerSheet({
   const [ageMin, setAgeMin] = useState(18);
   const [ageMax, setAgeMax] = useState(80);
 
-  /* Page 2 state (map) */
+  /* Location state — kept minimal after Stage 7. The sheet no
+   * longer owns a MapView, so there are no more map search /
+   * reverse-geocode / region tracking states here. `pinLat` /
+   * `pinLng` survive because handlePublish reads them; they are
+   * seeded from `initialPick` in the reset effect below. */
   const [pinLat, setPinLat] = useState(cityLat);
   const [pinLng, setPinLng] = useState(cityLng);
   const [addressLabel, setAddressLabel] = useState('');
-  const [geocoding, setGeocoding] = useState(false);
-  const mapRef = useRef<MapView>(null);
-  const geocodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<GeoResult[]>([]);
-  const [showResults, setShowResults] = useState(false);
-  const [searching, setSearching] = useState(false);
 
-  /* Live location state */
+  /* Live location state — only populated by fetchLiveLocation,
+   * which only runs when the sheet opens WITHOUT initialPick. In
+   * the normal pickMode flow these never fire. Kept as a
+   * last-ditch fallback so the sheet isn't completely blank if a
+   * future caller forgets to go through pickMode. */
   const [liveLat, setLiveLat] = useState<number | null>(null);
   const [liveLng, setLiveLng] = useState<number | null>(null);
   const [liveAddr, setLiveAddr] = useState('');
@@ -188,9 +185,6 @@ export default function TimerSheet({
         setAddressLabel('');
         setLiveAddr('');
       }
-      setSearchQuery('');
-      setSearchResults([]);
-      setShowResults(false);
       setGpsWarning(false);
       Animated.spring(translateY, {
         toValue: 0, useNativeDriver: true, tension: 65, friction: 11,
@@ -233,15 +227,12 @@ export default function TimerSheet({
       setPinLat(res.latitude);
       setPinLng(res.longitude);
 
-      // Label the pin. If the resolver fell back to city center
-      // there's no point hitting Nominatim; we already know the
-      // answer.
-      if (res.usedFallback) {
-        setLiveAddr(cityName);
-      } else {
-        const addr = await reverseGeocode(res.latitude, res.longitude);
-        setLiveAddr(addr || cityName);
-      }
+      // Label the pin with the city name only — the street-level
+      // reverse geocode lived on the internal MapView (page 2)
+      // which Stage 7 removed. If an external caller needs a
+      // street-level label they should go through HomeScreen's
+      // pickMode, which already reverse-geocodes as the user pans.
+      setLiveAddr(cityName);
     } catch (err) {
       // resolveLiveLocation is fully try-wrapped inside, so reaching
       // this catch means something weirder happened (e.g. we ran
@@ -256,102 +247,41 @@ export default function TimerSheet({
     }
   }, [cityName, cityLat, cityLng]);
 
-  /* ── Reverse geocode for map ── */
-  const doReverseGeocode = useCallback(async (lat: number, lng: number) => {
-    setGeocoding(true);
-    const addr = await reverseGeocode(lat, lng);
-    setAddressLabel(addr || cityName);
-    setGeocoding(false);
-  }, [cityName]);
-
-  const onMapRegionChange = useCallback((region: Region) => {
-    setPinLat(region.latitude);
-    setPinLng(region.longitude);
-    if (geocodeTimer.current) clearTimeout(geocodeTimer.current);
-    geocodeTimer.current = setTimeout(
-      () => doReverseGeocode(region.latitude, region.longitude), 600,
-    );
-  }, [doReverseGeocode]);
-
-  /* ── Address search — smart debounce ── */
-  const onSearchChange = useCallback((q: string) => {
-    setSearchQuery(q);
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    if (q.trim().length < 2) {
-      setSearchResults([]);
-      setShowResults(false);
-      setSearching(false);
-      return;
-    }
-    // Show spinner only, never "no results" while typing
-    setSearching(true);
-    setShowResults(true);
-    // 300ms debounce — Photon handles autocomplete, no need for long waits
-    searchTimerRef.current = setTimeout(async () => {
-      const sLat = liveLat ?? pinLat;
-      const sLng = liveLng ?? pinLng;
-      const results = await searchAddress(q.trim(), sLat, sLng, cityName);
-      setSearchResults(results);
-      setSearching(false);
-      if (results.length === 0) setShowResults(false);
-    }, 300);
-  }, [pinLat, pinLng, liveLat, liveLng, cityName]);
-
-  const onSelectResult = useCallback((result: GeoResult) => {
-    const lat = parseFloat(result.lat);
-    const lng = parseFloat(result.lon);
-    setPinLat(lat);
-    setPinLng(lng);
-    setAddressLabel(result.subLine ? `${result.mainLine}, ${result.subLine}` : result.mainLine);
-    setSearchQuery('');
-    setSearchResults([]);
-    setShowResults(false);
-    Keyboard.dismiss();
-    mapRef.current?.animateToRegion({
-      latitude: lat, longitude: lng,
-      latitudeDelta: 0.008, longitudeDelta: 0.008,
-    }, 600);
-  }, []);
+  /* Map / search / reverse-geocode helpers removed in Stage 7.
+   * They belonged to the defunct page-2 MapView. Location picking
+   * and address search happen on HomeScreen's pickMode now. If
+   * you find yourself wanting a quick "search address in this
+   * sheet" — extend pickMode, don't reintroduce a second map. */
 
   /* ── Navigation ── */
   const selectedCat = CATEGORIES.find(c => c.key === category);
   const canProceed = statusText.trim().length > 0;
 
-  const goToMap = () => {
-    Keyboard.dismiss();
-    // Use live GPS coords for the map if available
-    const mapLat = liveLat ?? userLat ?? pinLat;
-    const mapLng = liveLng ?? userLng ?? pinLng;
-    setPinLat(mapLat);
-    setPinLng(mapLng);
-    doReverseGeocode(mapLat, mapLng);
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setPage(2);
-  };
-
   const goBack = () => {
-    if (page === 2) {
-      Keyboard.dismiss();
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setPage(1);
-    } else {
-      onClose();
-    }
+    // page 2 no longer exists, but we keep the `if (page === 2)`
+    // branch for defensive clarity — it will simply never fire.
+    // Closing on back is the only path.
+    onClose();
   };
 
   /* ── Publish ── */
   const handlePublish = () => {
     if (publishing || !statusText.trim()) return;
     let lat: number, lng: number, locName: string;
-    if (locMode === 'live' && liveLat !== null && liveLng !== null) {
+    if (initialPick) {
+      // pickMode handed us a frozen coordinate — use it verbatim.
+      // This is the only path in the normal user flow.
+      lat = initialPick.latitude;
+      lng = initialPick.longitude;
+      locName = initialPick.address || cityName;
+    } else if (locMode === 'live' && liveLat !== null && liveLng !== null) {
+      // Legacy fallback: sheet opened without initialPick (should
+      // not happen) and the old live-GPS fetch succeeded.
       lat = liveLat;
       lng = liveLng;
       locName = liveAddr || cityName;
-    } else if (page === 2) {
-      lat = pinLat;
-      lng = pinLng;
-      locName = addressLabel || cityName;
     } else {
+      // Nothing — center on the city so we don't publish at (0, 0).
       lat = cityLat;
       lng = cityLng;
       locName = cityName;
@@ -580,11 +510,13 @@ export default function TimerSheet({
               </View>
               )}
 
-              {/* Buttons (hidden when published — success overlay takes over).
-                   With initialPick the button is always Publish (no map
-                   page to advance to). Without initialPick it depends on
-                   the user's locMode choice as before. */}
-              {!published && (initialPick || locMode === 'live' ? (
+              {/* Publish button — the only button on this page
+                   after Stage 7. Location was already chosen on
+                   HomeScreen's pickMode (or, in the unlikely case
+                   initialPick is null, we fall back to live GPS /
+                   city center inside handlePublish). Either way
+                   there is no second page to advance to. */}
+              {!published && (
                 <TouchableOpacity
                   style={[st.primaryBtn, !canProceed && st.btnDisabled]}
                   onPress={handlePublish}
@@ -596,17 +528,7 @@ export default function TimerSheet({
                     {publishing ? (t('common.loading') || '...') : (t('timer.goLive') || 'Go Live')}
                   </Text>
                 </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={[st.primaryBtn, !canProceed && st.btnDisabled]}
-                  onPress={goToMap}
-                  disabled={!canProceed}
-                  activeOpacity={0.8}
-                >
-                  <Text style={st.primaryBtnText}>{t('timer.chooseOnMap') || 'Choose on Map'}</Text>
-                  <NomadIcon name="forward" size={18} strokeWidth={1.8} color="white"  />
-                </TouchableOpacity>
-              ))}
+              )}
 
               {/* Chat expiry notice */}
               <View style={st.chatNotice}>
@@ -620,118 +542,12 @@ export default function TimerSheet({
             </ScrollView>
           )}
 
-          {/* ═══ PAGE 2 — MAP (full-screen) ═══ */}
-          {page === 2 && (
-            <View style={st.mapFull}>
-              <MapView
-                ref={mapRef}
-                style={StyleSheet.absoluteFillObject}
-                initialRegion={{
-                  latitude: pinLat,
-                  longitude: pinLng,
-                  latitudeDelta: 0.012,
-                  longitudeDelta: 0.012,
-                }}
-                onRegionChangeComplete={onMapRegionChange}
-                showsUserLocation
-                showsCompass={false}
-                showsMyLocationButton={false}
-                // @ts-ignore
-                mapLanguage="en"
-              />
-
-              {/* Center pin overlay */}
-              <View style={st.pinOverlay} pointerEvents="none">
-                <NomadIcon name="pin" size={36} strokeWidth={1.8} color={colors.primary}  />
-                <View style={st.pinDot} />
-              </View>
-
-              {/* Top bar: back + step */}
-              <View style={[st.mapTopBar, { top: insets.top + 8 }]}>
-                <TouchableOpacity onPress={goBack} style={st.mapBackBtn}>
-                  <NomadIcon name="back" size={18} strokeWidth={1.8} color="#1A1A1A"  />
-                </TouchableOpacity>
-                <View style={{ flex: 1 }} />
-                <View style={st.stepBadgeMap}>
-                  <Text style={st.stepText}>2/2</Text>
-                </View>
-              </View>
-
-              {/* Search bar — always visible */}
-              <View style={[st.searchWrap, { top: insets.top + 56 }]}>
-                <View style={st.searchBar}>
-                  <NomadIcon name="search" size={18} strokeWidth={1.8} color="#aaa"  />
-                  <TextInput
-                    style={st.searchInput}
-                    placeholder={t('timer.searchAddress') || 'Search address or place...'}
-                    placeholderTextColor="#AAA"
-                    value={searchQuery}
-                    onChangeText={onSearchChange}
-                    returnKeyType="search"
-                  />
-                  {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); setShowResults(false); }}>
-                      <NomadIcon name="close" size={18} strokeWidth={1.8} color="#aaa"  />
-                    </TouchableOpacity>
-                  )}
-                </View>
-                {showResults && (searching || searchResults.length > 0) && (
-                  <View style={st.dropdown}>
-                    {searching ? (
-                      <View style={st.dropItem}><Text style={st.dropTextMuted}>Searching...</Text></View>
-                    ) : (
-                      <FlatList
-                        data={searchResults}
-                        keyExtractor={(_, i) => `r${i}`}
-                        keyboardShouldPersistTaps="handled"
-                        style={{ maxHeight: 200 }}
-                        renderItem={({ item }) => (
-                          <TouchableOpacity style={st.dropItem} onPress={() => onSelectResult(item)} activeOpacity={0.7}>
-                            <View style={{ marginTop: 2 }}><NomadIcon name="pin" size={14} strokeWidth={1.8} color={colors.primary} /></View>
-                            <View style={{ flex: 1 }}>
-                              <Text style={st.dropText} numberOfLines={1}>{item.mainLine}</Text>
-                              {item.subLine ? <Text style={st.dropSub} numberOfLines={1}>{item.subLine}</Text> : null}
-                            </View>
-                          </TouchableOpacity>
-                        )}
-                      />
-                    )}
-                  </View>
-                )}
-              </View>
-
-              {/* Hint — below search when no results showing */}
-              {!(showResults && (searching || searchResults.length > 0)) && (
-                <View style={[st.hintCard, { top: insets.top + 116 }]}>
-                  <NomadIcon name="info" size={14} strokeWidth={1.8} color="#888"  />
-                  <Text style={st.hintText}>Drag the map to move pin, or search above</Text>
-                </View>
-              )}
-
-              {/* Bottom: address pill + Go Live button (hidden when published) */}
-              {!published && (
-              <View style={[st.mapBottom, { paddingBottom: insets.bottom + 12 }]}>
-                <View style={st.addrPill}>
-                  <NomadIcon name="pin" size={14} strokeWidth={1.8} color="#00A699"  />
-                  <Text style={st.addrText} numberOfLines={1}>
-                    {geocoding ? (t('common.loading') || '...') : (addressLabel || cityName)}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={[st.primaryBtn, { marginTop: 10 }, publishing && st.btnDisabled]}
-                  onPress={handlePublish}
-                  disabled={publishing}
-                  activeOpacity={0.8}
-                >
-                  <NomadIcon name="zap" size={18} strokeWidth={1.8} color="white"  />
-                  <Text style={st.primaryBtnText}>
-                    {publishing ? (t('common.loading') || '...') : (t('timer.goLive') || 'Go Live')}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              )}
-            </View>
-          )}
+          {/* PAGE 2 (the internal MapView) has been removed.
+               Location picking happens exclusively on HomeScreen's
+               pickMode, which passes a frozen initialPick into
+               this sheet. There is no longer any code path that
+               sets page to 2, so the block is dead. Do not re-add
+               a MapView here — see CLAUDE.md "One Map" rule. */}
         </Animated.View>
 
         {/* ═══ Success overlay — floats ABOVE the sheet ═══ */}
