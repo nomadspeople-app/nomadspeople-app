@@ -16,13 +16,20 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView from 'react-native-maps';
 import NomadIcon from './NomadIcon';
-import * as Location from 'expo-location';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import DualThumbSlider from './DualThumbSlider';
 import { useI18n } from '../lib/i18n';
 import * as Haptics from 'expo-haptics';
 import { detectCategories } from '../lib/categoryDetector';
-import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
+// Location helpers live in ONE module now (CLAUDE.md Rule Zero).
+// Status and Timer share the same code path; a fix in one is a fix
+// in both, automatically.
+import {
+  type GeoResult,
+  searchAddress,
+  reverseGeocode,
+  resolveLiveLocation,
+} from '../lib/locationServices';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const OFFSCREEN = SH;
@@ -57,47 +64,10 @@ const buildDays = () => {
   return out;
 };
 
-/* ═══ Geocoding — Photon (autocomplete) + Nominatim (reverse) ═══ */
-interface GeoResult { display_name: string; lat: string; lon: string; mainLine: string; subLine: string }
-
-/** Parse a Photon GeoJSON feature into our GeoResult */
-function formatPhoton(f: any): GeoResult {
-  const p = f.properties || {};
-  const coords = f.geometry?.coordinates || [0, 0]; // [lon, lat]
-  const name = p.name || '';
-  const street = p.street || '';
-  const num = p.housenumber || '';
-  const hood = p.suburb || p.district || '';
-  const city = p.city || p.town || p.village || '';
-  const mainLine = name || (num ? `${street} ${num}` : street) || '';
-  const sub = [hood, city].filter(Boolean);
-  const subLine = sub.length ? sub.join(', ') : (p.state || p.country || '');
-  const display = [mainLine, ...sub].filter(Boolean).join(', ');
-  return { display_name: display, lat: String(coords[1]), lon: String(coords[0]), mainLine, subLine };
-}
-
-/**
- * Photon autocomplete — partial/typeahead matching.
- * "nahala" → "Nahalat Binyamin", "rothsch" → "Rothschild Boulevard"
- * Location-biased by lat/lon.
- */
-async function searchAddress(q: string, lat: number, lng: number, _city?: string): Promise<GeoResult[]> {
-  if (q.length < 2) return [];
-  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&limit=5&lang=en`;
-  const data = await fetchJsonWithTimeout<any>(url, { tag: 'photon.address', timeoutMs: 7000 });
-  if (data?.features?.length > 0) return data.features.map(formatPhoton);
-  return [];
-}
-
-/** Reverse geocode — Nominatim (still best for this) */
-async function reverseGeocode(lat: number, lng: number): Promise<string> {
-  const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=en`;
-  const data = await fetchJsonWithTimeout<any>(url, { tag: 'nominatim.reverse', timeoutMs: 7000 });
-  if (!data) return '';
-  const addr = data.address || {};
-  const parts = [addr.road, addr.house_number, addr.neighbourhood || addr.suburb].filter(Boolean);
-  return parts.join(' ') || data.display_name?.split(',').slice(0, 2).join(',') || '';
-}
+/* ═══ Geocoding + GPS + IP + spoof detection live in
+ *    lib/locationServices.ts. This file only composes them into
+ *    the sheet's state machine; it does not reimplement any of it.
+ *    ═══════════════════════════════════════════════════════════ */
 
 /* ═══ Exported interface ═══ */
 export interface QuickActivityData {
@@ -205,27 +175,34 @@ export default function QuickStatusSheet({
   const mapRef = useRef<MapView>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /* ── Fetch real GPS on open ── */
+  /* ── Fetch real GPS on open ──
+   *
+   * Thin wrapper around `resolveLiveLocation` in locationServices.
+   * Same flow as TimerSheet — GPS + IP in parallel, 5 km drift
+   * spoof check, graceful fallback to the city center. The shared
+   * resolver also covers the "both providers failed" branch that
+   * the old simpler fetch silently returned from. */
   const fetchGPS = useCallback(async () => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        console.log('[StatusSheet] Location permission denied');
-        return;
-      }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      console.log(`[StatusSheet] GPS: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} accuracy: ${pos.coords.accuracy?.toFixed(0)}m`);
-      setPinLat(pos.coords.latitude);
-      setPinLng(pos.coords.longitude);
-      // Animate map to real location
+      const res = await resolveLiveLocation(cityLat, cityLng);
+      // If we actually got a live signal, move the pin and the
+      // map to match. If we had to fall back (permission denied
+      // AND both providers failed) we leave the map where it was
+      // — staying on the city center is a better landing than
+      // jerking the camera.
+      if (res.usedFallback) return;
+      setPinLat(res.latitude);
+      setPinLng(res.longitude);
       mapRef.current?.animateToRegion({
-        latitude: pos.coords.latitude, longitude: pos.coords.longitude,
-        latitudeDelta: 0.01, longitudeDelta: 0.01,
+        latitude: res.latitude,
+        longitude: res.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
       }, 500);
     } catch (e) {
       console.warn('[StatusSheet] GPS error:', e);
     }
-  }, []);
+  }, [cityLat, cityLng]);
 
   /* ── Reset on open ── */
   useEffect(() => {
