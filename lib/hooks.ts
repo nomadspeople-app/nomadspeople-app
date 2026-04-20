@@ -199,42 +199,135 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
 
 /* ═══════════════════════════════════════════
    HOT CHECKINS — checkins with recent chat activity
-   Returns a Map<checkin_id, recentMsgCount> for pulse animation
-   ═══════════════════════════════════════════ */
+   Returns a Map<checkin_id, heatLevel> for pulse animation
+   ═══════════════════════════════════════════
+
+   Stage 10 of the no-band-aids refactor (April 2026): this hook
+   used to poll `app_conversations` every 60 seconds across all
+   active clients. At 100 concurrent users that's 100 queries per
+   minute just for the "hot" halo on map pins — and it was what
+   took the DB over the edge overnight.
+
+   New design:
+
+   1) Initial fetch on mount — ONE query per mount, gets every
+      checkin whose linked conversation had a message in the last
+      5 minutes.
+   2) Supabase Realtime subscription on `app_conversations`
+      UPDATE — when a chat ticks forward, we get a push with the
+      new `last_message_at`. No polling.
+   3) Local heat decay — the 1 / 3 / 2 / 1 scale depends on HOW
+      LONG AGO the last message was, so "heat" naturally drops
+      over time even without new activity. We recompute hotMap
+      from the stored last-message timestamps every 30 seconds on
+      the client (no DB). Decay is cheap, deterministic, and
+      invisible to the server.
+
+   Net: the hook hits the DB once per mount and never again. The
+   visual heat UI looks identical to the old polled version. */
 export function useHotCheckins(city: string) {
+  // Per-checkin "last message at" timestamps (ms since epoch).
+  // This is the raw input — Realtime writes into it, decay reads
+  // from it. hotMap below is derived from it.
+  const [lastMsgMap, setLastMsgMap] = useState<Map<string, number>>(new Map());
   const [hotMap, setHotMap] = useState<Map<string, number>>(new Map());
 
+  /* ── 1) Initial fetch + Realtime subscription ── */
   useEffect(() => {
-    const poll = async () => {
-      const { data } = await supabase
+    let cancelled = false;
+
+    const fetchInitial = async () => {
+      const cutoff = new Date(Date.now() - 5 * 60000).toISOString();
+      const { data, error } = await supabase
         .from('app_conversations')
         .select('checkin_id, last_message_at')
         .not('checkin_id', 'is', null)
-        .gte('last_message_at', new Date(Date.now() - 5 * 60000).toISOString());
-
-      if (data && data.length > 0) {
-        const map = new Map<string, number>();
-        for (const c of data) {
-          if (!c.checkin_id) continue;
-          // Approximate "heat" by how recent last_message_at is (1-3 scale)
-          const ago = (Date.now() - new Date(c.last_message_at).getTime()) / 60000;
-          const heat = ago < 1 ? 3 : ago < 3 ? 2 : 1;
-          map.set(c.checkin_id, Math.max(map.get(c.checkin_id) || 0, heat));
-        }
-        setHotMap(map);
-      } else {
-        setHotMap(new Map());
+        .gte('last_message_at', cutoff);
+      if (cancelled) return;
+      if (error) {
+        console.warn('[useHotCheckins] initial fetch failed:', error.message);
+        return;
       }
+      const next = new Map<string, number>();
+      for (const c of data || []) {
+        if (!c.checkin_id || !c.last_message_at) continue;
+        const ts = new Date(c.last_message_at).getTime();
+        next.set(c.checkin_id, Math.max(next.get(c.checkin_id) || 0, ts));
+      }
+      setLastMsgMap(next);
     };
 
-    poll();
-    // 15s → 60s (2026-04-20 DB load cleanup). "Hot checkin" heat
-    // state only changes when a new message lands, which Realtime
-    // already notifies us about — polling is a fallback, not the
-    // primary source.
-    const iv = setInterval(poll, 60000);
-    return () => clearInterval(iv);
+    fetchInitial();
+
+    // Realtime: every app_conversations UPDATE flows through
+    // here. We receive updates for ALL cities — client-side heat
+    // is global anyway (a hot pin shows regardless of which city
+    // bucket the map is centered on), so we don't try to filter
+    // at the channel level. Channel name includes `city` so React
+    // can unsubscribe + resubscribe cleanly when the user
+    // switches cities (rare, but free).
+    const channel = supabase
+      .channel(`hot-checkins-${city}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'app_conversations' },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row?.checkin_id || !row?.last_message_at) return;
+          const ts = new Date(row.last_message_at).getTime();
+          setLastMsgMap(prev => {
+            const existing = prev.get(row.checkin_id) || 0;
+            if (ts <= existing) return prev; // no-op, don't re-render
+            const next = new Map(prev);
+            next.set(row.checkin_id, ts);
+            return next;
+          });
+        },
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[useHotCheckins] realtime status:', status);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [city]);
+
+  /* ── 2) Recompute heat from timestamps — decay + fresh data ── */
+  useEffect(() => {
+    const recompute = () => {
+      const now = Date.now();
+      const next = new Map<string, number>();
+      for (const [id, ts] of lastMsgMap.entries()) {
+        const ago = (now - ts) / 60000; // minutes
+        if (ago > 5) continue; // cold — drop from the map
+        // Same 1 / 2 / 3 scale the old polling version used.
+        const heat = ago < 1 ? 3 : ago < 3 ? 2 : 1;
+        next.set(id, heat);
+      }
+      // Skip setState if the new map is identical to prev — avoids
+      // waking re-renders while nothing visually changed (same
+      // guard pattern as HomeScreen's region-change handler).
+      setHotMap(prev => {
+        if (prev.size !== next.size) return next;
+        for (const [id, heat] of next) {
+          if (prev.get(id) !== heat) return next;
+        }
+        return prev;
+      });
+    };
+
+    recompute();
+    // 30s is twice as frequent as the old 60s poll but costs
+    // zero DB — it's pure in-memory arithmetic. Users notice heat
+    // fading faster, which matches the "this pin is HOT right
+    // now" metaphor better than a 60s lag.
+    const iv = setInterval(recompute, 30000);
+    return () => clearInterval(iv);
+  }, [lastMsgMap]);
 
   return hotMap;
 }
