@@ -102,11 +102,17 @@ interface Props {
   publishing?: boolean;
   userAvatarUrl?: string | null;
   userName?: string;
+  /** When set, the sheet opens with a pre-chosen location from
+   *  HomeScreen's pickMode. Page 3 (the internal map) is skipped
+   *  entirely — the user only sees the WHAT and WHEN-WHO pages.
+   *  Passing null opens the sheet in its legacy full-wizard mode
+   *  with the internal map, kept for fallback during rollout. */
+  initialPick?: { latitude: number; longitude: number; address: string } | null;
 }
 
 /* ═══ MAIN COMPONENT ═══ */
 export default function QuickStatusSheet({
-  visible, onClose, onPublish, onChat, cityName, cityLat, cityLng, userLat, userLng, publishing, userAvatarUrl, userName,
+  visible, onClose, onPublish, onChat, cityName, cityLat, cityLng, userLat, userLng, publishing, userAvatarUrl, userName, initialPick,
 }: Props) {
   const { t } = useI18n();
   const { colors } = useTheme();
@@ -220,17 +226,30 @@ export default function QuickStatusSheet({
       setAgeMax(80);
       setIsOpen(true);
       setPublished(false);
-      // Use real GPS position if available — instant, no waiting
-      setPinLat(userLat ?? cityLat);
-      setPinLng(userLng ?? cityLng);
-      setLocationName('');
+      // If HomeScreen pickMode already resolved a location, use it
+      // and DO NOT hit GPS again — the pin is frozen at what the
+      // user confirmed on the main map. Otherwise fall back to the
+      // old "seed with cached coords then refresh with GPS" path,
+      // kept for safety in case the sheet is ever opened without
+      // initialPick (e.g. an old flow or a deep link).
+      if (initialPick) {
+        setPinLat(initialPick.latitude);
+        setPinLng(initialPick.longitude);
+        setLocationName(initialPick.address || '');
+      } else {
+        setPinLat(userLat ?? cityLat);
+        setPinLng(userLng ?? cityLng);
+        setLocationName('');
+      }
       setAddressQuery('');
       setAddressResults([]);
       Animated.spring(translateY, {
         toValue: 0, useNativeDriver: true, tension: 65, friction: 11,
       }).start();
-      // Background GPS refresh for extra accuracy (non-blocking)
-      fetchGPS();
+      // Background GPS refresh only when we DON'T have a pre-picked
+      // location. With initialPick, hitting GPS would defeat the
+      // whole point of the unified-map flow (the user already chose).
+      if (!initialPick) fetchGPS();
     } else {
       Animated.timing(translateY, {
         toValue: OFFSCREEN, duration: 250, useNativeDriver: true,
@@ -271,12 +290,24 @@ export default function QuickStatusSheet({
   const HOURS = Array.from({ length: 24 }, (_, i) => i);
   const MINUTES = [0, 15, 30, 45];
 
-  /* ── Navigation ── */
+  /* ── Navigation ──
+   *
+   * Normally the wizard is 3 pages: WHAT → WHEN/WHO → WHERE (map).
+   * With `initialPick` the location is already chosen, so the map
+   * page is skipped entirely: on page 2, "Next" becomes "Publish"
+   * and fires handlePublish directly. `skipMapPage` is the flag
+   * the rest of the component checks. */
   const canGoPage2 = activityText.trim().length > 0;
+  const skipMapPage = !!initialPick;
 
   const goNext = () => {
     Keyboard.dismiss();
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    if (skipMapPage && page === 2) {
+      // With a pre-chosen location we publish straight from page 2.
+      handlePublish();
+      return;
+    }
     setPage(Math.min(page + 1, 3) as PageNum);
   };
   const goBack = () => {
@@ -544,10 +575,24 @@ export default function QuickStatusSheet({
                 </TouchableOpacity>
               </View>
 
-              {/* Next */}
-              <TouchableOpacity style={st.primaryBtn} onPress={goNext} activeOpacity={0.8}>
-                <Text style={st.primaryBtnText}>Choose Location</Text>
-                <NomadIcon name="forward" size={18} strokeWidth={1.8} color="white"  />
+              {/* Next — when initialPick is set, this acts as
+                   Publish (the location is already chosen on the
+                   main map). Without initialPick we still let the
+                   user pick on page 3's internal map (legacy path,
+                   kept for safety until the next stage of the
+                   refactor deletes it). */}
+              <TouchableOpacity
+                style={st.primaryBtn}
+                onPress={goNext}
+                activeOpacity={0.8}
+                disabled={publishing}
+              >
+                <Text style={st.primaryBtnText}>
+                  {skipMapPage ? (publishing ? 'Publishing…' : 'Publish') : 'Choose Location'}
+                </Text>
+                {!skipMapPage && (
+                  <NomadIcon name="forward" size={18} strokeWidth={1.8} color="white"  />
+                )}
               </TouchableOpacity>
               <View style={{ height: 24 }} />
             </ScrollView>

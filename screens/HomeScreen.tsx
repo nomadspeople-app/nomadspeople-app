@@ -21,6 +21,11 @@ import { useAvatar } from '../lib/AvatarContext';
 import { useI18n } from '../lib/i18n';
 import { supabase } from '../lib/supabase';
 import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
+// The single source of truth for address reverse-geocoding. Used by
+// pickMode below to label the pin with the current neighborhood /
+// street while the user pans. DO NOT reach into Nominatim directly —
+// all callers go through lib/locationServices (CLAUDE.md Rule Zero).
+import { reverseGeocode as reverseGeocodeAddress } from '../lib/locationServices';
 import { trackEvent } from '../lib/tracking';
 import ProfileCardSheet from '../components/ProfileCardSheet';
 import NotificationsSheet from '../components/NotificationsSheet';
@@ -447,6 +452,93 @@ export default function HomeScreen() {
   const [userLat, setUserLat] = useState<number | null>(null);
   const [userLng, setUserLng] = useState<number | null>(null);
   const gpsInitDone = useRef(false);
+
+  /* ═══ PICK MODE — the one-map location picker ═══════════════════
+   *
+   * Before this existed, Status and Timer each rendered their OWN
+   * MapView inside their sheet. That's how the codebase ended up
+   * with 6 MapView instances — each a different world with its own
+   * state, GPS fetcher, and race conditions. The product felt like
+   * "why did my pin jump to the sea when I opened Timer".
+   *
+   * pickMode folds location-picking back onto the ONE MapView —
+   * the HomeScreen map the user is already looking at. When the
+   * user taps the Status or Timer button:
+   *
+   *   1. pickMode flips from 'browse' to 'status' | 'timer'
+   *   2. A center-pin overlay appears on the main map
+   *   3. A bottom panel shows the reverse-geocoded address and
+   *      the "Continue" / "Cancel" buttons
+   *   4. As the user pans, onRegionChangeComplete updates pickLat
+   *      / pickLng and debounces reverseGeocodeAddress so the
+   *      address label tracks the pin
+   *   5. On Continue — we open QuickStatusSheet / TimerSheet with
+   *      the pre-picked coords via `initialPick`, and the sheet
+   *      skips its internal map page entirely
+   *
+   * The sheet's own MapView is reachable only if a sheet opens
+   * without `initialPick` (nothing does any more), so in practice
+   * it never mounts. Stage 7 of this refactor deletes it outright. */
+  type PickMode = 'browse' | 'status' | 'timer';
+  const [pickMode, setPickMode] = useState<PickMode>('browse');
+  const [pickLat, setPickLat] = useState<number>(0);
+  const [pickLng, setPickLng] = useState<number>(0);
+  const [pickAddr, setPickAddr] = useState<string>('');
+  const [pickResolving, setPickResolving] = useState(false);
+  // Captured-at-commit-time payload handed into the sheet as
+  // `initialPick`. We freeze it when the user taps Continue so the
+  // sheet never sees the pick mutate underneath it.
+  const [initialPick, setInitialPick] = useState<
+    { latitude: number; longitude: number; address: string } | null
+  >(null);
+  const pickGeocodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Enter pickMode for either 'status' or 'timer'. Seeds the pin
+   *  to the user's last known GPS when available, otherwise to the
+   *  current city's center. Animates the map there so the opening
+   *  experience always lands somewhere sensible. */
+  const enterPickMode = useCallback((kind: 'status' | 'timer') => {
+    const seedLat = userLat ?? currentCity.lat;
+    const seedLng = userLng ?? currentCity.lng;
+    setPickLat(seedLat);
+    setPickLng(seedLng);
+    setPickAddr('');
+    setPickResolving(true);
+    setPickMode(kind);
+    mapRef.current?.animateToRegion({
+      latitude: seedLat, longitude: seedLng,
+      latitudeDelta: 0.006, longitudeDelta: 0.006,
+    }, 450);
+    Haptics.selectionAsync().catch(() => {});
+  }, [userLat, userLng, currentCity.lat, currentCity.lng]);
+
+  /** Exit pickMode without committing. Also called on Cancel. */
+  const exitPickMode = useCallback(() => {
+    if (pickGeocodeTimer.current) {
+      clearTimeout(pickGeocodeTimer.current);
+      pickGeocodeTimer.current = null;
+    }
+    setPickMode('browse');
+    setPickAddr('');
+    setPickResolving(false);
+  }, []);
+
+  /** Commit the current pick and hand it to the appropriate sheet.
+   *  The sheet receives a frozen snapshot of coords + address so
+   *  the pin can't shift under its feet while the user fills in
+   *  the form. */
+  const commitPick = useCallback(() => {
+    const kind = pickMode;
+    const snapshot = {
+      latitude: pickLat,
+      longitude: pickLng,
+      address: pickAddr,
+    };
+    exitPickMode();
+    setInitialPick(snapshot);
+    if (kind === 'status') setShowQuickStatus(true);
+    if (kind === 'timer') setShowTimer(true);
+  }, [pickMode, pickLat, pickLng, pickAddr, exitPickMode]);
 
   const refreshGPS = useCallback(async () => {
     try {
@@ -1180,6 +1272,34 @@ export default function HomeScreen() {
             }
             return new Set(nextIds);
           });
+
+          // ── pickMode: track the center of the settled region as
+          //    the user's pick, and reverse-geocode with a debounce.
+          //    We only do this while pickMode is active so the
+          //    geocoder isn't pestered during normal browsing.
+          if (pickMode !== 'browse') {
+            setPickLat(region.latitude);
+            setPickLng(region.longitude);
+            setPickResolving(true);
+            if (pickGeocodeTimer.current) clearTimeout(pickGeocodeTimer.current);
+            // 350ms debounce — a human drag settles around 250-300ms
+            // before they let go; this avoids Nominatim requests for
+            // every micro-adjustment.
+            pickGeocodeTimer.current = setTimeout(async () => {
+              const addr = await reverseGeocodeAddress(
+                region.latitude, region.longitude,
+              );
+              // Only commit if we're still in pickMode — user may
+              // have cancelled while we were awaiting the network.
+              setPickMode(current => {
+                if (current !== 'browse') {
+                  setPickAddr(addr || currentCity.name || '');
+                  setPickResolving(false);
+                }
+                return current;
+              });
+            }, 350);
+          }
         }}
       >
         {/* ── ALL NOMAD MARKERS — show full density ── */}
@@ -1187,6 +1307,92 @@ export default function HomeScreen() {
           buildNomadMarker(c, i, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins)
         )}
       </MapView>
+
+      {/* ═══════════════════════════════════════════════════════════
+           PICK MODE OVERLAY — center pin + bottom panel
+           ═══════════════════════════════════════════════════════════
+           Rendered ONLY while the user is picking a location for a
+           new Status or Timer. The pin is an absolute-positioned
+           View at the geometric center of the map — NOT a Marker,
+           because we want it glued to the SCREEN, not to a
+           coordinate (same technique Waze, Uber, and Google Maps
+           use for "drop a pin" flows).
+           ═══════════════════════════════════════════════════════════ */}
+      {pickMode !== 'browse' && (
+        <>
+          {/* Center pin — sits at screen-center, not at any coord.
+               pointerEvents="none" so the map underneath still
+               receives pan / zoom gestures. */}
+          <View style={st.pickPinWrap} pointerEvents="none">
+            <View style={st.pickPinShadow} />
+            <NomadIcon
+              name="pin"
+              size={s(22)}
+              strokeWidth={2}
+              color={pickMode === 'timer' ? '#FF6B6B' : '#4ADE80'}
+            />
+          </View>
+
+          {/* Bottom panel — address label + Continue / Cancel.
+               Sits above the tab bar and below the map. The whole
+               panel is a solid card so the user understands this is
+               a modal-like state, not normal browse. */}
+          <View
+            style={[
+              st.pickPanel,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.borderSoft,
+                bottom: insets.bottom + s(12),
+              },
+            ]}
+          >
+            <View style={st.pickPanelHeader}>
+              <NomadIcon
+                name="pin"
+                size={s(6)}
+                color={pickMode === 'timer' ? '#FF6B6B' : '#4ADE80'}
+                strokeWidth={2}
+              />
+              <Text style={[st.pickPanelTitle, { color: colors.dark }]}>
+                {pickMode === 'timer' ? 'Pick timer location' : 'Pick status location'}
+              </Text>
+            </View>
+            <Text
+              style={[st.pickPanelAddress, { color: colors.textMuted }]}
+              numberOfLines={2}
+            >
+              {pickResolving
+                ? 'Finding address…'
+                : pickAddr || currentCity.name}
+            </Text>
+            <View style={st.pickPanelRow}>
+              <TouchableOpacity
+                style={[st.pickPanelCancel, { borderColor: colors.borderSoft }]}
+                activeOpacity={0.7}
+                onPress={exitPickMode}
+              >
+                <Text style={[st.pickPanelCancelText, { color: colors.textMuted }]}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  st.pickPanelContinue,
+                  {
+                    backgroundColor:
+                      pickMode === 'timer' ? '#FF6B6B' : '#4ADE80',
+                  },
+                ]}
+                activeOpacity={0.8}
+                onPress={commitPick}
+              >
+                <Text style={st.pickPanelContinueText}>Continue</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
+      )}
 
       {/* ── Bottom-sheet timer bubble ──
            Slides up from above the tab bar. Owns its own CTA
@@ -1459,9 +1665,11 @@ export default function HomeScreen() {
                       setShowCancelTimer(true);
                     }, () => setShowCancelTimer(true));
                 } else {
-                  setShowTimer(true);
+                  // No active timer — enter pickMode on the main map
+                  // instead of opening a sheet with a second map.
+                  enterPickMode('timer');
                 }
-              }, () => setShowTimer(true));
+              }, () => enterPickMode('timer'));
           }}
         >
           <NomadIcon name="timer" size={s(10)} color="#FF6B6B" strokeWidth={1.8} />
@@ -1473,7 +1681,10 @@ export default function HomeScreen() {
           activeOpacity={0.85}
           onPress={() => {
             if (!userId) return;
-            // Check for active status in background — open sheet immediately if query is slow
+            // Check for active status in background — if none, jump
+            // straight into pickMode on the main map. If there IS
+            // an active status, we confirm replace first and then
+            // enter pickMode (see the Replace confirm button below).
             supabase
               .from('app_checkins')
               .select('id')
@@ -1486,9 +1697,9 @@ export default function HomeScreen() {
                 if (activeStatus) {
                   setShowReplaceStatus(true);
                 } else {
-                  setShowQuickStatus(true);
+                  enterPickMode('status');
                 }
-              }, () => setShowQuickStatus(true));
+              }, () => enterPickMode('status'));
           }}
         >
           <NomadIcon name="plus" size={s(10)} color="#4ADE80" strokeWidth={2} />
@@ -1606,10 +1817,14 @@ export default function HomeScreen() {
         }}
       />
 
-      {/* ── Quick Status Sheet ── */}
+      {/* ── Quick Status Sheet ──
+           Receives `initialPick` from pickMode — when set, the sheet
+           skips its own internal map page entirely and the user sees
+           only the WHAT / WHEN-WHO pages. The sheet's MapView never
+           mounts in this flow, which is the whole point. */}
       <QuickStatusSheet
         visible={showQuickStatus}
-        onClose={() => setShowQuickStatus(false)}
+        onClose={() => { setShowQuickStatus(false); setInitialPick(null); }}
         onPublish={handleQuickPublish}
         cityName={currentCity.name}
         cityLat={currentCity.lat}
@@ -1617,12 +1832,13 @@ export default function HomeScreen() {
         userLat={userLat}
         userLng={userLng}
         publishing={quickPublishing}
+        initialPick={initialPick}
       />
 
       {/* ── Timer Sheet ── */}
       <TimerSheet
         visible={showTimer}
-        onClose={() => setShowTimer(false)}
+        onClose={() => { setShowTimer(false); setInitialPick(null); }}
         onPublish={handleTimerPublish}
         cityName={currentCity.name}
         cityLat={currentCity.lat}
@@ -1630,6 +1846,7 @@ export default function HomeScreen() {
         userLat={userLat}
         userLng={userLng}
         publishing={timerPublishing}
+        initialPick={initialPick}
       />
 
       {/* ── פניני חוכמה — Wisdom Prompt ── */}
@@ -1686,7 +1903,10 @@ export default function HomeScreen() {
               activeOpacity={0.7}
               onPress={() => {
                 setShowReplaceStatus(false);
-                setShowQuickStatus(true);
+                // Enter pickMode on the main map — the replace itself
+                // happens inside handleQuickPublish, which expires the
+                // old status before inserting the new one.
+                enterPickMode('status');
               }}
             >
               <Text style={st.cancelReasonEmoji}>🔄</Text>
@@ -1722,6 +1942,93 @@ export default function HomeScreen() {
 const makeStyles = (c: ThemeColors) => StyleSheet.create({
   container: { flex: 1 },
   map: { ...StyleSheet.absoluteFillObject },
+
+  /* ── Pick-mode overlay (pin + bottom panel) ──
+     Pin sits at the geometric center of the visible map area, NOT
+     anchored to a coordinate, so it tracks the screen as the user
+     pans. The shadow gives it a touch of dimensionality so it
+     doesn't look painted on. */
+  pickPinWrap: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginLeft: -s(11),
+    // Slight negative Y because the pin's visual weight is at the
+    // bottom — the tip should land at the center, not the head.
+    marginTop: -s(20),
+    alignItems: 'center',
+    zIndex: 80,
+  },
+  pickPinShadow: {
+    position: 'absolute',
+    bottom: -s(2),
+    width: s(8),
+    height: s(2.5),
+    borderRadius: s(1.5),
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    transform: [{ scaleX: 1.4 }],
+  },
+  pickPanel: {
+    position: 'absolute',
+    left: s(10),
+    right: s(10),
+    borderRadius: s(10),
+    borderWidth: 0.5,
+    paddingHorizontal: s(10),
+    paddingVertical: s(8),
+    zIndex: 90,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: s(2) },
+    shadowOpacity: 0.18,
+    shadowRadius: s(6),
+    elevation: 6,
+  },
+  pickPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: s(3),
+    marginBottom: s(2),
+  },
+  pickPanelTitle: {
+    fontSize: s(6.5),
+    fontWeight: FW.semi,
+    letterSpacing: 0.1,
+  },
+  pickPanelAddress: {
+    fontSize: s(6),
+    fontWeight: FW.regular,
+    marginBottom: s(8),
+    minHeight: s(14),
+  },
+  pickPanelRow: {
+    flexDirection: 'row',
+    gap: s(6),
+  },
+  pickPanelCancel: {
+    flex: 1,
+    height: s(18),
+    borderRadius: s(7),
+    borderWidth: 0.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickPanelCancelText: {
+    fontSize: s(7),
+    fontWeight: FW.medium,
+  },
+  pickPanelContinue: {
+    flex: 2,
+    height: s(18),
+    borderRadius: s(7),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickPanelContinueText: {
+    fontSize: s(7),
+    fontWeight: FW.bold,
+    color: '#FFF',
+    letterSpacing: 0.2,
+  },
 
   /* ── Welcome celebration overlay ── */
   welcomeOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', zIndex: 9999 },

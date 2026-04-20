@@ -71,12 +71,18 @@ interface Props {
   userLat?: number | null;
   userLng?: number | null;
   publishing?: boolean;
+  /** When set, the sheet opens with a pre-chosen location from
+   *  HomeScreen's pickMode. Page 2 (the internal map) is skipped
+   *  entirely — the user only sees the details page and publishes
+   *  directly from it. Passing null opens the sheet in its legacy
+   *  2-page mode with the internal map, kept for fallback. */
+  initialPick?: { latitude: number; longitude: number; address: string } | null;
 }
 
 import DualThumbSlider from './DualThumbSlider';
 
 export default function TimerSheet({
-  visible, onClose, onPublish, cityName, cityLat, cityLng, userLat, userLng, publishing,
+  visible, onClose, onPublish, cityName, cityLat, cityLng, userLat, userLng, publishing, initialPick,
 }: Props) {
   const { t } = useI18n();
   const { colors } = useTheme();
@@ -159,24 +165,40 @@ export default function TimerSheet({
       setLocMode('live');
       setAgeMin(18);
       setAgeMax(80);
-      // Use real GPS position if available, otherwise fall back to city center
-      const startLat = userLat ?? cityLat;
-      const startLng = userLng ?? cityLng;
-      setPinLat(startLat);
-      setPinLng(startLng);
-      setAddressLabel('');
+      // If HomeScreen pickMode already resolved a location, freeze
+      // the pin there and DO NOT refetch GPS — the user explicitly
+      // picked this spot on the main map. Otherwise fall back to
+      // the legacy seed-and-refresh flow (used only when the sheet
+      // is opened without pickMode, which should not happen in
+      // normal user flows any more).
+      if (initialPick) {
+        setPinLat(initialPick.latitude);
+        setPinLng(initialPick.longitude);
+        setLiveLat(initialPick.latitude);
+        setLiveLng(initialPick.longitude);
+        setAddressLabel(initialPick.address || '');
+        setLiveAddr(initialPick.address || '');
+      } else {
+        const startLat = userLat ?? cityLat;
+        const startLng = userLng ?? cityLng;
+        setPinLat(startLat);
+        setPinLng(startLng);
+        setLiveLat(userLat ?? null);
+        setLiveLng(userLng ?? null);
+        setAddressLabel('');
+        setLiveAddr('');
+      }
       setSearchQuery('');
       setSearchResults([]);
       setShowResults(false);
-      setLiveLat(userLat ?? null);
-      setLiveLng(userLng ?? null);
-      setLiveAddr('');
       setGpsWarning(false);
       Animated.spring(translateY, {
         toValue: 0, useNativeDriver: true, tension: 65, friction: 11,
       }).start();
-      // Auto-fetch live location (for address label + spoofing check)
-      fetchLiveLocation();
+      // Only auto-fetch GPS if we don't already have a chosen
+      // location — otherwise the fetch would just overwrite what
+      // the user confirmed on the main map.
+      if (!initialPick) fetchLiveLocation();
     } else {
       Animated.timing(translateY, {
         toValue: OFFSCREEN, duration: 250, useNativeDriver: true,
@@ -456,8 +478,29 @@ export default function TimerSheet({
                 />
               </View>
 
-              {/* Location mode */}
+              {/* Location mode —
+                   When `initialPick` is set the user already chose
+                   a spot on the main map. We hide the live/map
+                   chooser entirely and show a single read-only row
+                   confirming the pick. The whole "second map"
+                   experience is gone for this flow. */}
               <Text style={st.label}>{t('timer.location') || 'Location'}</Text>
+              {initialPick ? (
+                <View style={st.locOptions}>
+                  <View style={[st.locOption, st.locOptionActive]}>
+                    <NomadIcon name="pin" size={18} strokeWidth={1.8} color={colors.primary} />
+                    <View style={st.locOptionText}>
+                      <Text style={[st.locOptionTitle, st.locOptionTitleActive]}>
+                        Location picked
+                      </Text>
+                      <Text style={st.locOptionAddr} numberOfLines={1}>
+                        {initialPick.address || cityName}
+                      </Text>
+                    </View>
+                    <NomadIcon name="check-circle" size={18} strokeWidth={1.8} color={colors.primary} />
+                  </View>
+                </View>
+              ) : (
               <View style={st.locOptions}>
                 {/* Live location */}
                 <TouchableOpacity
@@ -535,9 +578,13 @@ export default function TimerSheet({
                   {locMode === 'map' && <NomadIcon name="check-circle" size={18} strokeWidth={1.8} color={colors.primary}  />}
                 </TouchableOpacity>
               </View>
+              )}
 
-              {/* Buttons (hidden when published — success overlay takes over) */}
-              {!published && (locMode === 'live' ? (
+              {/* Buttons (hidden when published — success overlay takes over).
+                   With initialPick the button is always Publish (no map
+                   page to advance to). Without initialPick it depends on
+                   the user's locMode choice as before. */}
+              {!published && (initialPick || locMode === 'live' ? (
                 <TouchableOpacity
                   style={[st.primaryBtn, !canProceed && st.btnDisabled]}
                   onPress={handlePublish}
