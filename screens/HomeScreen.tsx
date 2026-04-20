@@ -615,7 +615,12 @@ export default function HomeScreen() {
    * the location pick — nothing the user entered is lost.
    */
   const [showCreation, setShowCreation] = useState(false);
-  const [creationKind, setCreationKind] = useState<'status' | 'timer'>('status');
+  // creationKind used to distinguish the two old buttons; after
+  // the unification in Stage 17 the bubble itself picks
+  // timer/status from its WHEN step. We keep this state only to
+  // color the pickMode center pin (green) consistently — future
+  // commits can remove it entirely once the UI is settled.
+  const [creationKind] = useState<'status' | 'timer'>('status');
   const [creationSeedLat, setCreationSeedLat] = useState<number>(currentCity.lat);
   const [creationSeedLng, setCreationSeedLng] = useState<number>(currentCity.lng);
   const [creationSeedAddr, setCreationSeedAddr] = useState<string>('');
@@ -635,17 +640,16 @@ export default function HomeScreen() {
     ((loc: { lat: number; lng: number; address: string }) => void) | null
   >(null);
 
-  /** Open the creation bubble for status or timer. Bumps the
-   *  session key so the bubble resets to step WHAT with a clean
-   *  input. Seeds location from the user's latest GPS if we have
-   *  it; otherwise the current city's center.
+  /** Open the unified creation bubble.
    *
-   *  We ALSO kick off a fresh GPS resolve in the background —
-   *  the user is about to create something location-anchored
-   *  and we want the most accurate coords possible by the time
-   *  they reach the WHERE step. */
-  const openCreation = useCallback((kind: 'status' | 'timer') => {
-    setCreationKind(kind);
+   *  After Stage 17 there is no "kind" to pass — the bubble asks
+   *  WHEN as step 2 and derives timer vs. status from the answer
+   *  (now → timer, today/later → status). This function just
+   *  bumps the session key so the bubble resets to step WHAT,
+   *  seeds location from the latest GPS (or city center), and
+   *  kicks off a background GPS refresh so the seed improves by
+   *  the time the user reaches WHERE. */
+  const openCreation = useCallback(() => {
     const initLat = userLat ?? currentCity.lat;
     const initLng = userLng ?? currentCity.lng;
     setCreationSeedLat(initLat);
@@ -2053,60 +2057,23 @@ export default function HomeScreen() {
         }}
       />
 
-      {/* ── FAB Column — bottom to top: Timer → Status → Location (hidden when snoozed) ── */}
+      {/* ── FAB Column — single unified "post" button ──
+           The old red-timer / green-status duo is gone. The user
+           no longer has to decide "timer or status" before they
+           start typing — the CreationBubble asks WHEN as step 2
+           and derives timer / status from the answer. One button,
+           one entry point, one flow. See CLAUDE.md Rule Zero. */}
       {!isSnoozed && <View style={st.fabColumn}>
-        {/* Timer — red square (closest to bottom bar) */}
-        <TouchableOpacity
-          style={st.fabBubbleRed}
-          activeOpacity={0.85}
-          onPress={() => {
-            if (!userId) return;
-            // Check for active timer in background — open sheet immediately if query is slow
-            supabase
-              .from('app_checkins')
-              .select('id')
-              .eq('user_id', userId)
-              .eq('is_active', true)
-              .eq('checkin_type', 'timer')
-              .gt('expires_at', new Date().toISOString())
-              .limit(1)
-              .maybeSingle()
-              .then(({ data: activeTimer }) => {
-                if (activeTimer) {
-                  setActiveTimerCheckin(activeTimer.id);
-                  supabase
-                    .from('app_conversations')
-                    .select('id')
-                    .eq('checkin_id', activeTimer.id)
-                    .limit(1)
-                    .maybeSingle()
-                    .then(({ data: chat }) => {
-                      setActiveTimerChatId(chat?.id || null);
-                      setShowCancelTimer(true);
-                    }, () => setShowCancelTimer(true));
-                } else {
-                  // No active timer — open the creation bubble.
-                  // The bubble walks the user through WHAT → WHERE
-                  // → WHO → PUBLISH on top of the main map (no
-                  // second map anywhere).
-                  openCreation('timer');
-                }
-              }, () => openCreation('timer'));
-          }}
-        >
-          <NomadIcon name="timer" size={s(10)} color="#FF6B6B" strokeWidth={1.8} />
-        </TouchableOpacity>
-
-        {/* Status — green square */}
         <TouchableOpacity
           style={st.fabBubbleGreen}
           activeOpacity={0.85}
           onPress={() => {
             if (!userId) return;
-            // Check for active status in background — if none, jump
-            // straight into pickMode on the main map. If there IS
-            // an active status, we confirm replace first and then
-            // enter pickMode (see the Replace confirm button below).
+            // If the user has an active status we still confirm
+            // replace (their existing status would be expired).
+            // Active timer is handled by the bubble's own WHEN
+            // step — if they post "right now" we expire the old
+            // timer inside handleTimerPublish. No separate prompt.
             supabase
               .from('app_checkins')
               .select('id')
@@ -2119,9 +2086,9 @@ export default function HomeScreen() {
                 if (activeStatus) {
                   setShowReplaceStatus(true);
                 } else {
-                  openCreation('status');
+                  openCreation();
                 }
-              }, () => openCreation('status'));
+              }, () => openCreation());
           }}
         >
           <NomadIcon name="plus" size={s(10)} color="#4ADE80" strokeWidth={2} />
@@ -2274,7 +2241,7 @@ export default function HomeScreen() {
            safety valve for any legacy entry point. */}
       <CreationBubble
         visible={showCreation}
-        kind={creationKind}
+        userName={(myName || 'nomad').split(' ')[0] || 'nomad'}
         sessionKey={creationSessionKey}
         userAvatarUrl={avatarUri(myProfile?.avatar_url)}
         userFallback={myInitials}
@@ -2283,7 +2250,9 @@ export default function HomeScreen() {
         seedLng={creationSeedLng}
         seedAddress={creationSeedAddr}
         cityName={currentCity.name}
-        publishing={creationKind === 'timer' ? timerPublishing : quickPublishing}
+        // Publishing flag — either pipeline can be in-flight since
+        // the bubble's WHEN answer decides which handler runs.
+        publishing={timerPublishing || quickPublishing}
         onClose={() => setShowCreation(false)}
         onRequestLocationPick={handleCreationRequestPick}
         onPublish={handleCreationPublish}
@@ -2377,9 +2346,9 @@ export default function HomeScreen() {
               onPress={() => {
                 setShowReplaceStatus(false);
                 // Open the creation bubble — the replace itself
-                // happens inside handleQuickPublish, which expires the
-                // old status before inserting the new one.
-                openCreation('status');
+                // happens inside handleQuickPublish, which expires
+                // the old status before inserting the new one.
+                openCreation();
               }}
             >
               <Text style={st.cancelReasonEmoji}>🔄</Text>

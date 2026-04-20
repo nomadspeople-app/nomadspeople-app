@@ -48,7 +48,14 @@ import { detectCategories } from '../lib/categoryDetector';
 import { searchAddress as searchPhotonAddress, type GeoResult } from '../lib/locationServices';
 
 export type CreationKind = 'status' | 'timer';
-export type CreationStep = 'what' | 'where' | 'who' | 'publish';
+export type CreationStep = 'what' | 'when' | 'where' | 'who' | 'publish';
+
+/** The user's "when?" answer — decides the server-side kind (timer
+ *  vs status) and the expires_at math:
+ *    - 'now'   → timer,   expires_at = now + durationMinutes
+ *    - 'today' → status, flexible, expires_at = today 23:59
+ *    - 'later' → status, scheduled at pickedDate/Time */
+export type WhenChoice = 'now' | 'today' | 'later';
 
 /** Data emitted when the user hits Publish — identical shape to
  *  what QuickStatusSheet / TimerSheet used to emit, so the parent's
@@ -75,7 +82,11 @@ export interface CreationPayload {
 
 interface Props {
   visible: boolean;
-  kind: CreationKind;
+  /** First name of the logged-in user — goes into the WHAT step's
+   *  personalized prompt "what are you up to, <Name>?". Rendered
+   *  in Facebook blue so the user feels addressed by the app
+   *  instead of filling out a generic form. */
+  userName: string;
   /** Monotonically increasing token. The bubble resets its
    *  internal state ONLY when this value changes, NOT every time
    *  `visible` flips to true. That lets the parent hide + reopen
@@ -129,7 +140,7 @@ const CATEGORY_EMOJI: Record<string, string> = {
 const DURATION_PRESETS = [30, 45, 60, 90, 120];
 
 export default function CreationBubble({
-  visible, kind, sessionKey, userAvatarUrl, userFallback, userFallbackColor,
+  visible, userName, sessionKey, userAvatarUrl, userFallback, userFallbackColor,
   seedLat, seedLng, seedAddress, cityName, publishing,
   onClose, onRequestLocationPick, onPublish, locationUpdaterRef,
 }: Props) {
@@ -149,6 +160,15 @@ export default function CreationBubble({
   const [ageMax, setAgeMax] = useState(80);
   const [isOpen, setIsOpen] = useState(true);
   const [durationMinutes, setDurationMinutes] = useState(60);
+
+  /* When — drives whether the published checkin is a timer or a
+   * scheduled status. Defaults to "now" so a user who does
+   * nothing in the WHEN step gets the fastest, most common
+   * outcome (1-hour timer right here, right now). */
+  const [whenChoice, setWhenChoice] = useState<WhenChoice>('now');
+  /** Only used when whenChoice === 'later'. Null means the user
+   *  has not picked a time yet (Continue stays disabled). */
+  const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
 
   /* Address autocomplete state (WHERE step, row 2) */
   const [addressFocused, setAddressFocused] = useState(false);
@@ -184,6 +204,8 @@ export default function CreationBubble({
     setAgeMax(80);
     setIsOpen(true);
     setDurationMinutes(60);
+    setWhenChoice('now');
+    setScheduledAt(null);
     // Auto-focus the input on step 1 — users expect the keyboard
     // the moment a creation bubble opens.
     setTimeout(() => textInputRef.current?.focus(), 180);
@@ -269,6 +291,12 @@ export default function CreationBubble({
 
   const handleContinueFromWhat = () => {
     if (!canContinueFromWhat) return;
+    goTo('when');
+  };
+
+  const handleContinueFromWhen = () => {
+    // "Later" requires a concrete scheduled date to advance.
+    if (whenChoice === 'later' && !scheduledAt) return;
     goTo('where');
   };
 
@@ -288,11 +316,27 @@ export default function CreationBubble({
     goTo('publish');
   };
 
-  const handlePublish = () => {
-    if (publishing) return;
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    onPublish({
-      kind,
+  /** Map the user's WHEN answer to the server-side shape. Timer vs
+   *  status is derived, not pre-selected — the user never has to
+   *  know the distinction exists. */
+  const derivePublishPayload = (): CreationPayload => {
+    let derivedKind: CreationKind;
+    let derivedScheduledFor: Date | null;
+    if (whenChoice === 'now') {
+      derivedKind = 'timer';
+      derivedScheduledFor = null;
+    } else if (whenChoice === 'today') {
+      derivedKind = 'status';
+      // End-of-day — flexible window, no specific hour.
+      const eod = new Date();
+      eod.setHours(23, 59, 59, 999);
+      derivedScheduledFor = eod;
+    } else {
+      derivedKind = 'status';
+      derivedScheduledFor = scheduledAt;
+    }
+    return {
+      kind: derivedKind,
       text: text.trim(),
       category,
       emoji,
@@ -302,13 +346,20 @@ export default function CreationBubble({
       ageMin, ageMax,
       isOpen,
       durationMinutes,
-      scheduledFor: null, // scheduling handled by a future step or sheet
-    });
+      scheduledFor: derivedScheduledFor,
+    };
+  };
+
+  const handlePublish = () => {
+    if (publishing) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    onPublish(derivePublishPayload());
   };
 
   const handleBack = () => {
     if (step === 'what') return onClose();
-    if (step === 'where') return goTo('what');
+    if (step === 'when') return goTo('what');
+    if (step === 'where') return goTo('when');
     if (step === 'who') return goTo('where');
     if (step === 'publish') return goTo('who');
   };
@@ -319,17 +370,22 @@ export default function CreationBubble({
 
   const renderWhat = () => (
     <View style={st.stepBody}>
-      {/* Clean canvas — only the input line sits in the middle.
-          No back button, no step indicator, no labels. Just cursor.
-          This is the "blank page" the product owner asked for. */}
+      {/* Personalized prompt — addresses the user by first name in
+          Facebook blue. Stays above the input so the name is
+          always visible, even while typing. The prompt is the only
+          "chrome" on step 1; no back button, no step indicator,
+          just their name and a blank canvas to express themselves. */}
+      <Text style={st.whatPrompt}>
+        {t('creation.what.promptPrefix')}
+        <Text style={st.whatPromptName}>{userName || t('creation.what.promptNameFallback')}</Text>
+        {t('creation.what.promptSuffix')}
+      </Text>
       <TextInput
         ref={textInputRef}
         style={st.whatInput}
         value={text}
         onChangeText={handleTextChange}
-        placeholder={kind === 'timer'
-          ? t('creation.what.timerPlaceholder')
-          : t('creation.what.statusPlaceholder')}
+        placeholder={t('creation.what.placeholder')}
         placeholderTextColor={colors.textFaint}
         multiline
         textAlignVertical="center"
@@ -354,6 +410,76 @@ export default function CreationBubble({
       </View>
     </View>
   );
+
+  /* ═══ WHEN — the choice that drives timer vs. status ═══
+   *
+   * Three chips. User picks one, Continue advances. "Later" also
+   * reveals a compact picker for the specific time; until a valid
+   * time is set the Continue button stays disabled. */
+  const renderWhen = () => {
+    const chips: { key: WhenChoice; label: string; sub: string }[] = [
+      { key: 'now',   label: t('creation.when.now'),   sub: t('creation.when.nowSub') },
+      { key: 'today', label: t('creation.when.today'), sub: t('creation.when.todaySub') },
+      { key: 'later', label: t('creation.when.later'), sub: t('creation.when.laterSub') },
+    ];
+    return (
+      <View style={st.stepBody}>
+        <Text style={st.stepEcho} numberOfLines={1}>"{text.trim()}"</Text>
+        <Text style={st.stepLabel}>{t('creation.when.label')}</Text>
+        <View style={st.whenList}>
+          {chips.map((c) => {
+            const active = whenChoice === c.key;
+            return (
+              <TouchableOpacity
+                key={c.key}
+                onPress={() => {
+                  Haptics.selectionAsync().catch(() => {});
+                  setWhenChoice(c.key);
+                }}
+                activeOpacity={0.8}
+                style={[
+                  st.whenRow,
+                  { borderColor: active ? colors.primary : colors.borderSoft, backgroundColor: colors.card },
+                  active && { borderWidth: 1.5 },
+                ]}
+              >
+                <View style={[st.whenRadio, { borderColor: active ? colors.primary : colors.borderSoft }]}>
+                  {active && <View style={[st.whenRadioDot, { backgroundColor: colors.primary }]} />}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[st.whenRowLabel, { color: colors.dark }]}>{c.label}</Text>
+                  <Text style={[st.whenRowSub, { color: colors.textMuted }]}>{c.sub}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <View style={st.rowCtaWrap}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={handleBack}
+            style={[st.cta, st.ctaGhost, { flex: 1, borderColor: colors.borderSoft }]}
+          >
+            <Text style={[st.ctaText, { color: colors.textMuted }]}>{t('creation.back')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleContinueFromWhen}
+            disabled={whenChoice === 'later' && !scheduledAt}
+            style={[
+              st.cta,
+              st.ctaJoin,
+              { flex: 2 },
+              whenChoice === 'later' && !scheduledAt && { opacity: 0.5 },
+            ]}
+          >
+            <Text style={st.ctaText}>{t('creation.continue')}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
 
   const renderWhere = () => {
     // When the user is actively typing an address, hide the echo
@@ -484,7 +610,11 @@ export default function CreationBubble({
            afford inside the 280 template. Echo stays on WHERE and
            PUBLISH where it adds context. */}
 
-      {kind === 'timer' ? (
+      {/* Duration chips show only for "now" (= timer kind); for
+           "today" and "later" the duration is implied by the
+           end-of-day / scheduled time, and we show the audience
+           toggle (anyone vs. approval) instead. */}
+      {whenChoice === 'now' ? (
         <>
           <Text style={st.stepLabel}>{t('creation.who.duration')}</Text>
           <View style={st.chipRowSingle}>
@@ -583,9 +713,16 @@ export default function CreationBubble({
   );
 
   const renderPublish = () => {
-    const whoSummary = kind === 'timer'
-      ? (durationMinutes < 60 ? `${durationMinutes}m` : `${Math.floor(durationMinutes / 60)}h${durationMinutes % 60 ? `${durationMinutes % 60}m` : ''}`)
-      : (isOpen ? t('creation.who.openAll') : t('creation.who.private'));
+    const isNow = whenChoice === 'now';
+    const whenSummary =
+      whenChoice === 'now'
+        ? `${durationMinutes}m`
+        : whenChoice === 'today'
+          ? t('creation.when.today')
+          : (scheduledAt
+              ? scheduledAt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+              : t('creation.when.later'));
+    const audienceSummary = isOpen ? t('creation.who.openAll') : t('creation.who.private');
     return (
       <View style={st.stepBody}>
         <Text style={st.publishTitle} numberOfLines={2}>
@@ -593,11 +730,11 @@ export default function CreationBubble({
         </Text>
         <View style={st.summaryRow}>
           <SummaryPill icon="pin" text={address || cityName} colors={colors} />
-          <SummaryPill
-            icon={kind === 'timer' ? 'timer' : 'users'}
-            text={whoSummary}
-            colors={colors}
-          />
+          {/* Time pill — shows the duration for "now", the window
+              for "today", or the scheduled timestamp for "later". */}
+          <SummaryPill icon={isNow ? 'timer' : 'calendar'} text={whenSummary} colors={colors} />
+          {/* Audience pill — same meaning across all timing modes. */}
+          <SummaryPill icon="users" text={audienceSummary} colors={colors} />
           <SummaryPill icon="users" text={`${ageMin}–${ageMax}`} colors={colors} />
         </View>
 
@@ -639,6 +776,7 @@ export default function CreationBubble({
       onDismiss={onClose}
     >
       {step === 'what' && renderWhat()}
+      {step === 'when' && renderWhen()}
       {step === 'where' && renderWhere()}
       {step === 'who' && renderWho()}
       {step === 'publish' && renderPublish()}
@@ -650,7 +788,7 @@ export default function CreationBubble({
 function SummaryPill({
   icon, text, colors,
 }: {
-  icon: 'pin' | 'timer' | 'users';
+  icon: 'pin' | 'timer' | 'users' | 'calendar';
   text: string;
   colors: ThemeColors;
 }) {
@@ -703,6 +841,20 @@ const styles = (c: ThemeColors) => StyleSheet.create({
   },
 
   /* STEP 1 — clean canvas */
+  whatPrompt: {
+    fontSize: 17,
+    lineHeight: 24,
+    fontWeight: '600',
+    color: '#374151',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  whatPromptName: {
+    // Facebook's brand blue — gives the user's name a "you are
+    // being addressed personally" feel on top of the canvas.
+    color: '#1877F2',
+    fontWeight: '900',
+  },
   whatInput: {
     flex: 1,                        // fills the vertical space
     fontSize: 22,
@@ -714,6 +866,44 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     paddingHorizontal: 4,
     paddingVertical: 8,
     // No border — feels like a blank page, not a form field.
+  },
+
+  /* STEP 2 — WHEN */
+  whenList: {
+    flexDirection: 'column',
+    gap: 8,
+    marginBottom: 6,
+  },
+  whenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 0.5,
+  },
+  whenRadio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  whenRadioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  whenRowLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  whenRowSub: {
+    fontSize: 12,
+    fontWeight: '400',
+    marginTop: 2,
   },
   whatCtaSlot: {
     // Bottom-pinned fixed-height slot so Continue appearing /
