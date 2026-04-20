@@ -765,7 +765,15 @@ export default function HomeScreen() {
     }, 800);
   };
 
-  const handlePinTap = (checkin: CheckinWithProfile) => {
+  /** handlePinTap is passed to every Marker as onPress. If the
+   *  function identity changes on every parent render, every
+   *  Marker's onPress prop changes, react-native-maps treats that
+   *  as a prop update, and the whole Marker's native view gets
+   *  re-applied — the pins appear to jump. Wrapping in useCallback
+   *  with a stable dep list keeps the reference stable so memoized
+   *  markers stay put across re-renders triggered by GPS polls,
+   *  hot-checkin refetches, pickMode state changes, and so on. */
+  const handlePinTap = useCallback((checkin: CheckinWithProfile) => {
     trackEvent(userId, 'tap_map_pin', 'checkin', checkin.id);
     const isTimer = (checkin as any).checkin_type === 'timer';
     const isOwn = checkin.user_id === userId;
@@ -812,7 +820,34 @@ export default function HomeScreen() {
       setJoined(false);
       setShowPopup(true);
     }, 450);
-  };
+  }, [userId, currentCity.lat, currentCity.lng, timerBubbleCheckin?.id, nav]);
+
+  /** The marker list — MEMOIZED so it doesn't rebuild on every
+   *  parent re-render. HomeScreen re-renders constantly (GPS
+   *  refresh every 30s, hotCheckins refetch every 60s, pickMode
+   *  transitions, region-change guard commits, etc.) and before
+   *  this memo, each re-render called filteredCheckins.map(...),
+   *  which produced a fresh JSX array with fresh inline coordinate
+   *  objects for every Marker. react-native-maps treats a new
+   *  coordinate reference as a position update and animates the
+   *  native pin — even when the coords are byte-identical — which
+   *  the user sees as bubbles "jumping" all over the map.
+   *
+   *  With this memo, as long as none of the dependencies changed
+   *  (same checkins, same city, same hot map, same handlers), the
+   *  memo returns the SAME array reference. React's reconciler
+   *  sees identical JSX elements and skips reapplying props to the
+   *  native Marker views. The pins stay rock-still.
+   *
+   *  Adding anything used by `buildNomadMarker` to this list must
+   *  come with a useCallback / useMemo on the caller side. Never
+   *  add a plain arrow function or inline object as a dep. */
+  const nomadMarkers = useMemo(() => {
+    if (isSnoozed) return null;
+    return filteredCheckins.map((c, i) =>
+      buildNomadMarker(c, i, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins),
+    );
+  }, [isSnoozed, filteredCheckins, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins]);
 
   const handleViewProfile = (userId: string) => {
     nav.navigate('UserProfile', { userId, name: selectedNomad?.name });
@@ -1277,10 +1312,14 @@ export default function HomeScreen() {
           //    the user's pick, and reverse-geocode with a debounce.
           //    We only do this while pickMode is active so the
           //    geocoder isn't pestered during normal browsing.
+          //    Same no-op guard as above — if the user settled on a
+          //    coord that rounds to the same 6-decimal place we had
+          //    before, skip the setState cascade so the memoized
+          //    marker list doesn't invalidate.
           if (pickMode !== 'browse') {
-            setPickLat(region.latitude);
-            setPickLng(region.longitude);
-            setPickResolving(true);
+            setPickLat(prev => (Math.abs(prev - region.latitude) < 1e-6 ? prev : region.latitude));
+            setPickLng(prev => (Math.abs(prev - region.longitude) < 1e-6 ? prev : region.longitude));
+            setPickResolving(prev => (prev ? prev : true));
             if (pickGeocodeTimer.current) clearTimeout(pickGeocodeTimer.current);
             // 350ms debounce — a human drag settles around 250-300ms
             // before they let go; this avoids Nominatim requests for
@@ -1302,10 +1341,13 @@ export default function HomeScreen() {
           }
         }}
       >
-        {/* ── ALL NOMAD MARKERS — show full density ── */}
-        {!isSnoozed && filteredCheckins.map((c, i) =>
-          buildNomadMarker(c, i, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins)
-        )}
+        {/* ── ALL NOMAD MARKERS — show full density ──
+             The array itself is memoized above (`nomadMarkers`) so
+             we hand react-native-maps the SAME element references
+             across renders. Without this, every re-render rebuilt
+             every Marker with a fresh coordinate object and the
+             pins "jumped" across the whole app. */}
+        {nomadMarkers}
       </MapView>
 
       {/* ═══════════════════════════════════════════════════════════
