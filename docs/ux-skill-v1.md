@@ -5,6 +5,18 @@ description: The UI/UX contract for NomadsPeople — the discipline that turns o
 
 # UX — The UI/UX Contract for NomadsPeople
 
+## How to Communicate With the Product Owner
+
+**Always respond in Hebrew, right-to-left.**
+
+The product owner is a Hebrew speaker. Every reply in the conversation should be in Hebrew — including status updates, reasoning, alternatives, questions back to them, and task summaries. Technical identifiers that must stay in English (file paths, variable names, SQL keywords, hex colors, DB column names) stay in English inside the Hebrew prose — that's fine, mixed-direction text renders correctly in Hebrew RTL context.
+
+Do not switch to English unless the user explicitly asks for it, or the entire requested artifact is inherently English (e.g., a code file, a commit message body, a SQL migration, an English README). Commit messages and code comments stay in English for future contributors; conversational replies to the product owner stay in Hebrew.
+
+Keep the tone calm, direct, and specific — the product owner has pushed back on verbose or hedging language. Short Hebrew answers beat long ones.
+
+---
+
 ## The One Principle
 
 > **Every screen represents one concept. Every concept has exactly one screen, regardless of how the user arrived there. The creator sees extra management affordances at the top; everyone else sees the same surface underneath. If a view looks different depending on entry point, we've failed.**
