@@ -1162,8 +1162,24 @@ export default function HomeScreen() {
               lng <= region.longitude + region.longitudeDelta / 2
             );
           });
-          setVisibleNomadCount(visible.length);
-          setVisibleNomadIds(new Set(visible.map(c => c.user_id)));
+          const nextCount = visible.length;
+          const nextIds = visible.map(c => c.user_id);
+
+          // Guard: only commit state if something actually changed.
+          // Every pan fires onRegionChangeComplete, and blindly calling
+          // setState with a fresh `new Set(...)` each time re-renders
+          // HomeScreen → rebuilds every Marker → the inline coordinate
+          // objects change reference → react-native-maps issues native
+          // position updates → the pins appear to "dance" left-right.
+          // This guard collapses the no-op updates so the map is stable
+          // while panning inside the same cluster of pins.
+          setVisibleNomadCount(prev => (prev === nextCount ? prev : nextCount));
+          setVisibleNomadIds(prev => {
+            if (prev.size === nextIds.length && nextIds.every(id => prev.has(id))) {
+              return prev;
+            }
+            return new Set(nextIds);
+          });
         }}
       >
         {/* ── ALL NOMAD MARKERS — show full density ── */}
