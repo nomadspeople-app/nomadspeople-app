@@ -82,7 +82,21 @@ export interface LiveLocationResult {
  * without a street number, rural POIs without a city field, etc.).
  * ════════════════════════════════════════════════════════════════ */
 
-/** Parse a Photon GeoJSON feature into our GeoResult shape. */
+/** Parse a Photon GeoJSON feature into our GeoResult shape.
+ *
+ *  Israeli (and many non-English) Photon results often put the
+ *  city name inside the `name` field when the query already
+ *  contained it — e.g. typing "קלישר 20 תל אביב" yields a feature
+ *  whose `name` is "Kalischer Tel Aviv" AND whose `city` is also
+ *  "Tel Aviv". A naive "mainLine, city" concatenation prints the
+ *  city twice. This parser is careful to:
+ *    1. Build the mainLine from street+number first (that's the
+ *       real address), falling back to `name` only when there's
+ *       no street.
+ *    2. Drop any hood/city token from the subLine when it's
+ *       already substring-matched by the mainLine — no more
+ *       duplicates.
+ */
 export function formatPhoton(f: any): GeoResult {
   const p = f.properties || {};
   const coords = f.geometry?.coordinates || [0, 0]; // [lon, lat]
@@ -91,15 +105,37 @@ export function formatPhoton(f: any): GeoResult {
   const num = p.housenumber || '';
   const hood = p.suburb || p.district || '';
   const city = p.city || p.town || p.village || '';
-  // Main line: prefer a named POI (e.g. "Nahalat Binyamin"), fall
-  // back to street+number, then street alone. Never return empty —
-  // the caller renders this as the headline of the result row.
-  const mainLine = name || (num ? `${street} ${num}` : street) || '';
-  // Sub line: neighborhood + city if we have them, otherwise the
-  // administrative region. Keeps result rows two-line and scannable.
-  const sub = [hood, city].filter(Boolean);
-  const subLine = sub.length ? sub.join(', ') : (p.state || p.country || '');
-  const display = [mainLine, ...sub].filter(Boolean).join(', ');
+
+  // Main line — prefer "<street> <num>" because that's the
+  // actionable address. Fall back to `name` (POI / landmark) when
+  // no street is present.
+  let mainLine: string;
+  if (street && num) mainLine = `${street} ${num}`;
+  else if (street) mainLine = street;
+  else mainLine = name;
+
+  // If mainLine came from `name` and already has commas (meaning
+  // Photon packed multiple parts in there), keep only the first
+  // segment so we don't duplicate when we add the subLine.
+  if (mainLine && !street && mainLine.includes(',')) {
+    mainLine = mainLine.split(',')[0].trim();
+  }
+
+  // Dedupe: drop any sub-line token whose value already appears
+  // inside mainLine (case-insensitive substring). Typical case:
+  // name="Kalischer Tel Aviv" + city="Tel Aviv" — we skip the city.
+  const mainLC = mainLine.toLowerCase();
+  const subParts = [hood, city]
+    .filter(Boolean)
+    .filter((part: string) => !mainLC.includes(part.toLowerCase()));
+  const subLine = subParts.length
+    ? subParts.join(', ')
+    : (p.state || p.country || '');
+
+  // display_name is the single-line form for fallbacks — also
+  // deduped so the free-text search result looks right.
+  const display = [mainLine, ...subParts].filter(Boolean).join(', ');
+
   return {
     display_name: display,
     lat: String(coords[1]),
