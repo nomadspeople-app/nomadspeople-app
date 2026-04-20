@@ -186,19 +186,34 @@ export async function getIpLocation(): Promise<{ lat: number; lng: number } | nu
 }
 
 /* ══════════════════════════════════════════════════════════════════
- * One-shot "where am I right now" resolver
+ * One-shot "where am I right now" resolver — GPS-first
  *
- * Fires GPS and IP lookup in parallel. Compares them with the
- * Haversine formula from `distance.ts` (NOT a private copy). If
- * they disagree by more than 5 km we treat GPS as suspect and
- * prefer the IP coords. If GPS alone is available we use GPS. If
- * IP alone is available we use IP and flag the warning. If nothing
- * is available we return the fallback and flag `usedFallback`.
+ * Priority order, highest to lowest:
  *
- * The spoof threshold (5 km) was tuned against real noisy GPS
- * readings in cafes and trains where accuracy can legitimately
- * drift 500 m but never 5 km — do not shrink it without data.
+ *   1. GPS. If the phone has a fix, we USE IT. No IP override, ever.
+ *      Residential ISPs in many countries (notably Israel) route
+ *      traffic through datacenters dozens of kilometers from the
+ *      actual user, so a "GPS says Tel Aviv, IP says Be'er Sheva"
+ *      disagreement almost always means the IP is wrong — NOT that
+ *      the GPS is spoofed.
+ *   2. IP geolocation. Used only when GPS is unavailable
+ *      (permission denied, indoors with no signal, etc.).
+ *   3. Fallback coords (typically the current city's center).
+ *
+ * `spoofSuspected` is kept as an output flag for callers that want
+ * to show a soft "your location may be approximate" banner, but it
+ * is a HINT — we never act on it internally. The flag is raised
+ * when (a) we had to fall back to IP, or (b) GPS and IP disagreed
+ * by more than ~50 km (which is past any reasonable ISP routing
+ * drift and actually suggests something odd). Pure spoof-vs-real
+ * detection needs server-side signals and is not this module's
+ * job; this module's job is to land the user's pin where they
+ * actually are.
  * ════════════════════════════════════════════════════════════════ */
+
+/** The drift above which we log a warning but STILL prefer GPS.
+ *  Used only for the spoofSuspected flag, never to override GPS. */
+const DRIFT_SUSPECT_KM = 50;
 
 export async function resolveLiveLocation(
   fallbackLat: number,
@@ -228,8 +243,8 @@ export async function resolveLiveLocation(
     };
   }
 
-  // 2) Fire both lookups in parallel — GPS is the authoritative
-  //    signal, IP is the sanity check.
+  // 2) Fire both lookups in parallel. GPS is authoritative; IP is
+  //    only used when GPS fails.
   const [gpsResult, ipResult] = await Promise.allSettled([
     Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
     getIpLocation(),
@@ -238,43 +253,33 @@ export async function resolveLiveLocation(
   const gpsPos = gpsResult.status === 'fulfilled' ? gpsResult.value : null;
   const ipPos = ipResult.status === 'fulfilled' ? ipResult.value : null;
 
-  // 3) Both available — cross-check with Haversine and choose.
-  if (gpsPos && ipPos) {
-    const drift = haversineKm(
-      gpsPos.coords.latitude, gpsPos.coords.longitude,
-      ipPos.lat, ipPos.lng,
-    );
-    if (drift > 5) {
-      // Classic spoof signature — GPS claims one city, IP another.
-      return {
-        latitude: ipPos.lat,
-        longitude: ipPos.lng,
-        spoofSuspected: true,
-        usedFallback: false,
-        permissionStatus: status,
-      };
+  // 3) GPS wins if we have it — full stop. IP is only consulted to
+  //    raise the soft warning, never to override coords.
+  if (gpsPos) {
+    let warn = false;
+    if (ipPos) {
+      const drift = haversineKm(
+        gpsPos.coords.latitude, gpsPos.coords.longitude,
+        ipPos.lat, ipPos.lng,
+      );
+      if (drift > DRIFT_SUSPECT_KM) {
+        console.warn(
+          `[resolveLiveLocation] GPS vs IP drift ${drift.toFixed(0)} km — ` +
+          'probably just ISP routing, keeping GPS.',
+        );
+        warn = true;
+      }
     }
     return {
       latitude: gpsPos.coords.latitude,
       longitude: gpsPos.coords.longitude,
-      spoofSuspected: false,
+      spoofSuspected: warn,
       usedFallback: false,
       permissionStatus: status,
     };
   }
 
-  // 4) GPS only — trust it, but can't verify.
-  if (gpsPos) {
-    return {
-      latitude: gpsPos.coords.latitude,
-      longitude: gpsPos.coords.longitude,
-      spoofSuspected: false,
-      usedFallback: false,
-      permissionStatus: status,
-    };
-  }
-
-  // 5) IP only — coarse result, flag the warning.
+  // 4) GPS failed — IP is the best we have.
   if (ipPos) {
     return {
       latitude: ipPos.lat,
@@ -285,7 +290,7 @@ export async function resolveLiveLocation(
     };
   }
 
-  // 6) Both failed — fallback to the city center the caller passed.
+  // 5) Both failed — fallback to the city center the caller passed.
   return {
     latitude: fallbackLat,
     longitude: fallbackLng,
