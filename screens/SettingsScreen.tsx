@@ -21,6 +21,7 @@ import { useI18n, LOCALE_META, SUPPORTED_LOCALES, type Locale } from '../lib/i18
 import type { RootStackParamList } from '../lib/types';
 import DualThumbSlider from '../components/DualThumbSlider';
 import { setUserNotificationPrefs, getUserNotificationPrefs } from '../lib/notifications';
+import * as Haptics from 'expo-haptics';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -145,35 +146,77 @@ export default function SettingsScreen() {
      (all collapsed) so the screen loads as a clean short list of titles. */
   const [openSection, setOpenSection] = useState<string | null>(null);
   const toggleSection = (key: string) => {
+    // Calm, slow-ish easing (320ms) so expand/collapse feels intentional
+    // rather than glitchy. Haptic on tap confirms the touch registered.
+    Haptics.selectionAsync().catch(() => {});
     LayoutAnimation.configureNext(LayoutAnimation.create(
-      220, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity,
+      320, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity,
     ));
     setOpenSection((prev) => (prev === key ? null : key));
   };
 
   /* ─── Collapsible Section Header ───
-     Tappable row with title + chevron. When the matching `sectionKey`
-     is open, renders `children` below. Styled as a clean list item so
-     the page reads as a short inventory of settings categories when
-     everything is collapsed. */
-  function Section({ title, sectionKey, children }: { title: string; sectionKey: string; children: React.ReactNode }) {
+     Row: [colored icon square] [title] [chevron that rotates when open].
+     Each category gets its own icon + accent color so the list reads
+     as a warm visual inventory, not a bare outline list. The chevron
+     turns 180° when the section opens so the affordance reads both
+     before and after the tap. */
+  function Section({
+    title, sectionKey, icon, iconColor, children,
+  }: {
+    title: string;
+    sectionKey: string;
+    icon: NomadIconName;
+    iconColor: string;
+    children: React.ReactNode;
+  }) {
     const isOpen = openSection === sectionKey;
     return (
-      <View>
+      <View style={styles.sectionWrap}>
         <TouchableOpacity
-          style={[styles.sectionHeader, { backgroundColor: colors.card, borderBottomColor: colors.borderSoft }]}
-          activeOpacity={0.6}
+          style={[
+            styles.sectionHeader,
+            {
+              backgroundColor: colors.card,
+              borderColor: isOpen ? iconColor : colors.borderSoft,
+              borderBottomLeftRadius: isOpen ? 0 : s(8),
+              borderBottomRightRadius: isOpen ? 0 : s(8),
+              borderBottomWidth: isOpen ? 0 : 0.5,
+            },
+          ]}
+          activeOpacity={0.7}
           onPress={() => toggleSection(sectionKey)}
         >
-          <Text style={[styles.sectionHeaderTitle, { color: colors.dark }]}>{title}</Text>
-          <NomadIcon
-            name={isOpen ? 'minus' : 'plus'}
-            size={s(6)}
-            color={colors.textMuted}
-            strokeWidth={1.8}
-          />
+          <View style={[styles.sectionIcon, { backgroundColor: iconColor + '1F' }]}>
+            <NomadIcon name={icon} size={s(7)} color={iconColor} strokeWidth={1.8} />
+          </View>
+          <Text style={[styles.sectionHeaderTitle, { color: colors.dark }]} numberOfLines={1}>{title}</Text>
+          <Text style={[styles.sectionHint, { color: colors.textMuted }]}>
+            {isOpen ? 'tap to close' : 'tap to open'}
+          </Text>
+          <View style={[
+            styles.sectionToggleBtn,
+            {
+              backgroundColor: isOpen ? iconColor : colors.pill,
+              borderColor: isOpen ? iconColor : colors.borderSoft,
+            },
+          ]}>
+            <NomadIcon
+              name={isOpen ? 'minus' : 'plus'}
+              size={s(7)}
+              color={isOpen ? '#FFF' : colors.dark}
+              strokeWidth={2.2}
+            />
+          </View>
         </TouchableOpacity>
-        {isOpen && <View style={styles.sectionBody}>{children}</View>}
+        {isOpen && (
+          <View style={[
+            styles.sectionBody,
+            { backgroundColor: colors.card, borderColor: iconColor },
+          ]}>
+            {children}
+          </View>
+        )}
       </View>
     );
   }
@@ -792,7 +835,7 @@ export default function SettingsScreen() {
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
 
         {/* ═══ YOUR DNA ═══ */}
-        <Section title={t('settings.yourDna')} sectionKey="dna">
+        <Section title={t('settings.yourDna')} sectionKey="dna" icon="heart" iconColor="#E8614D">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           {editingUsername ? (
             <View style={styles.usernameEditRow}>
@@ -865,7 +908,7 @@ export default function SettingsScreen() {
         </Section>
 
         {/* ═══ YOUR SOCIAL LINKS ═══ */}
-        <Section title="your links" sectionKey="links">
+        <Section title="your links" sectionKey="links" icon="link" iconColor="#60A5FA">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="link"
@@ -880,7 +923,7 @@ export default function SettingsScreen() {
         {/* Show-on-map row removed for v1.0 — see screens/SettingsScreen.removed.tsx.
             Snooze mode below is the single user-facing visibility toggle;
             handleToggleSnooze syncs show_on_map internally. */}
-        <Section title="visibility" sectionKey="visibility">
+        <Section title="visibility" sectionKey="visibility" icon="eye" iconColor="#10B981">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="moon-stars"
@@ -943,7 +986,7 @@ export default function SettingsScreen() {
         </Section>
 
         {/* ═══ APPEARANCE ═══ */}
-        <Section title={t('settings.appearance')} sectionKey="appearance">
+        <Section title={t('settings.appearance')} sectionKey="appearance" icon="moon-stars" iconColor="#8B5CF6">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="moon-stars"
@@ -984,7 +1027,7 @@ export default function SettingsScreen() {
         </Section>
 
         {/* ═══ LANGUAGE ═══ */}
-        <Section title={t('settings.language')} sectionKey="language">
+        <Section title={t('settings.language')} sectionKey="language" icon="globe" iconColor="#F59E0B">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="globe"
@@ -996,7 +1039,7 @@ export default function SettingsScreen() {
         </Section>
 
         {/* ═══ ACTIVITY NOTIFICATIONS ═══ */}
-        <Section title={t('settings.notifications')} sectionKey="notifications">
+        <Section title={t('settings.notifications')} sectionKey="notifications" icon="bell" iconColor="#EC4899">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="bell"
@@ -1064,7 +1107,7 @@ export default function SettingsScreen() {
         </Section>
 
         {/* ═══ SOCIAL ═══ */}
-        <Section title={t('settings.social')} sectionKey="social">
+        <Section title={t('settings.social')} sectionKey="social" icon="share" iconColor="#06B6D4">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="camera"
@@ -1082,7 +1125,7 @@ export default function SettingsScreen() {
         </Section>
 
         {/* ═══ FEEDBACK ═══ */}
-        <Section title={t('settings.feedback')} sectionKey="feedback">
+        <Section title={t('settings.feedback')} sectionKey="feedback" icon="chat" iconColor="#F97316">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="chat"
@@ -1099,7 +1142,7 @@ export default function SettingsScreen() {
         </Section>
 
         {/* ═══ SUPPORT ═══ */}
-        <Section title="support" sectionKey="support">
+        <Section title="support" sectionKey="support" icon="info" iconColor="#14B8A6">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="alert"
@@ -1112,7 +1155,7 @@ export default function SettingsScreen() {
         </Section>
 
         {/* ═══ LEGAL ═══ */}
-        <Section title={t('settings.legal')} sectionKey="legal">
+        <Section title={t('settings.legal')} sectionKey="legal" icon="shield" iconColor="#6B7280">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
             icon="shield"
@@ -1126,7 +1169,7 @@ export default function SettingsScreen() {
         {/* DEV MODE section removed 2026-04-20 — DEV_MODE flag retired. */}
 
         {/* ═══ ACCOUNT ═══ */}
-        <Section title={t('settings.account')} sectionKey="account">
+        <Section title={t('settings.account')} sectionKey="account" icon="user" iconColor="#3B82F6">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow icon="logout" label={t('settings.logout')} danger onPress={handleLogout} />
           <View style={styles.divider} />
@@ -1266,27 +1309,59 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     paddingHorizontal: s(12), paddingTop: s(10), paddingBottom: s(4),
   },
 
-  /* Collapsible section header — tappable row with title + plus/minus
-     icon. When all sections are closed, the screen reads as a clean
-     short list of categories — no heavy cards competing for attention. */
+  /* Collapsible section — each header is its own card-like button so it
+     reads as obviously tappable: bordered, padded, with a circular ± on
+     the right and a small "tap to open / tap to close" hint. When the
+     section opens, the body slots underneath the same card so the whole
+     thing feels like one expanding panel. */
+  sectionWrap: {
+    marginHorizontal: s(8),
+    marginBottom: s(6),
+  },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: s(10),
-    paddingVertical: s(6),
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: c.borderSoft,
+    paddingHorizontal: s(8),
+    paddingVertical: s(7),
+    borderRadius: s(8),
+    borderWidth: 0.5,
+    gap: s(5),
+  },
+  sectionIcon: {
+    width: s(16),
+    height: s(16),
+    borderRadius: s(5),
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sectionHeaderTitle: {
-    fontSize: s(7),
+    flex: 1,
+    fontSize: s(7.5),
     fontWeight: FW.semi,
-    color: c.dark,
+    letterSpacing: 0.1,
     textTransform: 'lowercase',
   },
+  sectionHint: {
+    fontSize: s(4.8),
+    fontWeight: FW.regular,
+    letterSpacing: 0.1,
+  },
+  sectionToggleBtn: {
+    width: s(14),
+    height: s(14),
+    borderRadius: s(7),
+    borderWidth: 0.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sectionBody: {
-    paddingTop: s(3),
-    paddingBottom: s(4),
+    paddingTop: s(4),
+    paddingBottom: s(6),
+    paddingHorizontal: s(2),
+    borderWidth: 0.5,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: s(8),
+    borderBottomRightRadius: s(8),
   },
 
   card: {

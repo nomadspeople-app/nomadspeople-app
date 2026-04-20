@@ -312,6 +312,13 @@ export default function TimerSheet({
       setLiveLng(finalLng);
       setGpsWarning(spoofDetected);
 
+      // Sync the map pin to the live GPS position — matches the behavior of
+      // QuickStatusSheet, so Timer and Status feel like the SAME map. Without
+      // this, the pin would stay at the city center even after we've
+      // successfully fetched the user's real coordinates.
+      setPinLat(finalLat);
+      setPinLng(finalLng);
+
       // 4) Reverse geocode the final position
       const addr = await reverseGeocode(finalLat, finalLng);
       setLiveAddr(addr || cityName);
