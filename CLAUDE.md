@@ -151,3 +151,42 @@ If a user turns off "Show me on the map" (`show_on_map: false`):
 - Supabase backend (project: apzpxnkmuhcwmvmgisms)
 - react-native-maps 1.14 (NO clustering library in use)
 - tracksViewChanges={false} on ALL markers (performance critical)
+
+### One Map — Locked April 2026
+
+The app has EXACTLY ONE active MapView at any time. That is
+`HomeScreen`'s map. Status creation, Timer creation, and any
+future "drop a pin" flow all use `HomeScreen`'s `pickMode` —
+never a new MapView inside a sheet or modal.
+
+Rules:
+- `QuickStatusSheet`, `TimerSheet`: when opened they receive
+  `initialPick: { latitude, longitude, address }` from HomeScreen's
+  pickMode. They MUST NOT render their own MapView. Any remaining
+  MapView code in those files is legacy and scheduled for deletion
+  — do not "temporarily re-enable" it.
+- `ProfileScreen` and `GroupInfoScreen` still render tiny static
+  map thumbnails with a single marker. These are read-only
+  previews, not pickers — they're allowed but should share a
+  `<MapThumbnail/>` component if we ever need a third thumbnail.
+- All GPS / geocoding / IP-fallback / spoof detection lives in
+  `lib/locationServices.ts`. No caller reaches into
+  `expo-location` or the Photon / Nominatim APIs directly.
+- If a new feature needs location picking, extend pickMode —
+  do NOT add a new MapView instance anywhere.
+
+### Map Pin Flow Perf Rule — Locked April 2026
+
+`onRegionChangeComplete` on HomeScreen MUST guard its setState
+calls against no-op updates. A fresh `new Set(...)` on every pan
+invalidates the Marker render list and makes the native markers
+"dance" side-to-side on every micro-adjustment. Use the pattern:
+
+```
+setVisibleNomadIds(prev => {
+  if (prev.size === next.length && next.every(id => prev.has(id))) {
+    return prev;
+  }
+  return new Set(next);
+});
+```
