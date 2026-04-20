@@ -31,7 +31,11 @@ interface UserProfile {
   created_at: string
   last_active_at: string | null
   onboarding_done: boolean
-  snooze_mode: boolean | null
+  /** Single source of truth for "is this user visible / active"
+   *  since Stage 9 of the no-band-aids refactor. The old
+   *  `snooze_mode` field is still in the DB but no longer read
+   *  anywhere. Snoozed ⇔ show_on_map === false. */
+  show_on_map: boolean | null
   is_premium: boolean | null
 }
 
@@ -99,7 +103,7 @@ export default function AdminDashboard() {
 
     // Users
     const { data: usersData } = await supabase.from('app_profiles')
-      .select('id, user_id, full_name, username, avatar_url, current_city, home_country, job_type, created_at, last_active_at, onboarding_done, snooze_mode, is_premium')
+      .select('id, user_id, full_name, username, avatar_url, current_city, home_country, job_type, created_at, last_active_at, onboarding_done, show_on_map, is_premium')
       .order('created_at', { ascending: false })
     setUsers((usersData as UserProfile[]) || [])
 
@@ -290,13 +294,24 @@ export default function AdminDashboard() {
                       <td style={s.td}>{u.home_country || '—'}</td>
                       <td style={s.td}>{u.job_type || '—'}</td>
                       <td style={s.td}>
-                        <span style={{
-                          ...s.badge,
-                          background: u.snooze_mode ? '#FEF3C7' : u.onboarding_done ? '#D1FAE5' : '#FEE2E2',
-                          color: u.snooze_mode ? '#92400E' : u.onboarding_done ? '#065F46' : '#991B1B',
-                        }}>
-                          {u.snooze_mode ? 'Snoozed' : u.onboarding_done ? 'Active' : 'Pending'}
-                        </span>
+                        {(() => {
+                          // show_on_map === false means the user
+                          // has snoozed themselves (the app uses
+                          // show_on_map as the single source of
+                          // truth — see CLAUDE.md "Visibility
+                          // Reciprocal Rule" and Stage 9 of the
+                          // no-band-aids refactor).
+                          const snoozed = u.show_on_map === false;
+                          return (
+                            <span style={{
+                              ...s.badge,
+                              background: snoozed ? '#FEF3C7' : u.onboarding_done ? '#D1FAE5' : '#FEE2E2',
+                              color:      snoozed ? '#92400E' : u.onboarding_done ? '#065F46' : '#991B1B',
+                            }}>
+                              {snoozed ? 'Snoozed' : u.onboarding_done ? 'Active' : 'Pending'}
+                            </span>
+                          );
+                        })()}
                         {u.is_premium && <span style={{ ...s.badge, background: '#EDE9FE', color: '#5B21B6', marginLeft: 4 }}>Pro</span>}
                       </td>
                       <td style={s.tdDate}>{new Date(u.created_at).toLocaleDateString()}</td>

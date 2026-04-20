@@ -259,9 +259,12 @@ export default function App() {
 
     // Sync user notification preferences so foreground handler respects them
     (async () => {
-      // 1. Fetch notification prefs from profile
+      // 1. Fetch notification prefs from profile.
+      //    `show_on_map` doubles as the quiet-mode switch (when
+      //    false, non-essential notifications are suppressed),
+      //    replacing the deprecated `snooze_mode` field.
       const { data: prefs } = await supabase.from('app_profiles')
-        .select('notify_nearby, notify_heating, notify_profile_view, notify_chat, notify_activity_joined, notify_dna_match, notify_flight_incoming, snooze_mode, notification_distance_km')
+        .select('notify_nearby, notify_heating, notify_profile_view, notify_chat, notify_activity_joined, notify_dna_match, notify_flight_incoming, show_on_map, notification_distance_km')
         .eq('user_id', userId).single();
 
       // 2. Fetch user's latest active checkin location

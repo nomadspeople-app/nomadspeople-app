@@ -740,9 +740,12 @@ export default function HomeScreen() {
       }),
     ]).start(async () => {
       // Wake up: make visible again
+      // Wake up — write only show_on_map (the one truth).
+      // snooze_mode is no longer read anywhere in the client as of
+      // Stage 9, so we stop writing it. The legacy column stays in
+      // the DB; dropping it is a follow-up migration.
       await supabase.from('app_profiles').update({
         show_on_map: true,
-        snooze_mode: false,
       }).eq('user_id', userId);
       await supabase.from('app_checkins').update({ visibility: 'public' })
         .eq('user_id', userId).eq('is_active', true);

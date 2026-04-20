@@ -143,7 +143,7 @@ If a user turns off "Show me on the map" (`show_on_map: false`):
 - They **cannot join** new groups or activities
 - They **keep access** to existing conversations and groups
 - Confirmation alert is REQUIRED before going invisible (with clear explanation)
-- `show_on_map` is the SINGLE source of truth — `snooze_mode` syncs from it for backward compat
+- `show_on_map` is the SINGLE source of truth for both visibility AND the notification quiet-mode. The old `snooze_mode` column is deprecated and no longer read or written anywhere in the client (Stage 9 of the no-band-aids refactor, April 2026). Do NOT re-introduce reads/writes to `snooze_mode`.
 - Premium exception (future): paid users may get "stealth mode" to watch without being seen
 
 ## Architecture Notes

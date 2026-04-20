@@ -54,7 +54,12 @@ export interface UserNotificationPrefs {
   notify_activity_joined?: boolean;
   notify_dna_match?: boolean;
   notify_flight_incoming?: boolean;
-  snooze_mode?: boolean;
+  /** The user's visibility toggle — doubles as the notification
+   *  quiet switch. When false, non-essential notifications are
+   *  suppressed (chat + timer_expiring still pass through). This
+   *  replaces the old `snooze_mode` field per CLAUDE.md Rule Zero:
+   *  one source of truth, not two. */
+  show_on_map?: boolean;
   /** Max distance (km) for location-based notifications. 0 = no limit */
   notification_distance_km?: number;
   /** User's current latitude (updated on app open / location change) */
@@ -75,8 +80,11 @@ export function getUserNotificationPrefs(): UserNotificationPrefs {
 
 /* ─── Check if notification type is allowed by user preferences ─── */
 function isNotificationAllowed(type?: NotificationType, notifData?: any): boolean {
-  // If snoozed — block everything except chat and timer
-  if (_userPrefs.snooze_mode && type !== 'chat_message' && type !== 'timer_expiring') {
+  // If the user is hidden from the map (show_on_map === false)
+  // they've told the whole app "I'm off the grid right now" —
+  // mute everything except chat messages and timer expirations.
+  // Those two are the "essentials" they still want to see.
+  if (_userPrefs.show_on_map === false && type !== 'chat_message' && type !== 'timer_expiring') {
     return false;
   }
   switch (type) {

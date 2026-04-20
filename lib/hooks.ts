@@ -89,7 +89,7 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
     // 2. Fetch all active checkins (include visibility fields from profile)
     const { data, error } = await supabase
       .from('app_checkins')
-      .select('*, profile:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type, bio, interests, show_on_map, snooze_mode, hide_distance, birth_date)')
+      .select('*, profile:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type, bio, interests, show_on_map, hide_distance, birth_date)')
       .eq('is_active', true)
       .ilike('city', city)
       .in('visibility', ['public', 'city_only'])

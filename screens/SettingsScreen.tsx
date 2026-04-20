@@ -414,7 +414,10 @@ export default function SettingsScreen() {
     setNotifyHeating(profile.notify_heating ?? true);
     setNotifyDistance(profile.notification_distance_km ?? 20);
     setShowOnMap(profile.show_on_map ?? true);
-    setSnoozeMode(profile.snooze_mode ?? false);
+    // The "Snooze" UI toggle in this screen is just the inverse of
+    // show_on_map — one truth, per CLAUDE.md Rule Zero. The
+    // separate `snooze_mode` DB field is no longer read anywhere.
+    setSnoozeMode(profile.show_on_map === false);
     setHideDistance((profile as any).hide_distance ?? false);
     setAgeMin(profile.age_min ?? 18);
     setAgeMax(profile.age_max ?? 100);
@@ -437,8 +440,11 @@ export default function SettingsScreen() {
     if (userId) update(userId, fields);
   };
 
-  // Sync all notification prefs to the in-memory foreground handler
-  // Accept overrides so the just-toggled value is used (state hasn't re-rendered yet)
+  // Sync all notification prefs to the in-memory foreground handler.
+  // `show_on_map` doubles as the quiet-mode switch (false → mute
+  // non-essentials) — see lib/notifications.ts. Accepts overrides
+  // so the just-toggled value is used without waiting for React
+  // state to flush.
   const syncPrefs = (overrides: Partial<Record<string, any>> = {}) => {
     setUserNotificationPrefs({
       notify_nearby: overrides.notify_nearby ?? notifyNearby,
@@ -448,7 +454,7 @@ export default function SettingsScreen() {
       notify_activity_joined: overrides.notify_activity_joined ?? notifyActivityJoined,
       notify_dna_match: overrides.notify_dna_match ?? notifyDnaMatch,
       notify_flight_incoming: overrides.notify_flight_incoming ?? notifyFlightIncoming,
-      snooze_mode: overrides.snooze_mode ?? snoozeMode,
+      show_on_map: overrides.show_on_map ?? showOnMap,
       notification_distance_km: overrides.notification_distance_km ?? notifyDistance,
       // Preserve user location from App.tsx startup (GPS-based, not in app_profiles)
       user_lat: getUserNotificationPrefs().user_lat ?? null,
@@ -509,31 +515,23 @@ export default function SettingsScreen() {
     }
   };
 
+  /** applySnooze(val) — val === true means "snooze me" (hide).
+   *  This is now a thin wrapper around show_on_map: snoozed ⇔
+   *  show_on_map === false. The UI state `snoozeMode` still
+   *  exists for the Switch's visual value; we keep it in sync
+   *  here so the toggle animation matches. */
   const applySnooze = async (val: boolean) => {
+    const nextShowOnMap = !val;
     setSnoozeMode(val);
-    save({ snooze_mode: val });
-    syncPrefs({ snooze_mode: val });
-    if (val && showOnMap) {
-      setShowOnMap(false);
-      save({ show_on_map: false });
-      if (userId) {
-        await supabase
-          .from('app_checkins')
-          .update({ visibility: 'invisible' })
-          .eq('user_id', userId)
-          .eq('is_active', true);
-      }
-    }
-    if (!val) {
-      setShowOnMap(true);
-      save({ show_on_map: true });
-      if (userId) {
-        await supabase
-          .from('app_checkins')
-          .update({ visibility: 'public' })
-          .eq('user_id', userId)
-          .eq('is_active', true);
-      }
+    setShowOnMap(nextShowOnMap);
+    save({ show_on_map: nextShowOnMap });
+    syncPrefs({ show_on_map: nextShowOnMap });
+    if (userId) {
+      await supabase
+        .from('app_checkins')
+        .update({ visibility: nextShowOnMap ? 'public' : 'invisible' })
+        .eq('user_id', userId)
+        .eq('is_active', true);
     }
   };
 

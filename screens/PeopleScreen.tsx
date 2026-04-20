@@ -226,8 +226,13 @@ export default function PeopleScreen() {
   /* ── Refetch profile on screen focus (catches Settings snooze changes) ── */
   useFocusEffect(useCallback(() => { fetchMyProfile(); }, [fetchMyProfile]));
 
-  /* ── Snooze state ── */
-  const isSnoozed = myProfile?.snooze_mode === true;
+  /* ── Snooze state ──
+   *
+   * Single source of truth per CLAUDE.md: `show_on_map === false`
+   * means the user is hidden from the map AND considered "snoozed"
+   * from a social standpoint. The legacy `snooze_mode` field is no
+   * longer read anywhere in the client. */
+  const isSnoozed = myProfile?.show_on_map === false;
   const screenW = Dimensions.get('window').width;
   const cloudLeftX  = useRef(new Animated.Value(0)).current;
   const cloudRightX = useRef(new Animated.Value(0)).current;
@@ -252,7 +257,10 @@ export default function PeopleScreen() {
       Animated.timing(cloudRightX, { toValue: screenW, duration: 500, delay: 100, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
       Animated.timing(overlayOpacity, { toValue: 0, duration: 600, delay: 150, useNativeDriver: true }),
     ]).start(async () => {
-      await supabase.from('app_profiles').update({ snooze_mode: false, show_on_map: true }).eq('user_id', userId);
+      // Wake up — write only show_on_map (the one truth). The
+      // legacy `snooze_mode` field is not touched; readers pivoted
+      // to show_on_map in Stage 9.
+      await supabase.from('app_profiles').update({ show_on_map: true }).eq('user_id', userId);
       await supabase.from('app_checkins').update({ visibility: 'public' }).eq('user_id', userId).eq('is_active', true);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       fetchMyProfile();

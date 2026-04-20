@@ -55,7 +55,12 @@ export interface AppProfile {
   notify_timer: boolean;
   push_token: string | null;
   push_token_updated_at: string | null;
-  snooze_mode: boolean;
+  /** @deprecated Stage 9 — the client no longer reads or writes
+   *  this column. `show_on_map === false` is the one truth for
+   *  "user is snoozed / hidden." The column still exists in the
+   *  DB for historical data; a DROP COLUMN migration is tracked
+   *  as a follow-up. */
+  snooze_mode?: boolean;
   age_min: number;
   age_max: number;
   created_at: string;
