@@ -1,6 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, createRef } from 'react';
 import { View, ActivityIndicator, Image, StyleSheet } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -70,21 +69,25 @@ const TAB_ICONS: Record<string, NomadIconName> = {
  *   - app_profiles writes failed silently (FK + RLS)
  *   - People tab returned nothing (RLS policies reject non-authed reads)
  *   - Settings updates (age range etc.) silently no-op'd
- * Now DEV_MODE actually authenticates as the dev user.
- * Before enabling DEV_MODE in a fresh Supabase project, create matching rows
- * in auth.users + app_profiles with the passwords below. ───────────────── */
-// Product decision (2026-04-19): one dev account only — barakperez@gmail.com.
-// Every change in dev is tested against real data from the founder's own
-// account, not dummy data. Test accounts (barak_test / test_nomad) are kept
-// commented below so they can be re-enabled for multi-user scenarios
-// (testing chat between two users, etc.) without re-creating DB rows.
-const DEV_MODE = __DEV__;
-const DEV_USERS = [
-  { id: '91bfaacb-aea4-40d4-af67-7421b05be39d', label: 'Barak', email: 'barakperez@gmail.com', password: 'NomadsPeopleDev2026!' },
-  // { id: '88888888-8888-8888-8888-888888888888', label: 'Barak (test)', email: 'barak_test@nomadspeople.dev', password: 'NomadsPeopleDev2026!' },
-  // { id: '99999999-9999-9999-9999-999999999999', label: 'Test Nomad',   email: 'test_nomad@nomadspeople.dev', password: 'NomadsPeopleDev2026!' },
-];
-const DEV_USER_ID = DEV_USERS[0].id;
+ * Removed 2026-04-20: the entire DEV_MODE auto-signin block was deleted
+ * along with the hardcoded credentials it carried. The app now uses the
+ * normal AuthScreen flow for everyone — including developers — which is
+ * how production users sign in. Sessions persist via Supabase's
+ * persistSession (lib/supabase.ts), so a developer signs in once and
+ * stays signed in across reloads.
+ *
+ * Why removed:
+ *   - The hardcoded password sat in the JS bundle. Anyone reverse-
+ *     engineering an APK / IPA could read it.
+ *   - The DEV_MODE auto-signin had a destructive failure mode: when
+ *     Supabase auth was unreachable the local userId was still set
+ *     to the dev account, but with no real session — so RLS blocked
+ *     all queries, the profile lookup returned empty, and the user
+ *     was routed into onboarding where they could overwrite their
+ *     own profile.
+ *   - The "switchDevUser" UI in Settings is now hidden because the
+ *     hooks that surfaced it are gone (switchDevUser context value
+ *     is undefined → conditional render in SettingsScreen drops it). */
 
 function MainTabs() {
   const { colors } = useContext(ThemeContext);
@@ -173,57 +176,9 @@ const navigationRef = createRef<NavigationContainerRef<RootStackParamList>>();
 export default function App() {
   const { userId: authUserId, loading: authLoading, signOut } = useAuth();
 
-  // In dev mode: switchable dev users, persisted per device
-  const [devUserIdx, setDevUserIdx] = useState(0);
-  const [devUserLoaded, setDevUserLoaded] = useState(false);
-  const userId = DEV_MODE ? DEV_USERS[devUserIdx].id : authUserId;
-  const loading = DEV_MODE ? !devUserLoaded : authLoading;
-
-  // Load saved dev user choice on startup
-  useEffect(() => {
-    if (!DEV_MODE) { setDevUserLoaded(true); return; }
-    AsyncStorage.getItem('dev_user_idx')
-      .then((val) => {
-        if (val !== null) setDevUserIdx(Number(val));
-      })
-      .catch(() => {})
-      .finally(() => setDevUserLoaded(true));
-  }, []);
-
-  // DEV_MODE: sign in as the selected dev user so we have a real Supabase auth
-  // session. Without this, RLS policies block all reads/writes and the app
-  // looks half-broken (empty People tab, settings saves silently fail, etc.).
-  useEffect(() => {
-    if (!DEV_MODE || !devUserLoaded) return;
-    let cancelled = false;
-    const dev = DEV_USERS[devUserIdx];
-    (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (cancelled) return;
-      // Already signed in as the right dev user? done.
-      if (session?.user?.id === dev.id) return;
-      // Signed in as a DIFFERENT user (e.g. after switchDevUser) — sign out first.
-      if (session) {
-        await supabase.auth.signOut();
-        if (cancelled) return;
-      }
-      const { error } = await supabase.auth.signInWithPassword({
-        email: dev.email,
-        password: dev.password,
-      });
-      if (error) console.warn('[DEV_MODE] auto sign-in failed:', error.message);
-    })();
-    return () => { cancelled = true; };
-  }, [devUserIdx, devUserLoaded]);
-
-  // Save when switching
-  const switchDevUser = useCallback(() => {
-    setDevUserIdx((i) => {
-      const next = (i + 1) % DEV_USERS.length;
-      AsyncStorage.setItem('dev_user_idx', String(next));
-      return next;
-    });
-  }, []);
+  // Single source of truth — whatever Supabase session says.
+  const userId = authUserId;
+  const loading = authLoading;
 
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   const [checkingProfile, setCheckingProfile] = useState(false);
@@ -372,7 +327,7 @@ export default function App() {
     );
   }
 
-  // ─── Not logged in → Auth screen (skipped in DEV_MODE) ───
+  // ─── Not logged in → Auth screen ───
   if (!userId) {
     return (
       <SafeAreaProvider>
@@ -409,8 +364,9 @@ export default function App() {
       <ThemeContext.Provider value={{ isDark, colors, toggleDark }}>
         <AuthContext.Provider value={{
           userId, signOut, resetOnboarding,
-          switchDevUser: DEV_MODE ? switchDevUser : undefined,
-          devUserLabel: DEV_MODE ? DEV_USERS[devUserIdx].label : undefined,
+          // switchDevUser + devUserLabel retired with DEV_MODE. The
+          // type keeps them optional so legacy consumers (SettingsScreen)
+          // just render nothing when they're undefined.
           justFinishedSetup,
           clearSetupFlag: () => setJustFinishedSetup(false),
         }}>

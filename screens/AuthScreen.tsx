@@ -7,16 +7,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { supabase } from '../lib/supabase';
 
-/* ─── Dev shortcut credentials ─── */
-const DEV_EMAIL = 'barak@test.com';
-const DEV_PASSWORD = 'test1234';
-
 interface Props {
   onSuccess: () => void;
-  onDevSkip?: () => void;
 }
 
-export default function AuthScreen({ onSuccess, onDevSkip }: Props) {
+export default function AuthScreen({ onSuccess }: Props) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -104,24 +99,6 @@ export default function AuthScreen({ onSuccess, onDevSkip }: Props) {
     setError('');
   };
 
-  /* ─── Dev shortcut: skip to login as test user ─── */
-  const devLogin = async () => {
-    setError('');
-    setLoading(true);
-    console.log('[Auth] Dev quick-login...');
-    const { data, error: err } = await supabase.auth.signInWithPassword({
-      email: DEV_EMAIL,
-      password: DEV_PASSWORD,
-    });
-    if (err) {
-      setError('Dev login failed: ' + err.message);
-      console.warn('[Auth] Dev login error:', err.message);
-    } else {
-      console.log('[Auth] Dev login success:', data.user?.id);
-    }
-    setLoading(false);
-  };
-
   return (
     <KeyboardAvoidingView
       style={[styles.root, { paddingTop: insets.top }]}
@@ -203,16 +180,6 @@ export default function AuthScreen({ onSuccess, onDevSkip }: Props) {
           </Text>
         </TouchableOpacity>
 
-        {/* ─── Dev shortcut (remove before production) ─── */}
-        {onDevSkip && (
-          <TouchableOpacity
-            style={styles.devBtn}
-            onPress={onDevSkip}
-            activeOpacity={0.6}
-          >
-            <Text style={styles.devBtnText}>Skip — Enter as Barak</Text>
-          </TouchableOpacity>
-        )}
 
       </ScrollView>
     </KeyboardAvoidingView>
@@ -300,19 +267,4 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     fontWeight: FW.semi,
   },
 
-  /* ── Dev ── */
-  devBtn: {
-    marginTop: s(16),
-    alignSelf: 'center',
-    paddingVertical: s(4),
-    paddingHorizontal: s(10),
-    borderRadius: s(20),
-    borderWidth: 0.5,
-    borderColor: c.borderSoft,
-  },
-  devBtnText: {
-    fontSize: s(5),
-    color: c.textFaint,
-    fontWeight: FW.medium,
-  },
 });

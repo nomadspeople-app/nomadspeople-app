@@ -14,32 +14,28 @@ import { I18nManager } from 'react-native';
 /* ── Translation map type ── */
 export type TranslationMap = Record<string, string>;
 
-/* ── All supported locales ── */
-export const SUPPORTED_LOCALES = ['en', 'he', 'es', 'pt', 'it', 'fr', 'de', 'ru'] as const;
+/* ── Supported locales ──
+ * Trimmed 2026-04-20: removed es/pt/it/fr/de — their translation files
+ * were only 19–73 % complete and shipping half-translated UI would fail
+ * the App Store review guideline on language completeness. Files still
+ * live in lib/translations/ for future re-introduction once fully
+ * translated. When re-enabling a locale: add its code here AND in
+ * CFBundleLocalizations in app.json. */
+export const SUPPORTED_LOCALES = ['en', 'he', 'ru'] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 
 export const LOCALE_META: Record<Locale, { label: string; native: string; flag: string; rtl: boolean }> = {
-  en: { label: 'English',    native: 'English',    flag: '🇬🇧', rtl: false },
-  he: { label: 'עברית',      native: 'Hebrew',     flag: '🇮🇱', rtl: true },
-  es: { label: 'Español',    native: 'Spanish',    flag: '🇪🇸', rtl: false },
-  pt: { label: 'Português',  native: 'Portuguese',  flag: '🇵🇹', rtl: false },
-  it: { label: 'Italiano',   native: 'Italian',    flag: '🇮🇹', rtl: false },
-  fr: { label: 'Français',   native: 'French',     flag: '🇫🇷', rtl: false },
-  de: { label: 'Deutsch',    native: 'German',     flag: '🇩🇪', rtl: false },
-  ru: { label: 'Русский',    native: 'Russian',    flag: '🇷🇺', rtl: false },
+  en: { label: 'English', native: 'English', flag: '🇬🇧', rtl: false },
+  he: { label: 'עברית',   native: 'Hebrew',  flag: '🇮🇱', rtl: true  },
+  ru: { label: 'Русский', native: 'Russian', flag: '🇷🇺', rtl: false },
 };
 
-/* ── Import translations ── */
+/* ── Import translations — only the three supported locales ── */
 import { en } from './translations/en';
 import { he } from './translations/he';
-import { es } from './translations/es';
-import { pt } from './translations/pt';
-import { it } from './translations/it';
-import { fr } from './translations/fr';
-import { de } from './translations/de';
 import { ru } from './translations/ru';
 
-const TRANSLATIONS: Record<Locale, TranslationMap> = { en, he, es, pt, it, fr, de, ru };
+const TRANSLATIONS: Record<Locale, TranslationMap> = { en, he, ru };
 
 /* ── Interpolation: t('key', { count: 5 }) → replaces {{count}} ── */
 function interpolate(template: string, vars?: Record<string, string | number>): string {
