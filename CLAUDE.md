@@ -1,5 +1,89 @@
 # NomadsPeople App — Development Rules
 
+## Rule Zero — No Band-Aids (Locked April 2026)
+
+> **There are no patches. There are no small fixes. Every change is a full
+> engineering build, or it does not ship.**
+
+This is the single most important rule in the repo and it overrides
+everything below it. Read it before every task, every commit, every PR.
+
+### What a band-aid is
+
+A band-aid is any change that makes the reported symptom disappear for
+one user, on one screen, in one scenario — while leaving the underlying
+structure that produced the bug in place. Band-aids always break again,
+usually within days, usually louder, and always in front of a new user.
+
+Concrete examples from this codebase that are **forbidden**:
+
+- Adding `setPinLat(finalLat)` inside `TimerSheet` to match what
+  `QuickStatusSheet` already does. That is two copies of the same idea
+  diverging. Correct move: one `useLiveLocation()` hook, one
+  `<LocationPickerMap/>`, both sheets consume them.
+- Guarding `setVisibleNomadIds` with an equality check to silence re-
+  render thrash. That is a symptom-level fix. Correct move: one
+  `MapView`, one render pipeline, markers memoized per checkin id with
+  a stable coordinate reference.
+- Duplicating geocoding / GPS / reverse-geocode logic across
+  `QuickStatusSheet`, `TimerSheet`, `StatusCreationFlow`,
+  `HomeScreen`, `cityResolver`. Correct move: one module, one set of
+  tests, every caller uses it.
+- Fixing a hardcoded string in one language file. Correct move: add
+  the `t()` key to all supported locales, every time.
+- "Let me just set the default to true for now." No. Default is part of
+  the schema. Do it properly in the migration.
+
+### The rule
+
+1. **Treat the cause, never the symptom.** If two screens diverge, you
+   do not patch one to match the other — you extract the shared core
+   and point both at it.
+2. **If you find yourself writing the same block twice, stop.** Extract
+   it on the spot. There is never a "later" to clean up duplication.
+3. **Every fix is end-to-end.** DB state + RLS + hook + screen + cache
+   + error path + translation + commit message — all in the same
+   change. If any of those is missing, the fix is incomplete and must
+   not be committed.
+4. **A fix that works for one user or one flow is not a fix.** It is a
+   band-aid. Design for N users, N statuses, N timers — the system
+   must be stable at production scale from the first commit, not after
+   a future "performance pass".
+5. **Never ship speed over correctness.** The owner is building a
+   social product nomads abandon within one session if it feels
+   unstable. Every band-aid we ship ruins that trust.
+
+### Concrete test before every commit
+
+Before `git commit`, answer out loud:
+
+- If 100 nomads opened a status and 100 opened a timer right now, would
+  the code I just wrote still behave correctly? If not, it's a band-aid.
+- Does my change leave a second place in the codebase that still holds
+  the old broken pattern? If yes, it's a band-aid.
+- If a new engineer read only my diff, would they know the full scope
+  of the problem I fixed? If no, I stopped too early.
+
+If any answer is no / yes / no — do not commit. Go back and do the full
+build.
+
+### Why this rule exists
+
+Every band-aid we have shipped has broken within hours:
+
+- DEV_MODE auto-signin "for development only" → users were auto-logged
+  as the wrong account in production.
+- pg_cron `cleanup_checkins` running every minute → took the DB down
+  overnight, killed 100 live users.
+- Duplicate map sheets with copy-pasted GPS fetchers → live location
+  worked in Status but not in Timer, silently, for weeks.
+
+Each one was a "quick fix" at the time. Each one cost a day of
+firefighting and user trust that is not fully recoverable.
+
+There are no patches. There are no small fixes. Build it right, or
+don't ship.
+
 ## Repo Boundary (Locked April 2026)
 
 This repo is **only** the NomadsPeople mobile app and its marketing landing page. Nothing else.
