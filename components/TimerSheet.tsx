@@ -7,12 +7,19 @@ import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NomadIcon from './NomadIcon';
 import MapView, { Region } from 'react-native-maps';
-import * as Location from 'expo-location';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { useI18n } from '../lib/i18n';
 import { detectCategories } from '../lib/categoryDetector';
-import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
 import * as Haptics from 'expo-haptics';
+// Location helpers live in ONE module now (CLAUDE.md Rule Zero).
+// Any change to geocoding, GPS handling, or spoof detection must
+// happen in lib/locationServices.ts and ripples here automatically.
+import {
+  type GeoResult,
+  searchAddress,
+  reverseGeocode,
+  resolveLiveLocation,
+} from '../lib/locationServices';
 
 const { height: SH, width: SW } = Dimensions.get('window');
 const OFFSCREEN = SH;
@@ -37,71 +44,9 @@ const DURATIONS = [15, 30, 45, 60, 90, 120];
 /* ── Location modes ── */
 type LocMode = 'live' | 'map';
 
-/* ── Geocoding — Photon (autocomplete) + Nominatim (reverse) ── */
-interface GeoResult { display_name: string; lat: string; lon: string; mainLine: string; subLine: string }
-
-/** Parse a Photon GeoJSON feature into our GeoResult */
-function formatPhoton(f: any): GeoResult {
-  const p = f.properties || {};
-  const coords = f.geometry?.coordinates || [0, 0]; // [lon, lat]
-  const name = p.name || '';
-  const street = p.street || '';
-  const num = p.housenumber || '';
-  const hood = p.suburb || p.district || '';
-  const city = p.city || p.town || p.village || '';
-  // Main line: prefer name (e.g. "Nahalat Binyamin"), fall back to street+num
-  const mainLine = name || (num ? `${street} ${num}` : street) || '';
-  // Sub line: neighborhood + city
-  const sub = [hood, city].filter(Boolean);
-  const subLine = sub.length ? sub.join(', ') : (p.state || p.country || '');
-  const display = [mainLine, ...sub].filter(Boolean).join(', ');
-  return { display_name: display, lat: String(coords[1]), lon: String(coords[0]), mainLine, subLine };
-}
-
-/**
- * Photon autocomplete — designed for partial/typeahead queries.
- * "nahala" → "Nahalat Binyamin", "rothsch" → "Rothschild Boulevard"
- * Location-biased by lat/lon so local results come first.
- */
-async function searchAddress(q: string, lat: number, lng: number, _city?: string): Promise<GeoResult[]> {
-  if (q.length < 2) return [];
-  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&limit=5&lang=en`;
-  const data = await fetchJsonWithTimeout<any>(url, { tag: 'photon.address', timeoutMs: 7000 });
-  if (data?.features?.length > 0) return data.features.map(formatPhoton);
-  return [];
-}
-
-/** Reverse geocode — Nominatim (still best for this) */
-async function reverseGeocode(lat: number, lng: number): Promise<string> {
-  const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=en`;
-  const data = await fetchJsonWithTimeout<any>(url, { tag: 'nominatim.reverse', timeoutMs: 7000 });
-  if (!data) return '';
-  const addr = data.address || {};
-  const parts = [addr.road, addr.house_number, addr.neighbourhood || addr.suburb].filter(Boolean);
-  return parts.join(' ') || data.display_name?.split(',').slice(0, 2).join(',') || '';
-}
-
-/* ── IP-based geolocation (GPS spoofing fallback) ── */
-async function getIpLocation(): Promise<{ lat: number; lng: number } | null> {
-  const primary = await fetchJsonWithTimeout<any>('https://ipapi.co/json/', { tag: 'ipapi', timeoutMs: 6000 });
-  if (primary?.latitude && primary?.longitude) {
-    return { lat: primary.latitude, lng: primary.longitude };
-  }
-  // Fallback to secondary service
-  const backup = await fetchJsonWithTimeout<any>('http://ip-api.com/json/?fields=lat,lon', { tag: 'ip-api.com', timeoutMs: 6000 });
-  if (backup?.lat && backup?.lon) return { lat: backup.lat, lng: backup.lon };
-  return null;
-}
-
-/* ── Distance in km between two coords (Haversine) ── */
-function distKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+/* ── Geocoding + GPS + IP + spoof detection live in
+ *    lib/locationServices.ts. This file only composes them into
+ *    TimerSheet's state machine; it does not reimplement any of it. */
 
 /* ── Exported interface ── */
 export interface TimerData {
@@ -239,91 +184,47 @@ export default function TimerSheet({
     }
   }, [visible]);
 
-  /* ── Fetch device location — multi-strategy with GPS spoofing detection ── */
+  /* ── Fetch device location ──
+   *
+   * Thin wrapper around `resolveLiveLocation` in locationServices.
+   * The function's one job in this sheet is to route the resolved
+   * values into local state — it does NOT know how to talk to GPS
+   * or IP or handle spoof detection; that lives in the shared
+   * module and is tested in one place.
+   *
+   * A change in spoof threshold, provider order, or permission
+   * handling belongs in locationServices, not here. */
   const fetchLiveLocation = useCallback(async () => {
     setFetchingLive(true);
     setGpsWarning(false);
     try {
-      // 1) Request permission
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        console.warn('Location permission denied');
-        setLiveLat(cityLat);
-        setLiveLng(cityLng);
+      const res = await resolveLiveLocation(cityLat, cityLng);
+
+      setLiveLat(res.latitude);
+      setLiveLng(res.longitude);
+      setGpsWarning(res.spoofSuspected || res.usedFallback);
+
+      // Sync the map pin to the resolved position so the user sees
+      // the map land where they actually are. Both Timer and Status
+      // mirror live → pin, so both flows feel like the same map —
+      // this was the exact inconsistency Rule Zero exists to stop.
+      setPinLat(res.latitude);
+      setPinLng(res.longitude);
+
+      // Label the pin. If the resolver fell back to city center
+      // there's no point hitting Nominatim; we already know the
+      // answer.
+      if (res.usedFallback) {
         setLiveAddr(cityName);
-        setFetchingLive(false);
-        return;
-      }
-
-      // 2) Fetch GPS and IP location in parallel
-      const [gpsResult, ipResult] = await Promise.allSettled([
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
-        getIpLocation(),
-      ]);
-
-      const gpsPos = gpsResult.status === 'fulfilled' ? gpsResult.value : null;
-      const ipPos = ipResult.status === 'fulfilled' ? ipResult.value : null;
-
-      let finalLat: number;
-      let finalLng: number;
-      let spoofDetected = false;
-
-      if (gpsPos && ipPos) {
-        // 3) Compare GPS vs IP — if >5km apart, GPS is likely spoofed
-        const drift = distKm(
-          gpsPos.coords.latitude, gpsPos.coords.longitude,
-          ipPos.lat, ipPos.lng,
-        );
-        console.log(`[Location] GPS: ${gpsPos.coords.latitude.toFixed(4)},${gpsPos.coords.longitude.toFixed(4)} | IP: ${ipPos.lat.toFixed(4)},${ipPos.lng.toFixed(4)} | drift: ${drift.toFixed(1)}km`);
-
-        if (drift > 5) {
-          // GPS spoofing detected — use IP location instead
-          console.warn(`[Location] GPS spoofing detected (${drift.toFixed(1)}km drift) — using IP location`);
-          finalLat = ipPos.lat;
-          finalLng = ipPos.lng;
-          spoofDetected = true;
-        } else {
-          // GPS looks good
-          finalLat = gpsPos.coords.latitude;
-          finalLng = gpsPos.coords.longitude;
-        }
-      } else if (gpsPos) {
-        // IP failed — use GPS, but can't verify
-        finalLat = gpsPos.coords.latitude;
-        finalLng = gpsPos.coords.longitude;
-      } else if (ipPos) {
-        // GPS failed — use IP
-        finalLat = ipPos.lat;
-        finalLng = ipPos.lng;
-        spoofDetected = true;
       } else {
-        // Both failed — use city coords
-        finalLat = cityLat;
-        finalLng = cityLng;
-        setLiveLat(cityLat);
-        setLiveLng(cityLng);
-        setLiveAddr(cityName);
-        setGpsWarning(true);
-        setFetchingLive(false);
-        return;
+        const addr = await reverseGeocode(res.latitude, res.longitude);
+        setLiveAddr(addr || cityName);
       }
-
-      setLiveLat(finalLat);
-      setLiveLng(finalLng);
-      setGpsWarning(spoofDetected);
-
-      // Sync the map pin to the live GPS position — matches the behavior of
-      // QuickStatusSheet, so Timer and Status feel like the SAME map. Without
-      // this, the pin would stay at the city center even after we've
-      // successfully fetched the user's real coordinates.
-      setPinLat(finalLat);
-      setPinLng(finalLng);
-
-      // 4) Reverse geocode the final position
-      const addr = await reverseGeocode(finalLat, finalLng);
-      setLiveAddr(addr || cityName);
     } catch (err) {
-      console.warn('Live location error:', err);
+      // resolveLiveLocation is fully try-wrapped inside, so reaching
+      // this catch means something weirder happened (e.g. we ran
+      // without permissions module). Fall back gracefully.
+      console.warn('[TimerSheet] live location error:', err);
       setLiveLat(cityLat);
       setLiveLng(cityLng);
       setLiveAddr(cityName);
