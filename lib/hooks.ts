@@ -143,8 +143,13 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
     setLoading(true);
     fetch();
 
-    // Polling fallback — ensures freshness even if Realtime is slow
-    const pollInterval = setInterval(() => { fetch(); }, 30000); // every 30s (reduced from 10s to ease DB load)
+    // Polling fallback — Realtime is the primary refresh mechanism;
+    // this is a safety net in case the websocket drops. Reduced
+    // 30s → 120s (2 min) on 2026-04-20 after we found this hook
+    // was a major contributor to DB load when many clients are
+    // active. Realtime gives us instant updates on changes — we
+    // don't need fast polling on top.
+    const pollInterval = setInterval(() => { fetch(); }, 120000);
 
     // Realtime subscription — globally unique channel name
     // NOTE: No city filter — Supabase Realtime `eq` is case-sensitive but our
@@ -223,7 +228,11 @@ export function useHotCheckins(city: string) {
     };
 
     poll();
-    const iv = setInterval(poll, 15000); // every 15s
+    // 15s → 60s (2026-04-20 DB load cleanup). "Hot checkin" heat
+    // state only changes when a new message lands, which Realtime
+    // already notifies us about — polling is a fallback, not the
+    // primary source.
+    const iv = setInterval(poll, 60000);
     return () => clearInterval(iv);
   }, [city]);
 
@@ -549,8 +558,10 @@ export function useUnreadTotal(userId: string | null) {
   useEffect(() => {
     fetch();
 
-    // Poll every 45 seconds as fallback (Realtime handles instant updates)
-    const interval = setInterval(fetch, 45000);
+    // Poll as fallback — Realtime handles instant updates. 45s → 120s
+    // on 2026-04-20. The badge count is a non-critical surface; if a
+    // Realtime message is missed, 2 minutes to correct is fine.
+    const interval = setInterval(fetch, 120000);
 
     // Also listen to Realtime for new messages
     if (!userId) return;
@@ -1646,7 +1657,9 @@ export function useNotifications(userId: string | null) {
 
   useEffect(() => {
     fetch();
-    const interval = setInterval(fetch, 30000); // poll every 30s
+    // Notifications poll — 30s → 120s (2026-04-20 DB load cleanup).
+    // Push-driven in production; polling is only the catch-up layer.
+    const interval = setInterval(fetch, 120000);
     return () => clearInterval(interval);
   }, [fetch]);
 

@@ -1092,51 +1092,26 @@ export default function HomeScreen() {
     refetchCheckins();
   };
 
-  /* ── Auto-cleanup: expire stale statuses + delete expired chats every 60s ── */
-  useEffect(() => {
-    const cleanup = async () => {
-      const now = new Date().toISOString();
-      // 1. Find expired checkins (before deactivating them)
-      const { data: expired } = await supabase
-        .from('app_checkins')
-        .select('id')
-        .eq('is_active', true)
-        .lt('expires_at', now)
-        .not('expires_at', 'is', null);
+  /* ── Expired-timer local cleanup (client-side state only) ──
+     REMOVED 2026-04-20: the previous implementation ran every 60 s
+     on EVERY active client and issued an UPDATE + three DELETEs on
+     app_messages / app_conversation_members / app_conversations for
+     every expired checkin. With N clients this multiplied DB load by
+     N and was one of the two main contributors to the DB storm that
+     locked us out this morning. It also violated the timer spec,
+     which says the chat must SURVIVE expiry so members can chat the
+     afterglow.
 
-      // 2. Deactivate them
-      if (expired && expired.length > 0) {
-        const expiredIds = expired.map(e => e.id);
-        await supabase
-          .from('app_checkins')
-          .update({ is_active: false })
-          .in('id', expiredIds);
+     Server side now owns lifecycle: the pg_cron `cleanup_checkins`
+     function flips is_active=false and posts a system message into
+     the chat. The chat + members + messages stay put. The pin
+     disappears from the map because useActiveCheckins filters by
+     is_active + expires_at.
 
-        // 3. Delete associated chats (messages → members → conversation)
-        const { data: chats } = await supabase
-          .from('app_conversations')
-          .select('id')
-          .in('checkin_id', expiredIds);
-        if (chats && chats.length > 0) {
-          const chatIds = chats.map(c => c.id);
-          await supabase.from('app_messages').delete().in('conversation_id', chatIds);
-          await supabase.from('app_conversation_members').delete().in('conversation_id', chatIds);
-          await supabase.from('app_conversations').delete().in('id', chatIds);
-        }
-
-        // Clear local active timer if it was ours
-        if (activeTimerCheckin && expiredIds.includes(activeTimerCheckin)) {
-          setActiveTimerCheckin(null);
-          setActiveTimerChatId(null);
-        }
-      }
-
-      refetchCheckins();
-    };
-    cleanup();
-    const interval = setInterval(cleanup, 60_000);
-    return () => clearInterval(interval);
-  }, [refetchCheckins, activeTimerCheckin]);
+     If we need client-side state cleanup (e.g., clear a local
+     activeTimerCheckin that expired), that can be done in a tiny
+     pure-local effect that doesn't touch the DB. Adding that back
+     later if it becomes a bug, NOT preemptively. */
 
   /* ── Layout cascade — header height measured dynamically ── */
   const [headerH, setHeaderH] = useState(0);
