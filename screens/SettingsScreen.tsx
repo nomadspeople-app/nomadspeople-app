@@ -920,9 +920,12 @@ export default function SettingsScreen() {
         </Section>
 
         {/* ═══ VISIBILITY ═══ */}
-        {/* Show-on-map row removed for v1.0 — see screens/SettingsScreen.removed.tsx.
-            Snooze mode below is the single user-facing visibility toggle;
-            handleToggleSnooze syncs show_on_map internally. */}
+        {/* Show-on-map row removed for v1.0 (see git history on the
+            SettingsScreen.removed.tsx file that was deleted in Stage
+            13). Snooze mode below is the single user-facing
+            visibility toggle; handleToggleSnooze syncs show_on_map
+            internally. This dual-field pattern is flagged as a
+            band-aid and is scheduled for consolidation in Stage 9. */}
         <Section title="visibility" sectionKey="visibility" icon="eye" iconColor="#10B981">
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
           <SettingsRow
@@ -1054,7 +1057,7 @@ export default function SettingsScreen() {
               />
             }
           />
-          {/* "Activities heating up" row removed for v1.0 — see SettingsScreen.removed.tsx */}
+          {/* "Activities heating up" row removed for v1.0 — see git history on the deleted SettingsScreen.removed.tsx */}
           <View style={styles.divider} />
           <SettingsRow
             icon="target"
@@ -1071,7 +1074,7 @@ export default function SettingsScreen() {
               </View>
             }
           />
-          {/* "Profile views" notification removed for v1.0 — see SettingsScreen.removed.tsx */}
+          {/* "Profile views" notification removed for v1.0 — see git history on the deleted SettingsScreen.removed.tsx */}
           <View style={styles.divider} />
           <SettingsRow
             icon="chat"
@@ -1102,7 +1105,7 @@ export default function SettingsScreen() {
               />
             }
           />
-          {/* "DNA matches" notification removed for v1.0 — see SettingsScreen.removed.tsx */}
+          {/* "DNA matches" notification removed for v1.0 — see git history on the deleted SettingsScreen.removed.tsx */}
         </View>
         </Section>
 
