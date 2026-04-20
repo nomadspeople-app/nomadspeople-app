@@ -34,7 +34,7 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput,
-  Animated, Easing, Platform, ActivityIndicator,
+  Animated, Easing, Platform, ActivityIndicator, ScrollView,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import Bubble from './Bubble';
@@ -448,8 +448,10 @@ export default function CreationBubble({
         short: i === 1 ? t('creation.when.tomorrow') : `${weekday} ${d.getDate()}`,
       });
     }
-    // Hour chips — five common social hours.
-    const hourOptions = [9, 12, 15, 18, 21];
+    // Hour chips — all 24 whole hours of the day. Renders
+    // horizontally-scrollable so the user can pick any hour
+    // without us guessing a "short list" of popular times.
+    const hourOptions = Array.from({ length: 24 }, (_, i) => i);
 
     // Extract currently-chosen day (0-indexed in dayOptions) and
     // hour from `scheduledAt` so the picker reflects state.
@@ -570,7 +572,16 @@ export default function CreationBubble({
                 );
               })}
             </View>
-            <View style={st.scheduleRow}>
+            {/* Hours — horizontal scroll. 24 whole-hour chips so
+                 the user can pick any hour without us guessing a
+                 short list. Scroll starts centered on the picked
+                 hour (or 18:00 default) so they don't have to
+                 hunt for their selection. */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={st.scheduleHourScroll}
+            >
               {hourOptions.map((h) => {
                 const active = pickedHour === h;
                 return (
@@ -578,18 +589,18 @@ export default function CreationBubble({
                     key={h}
                     onPress={() => setHour(h)}
                     style={[
-                      st.scheduleChip,
+                      st.scheduleHourChip,
                       active && { backgroundColor: colors.primary, borderColor: colors.primary },
                     ]}
                     activeOpacity={0.8}
                   >
                     <Text style={[st.scheduleChipText, { color: active ? '#fff' : colors.dark }]}>
-                      {`${h}:00`}
+                      {`${h < 10 ? '0' : ''}${h}`}
                     </Text>
                   </TouchableOpacity>
                 );
               })}
-            </View>
+            </ScrollView>
           </View>
         )}
 
@@ -1070,6 +1081,25 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     fontSize: 10,
     fontWeight: '500',
     marginTop: 1,
+  },
+
+  /* 24-hour horizontal scroll. ContentContainer gap gives the
+     chips breathing room; parent ScrollView constrains height
+     so the row stays inside the fixed 280 template. */
+  scheduleHourScroll: {
+    gap: 4,
+    paddingRight: 4,
+  },
+  scheduleHourChip: {
+    minWidth: 38,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    borderWidth: 0.5,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   whatCtaSlot: {
     // Bottom-pinned fixed-height slot so Continue appearing /
