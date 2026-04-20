@@ -354,7 +354,11 @@ export default function CreationBubble({
 
   const renderWho = () => (
     <View style={st.stepBody}>
-      <Text style={st.stepEcho} numberOfLines={1}>"{text.trim()}"</Text>
+      {/* NOTE: no stepEcho here. On the WHO step the user just
+           came from WHERE, they remember what they typed — showing
+           the quote again costs ~30px of vertical space we can't
+           afford inside the 280 template. Echo stays on WHERE and
+           PUBLISH where it adds context. */}
 
       {kind === 'timer' ? (
         <>
@@ -415,12 +419,18 @@ export default function CreationBubble({
         </>
       )}
 
-      {/* Age range label — tighter marginTop (was 14, now 6) so
-           the slider sits closer to the duration row and the CTA
-           lands comfortably inside the 280 template. */}
-      <Text style={[st.stepLabel, { marginTop: 6 }]}>
-        {t('creation.who.ageRange')} · {ageMin}–{ageMax}
-      </Text>
+      {/* Age range — label on one line, "18–80" number inline in
+           a smaller muted weight so it reads "age range · 18–80"
+           at a glance without eating space. marginTop 2 pulls
+           the slider right up under the chips. */}
+      <View style={st.ageRangeHeader}>
+        <Text style={[st.stepLabel, st.ageRangeLabel]}>
+          {t('creation.who.ageRange')}
+        </Text>
+        <Text style={st.ageRangeValue}>
+          {ageMin}–{ageMax}
+        </Text>
+      </View>
       <View style={{ paddingHorizontal: 6 }}>
         <DualThumbSlider
           min={18} max={80}
@@ -676,6 +686,31 @@ const styles = (c: ThemeColors) => StyleSheet.create({
   chipCompactText: {
     fontSize: 13,
     fontWeight: '600',
+  },
+
+  /* Age range header — label and "18–80" number on one line, the
+     number smaller + muted so it reads as an annotation, not a
+     second heading. marginTop 2 pulls the slider up snug under
+     the duration chip row. */
+  ageRangeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  ageRangeLabel: {
+    // Inherits from stepLabel but drops its margin since the
+    // parent row handles vertical spacing.
+    marginBottom: 0,
+  },
+  ageRangeValue: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    color: '#6B7280',
+    letterSpacing: 0.3,
   },
 
   /* Summary (step PUBLISH) */
