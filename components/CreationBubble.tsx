@@ -307,31 +307,40 @@ export default function CreationBubble({
 
   const renderWhere = () => (
     <View style={st.stepBody}>
-      {/* Echo of what the user typed — a small quote at the top
-          so they remember what they're locating. Same font rhythm
-          as TimerBubble's title but smaller; it's context, not
-          the star of the step. */}
+      {/* Echo of what the user typed — small quote at the top so
+          they remember what they're locating. */}
       <Text style={st.stepEcho} numberOfLines={2}>"{text.trim()}"</Text>
 
-      {/* Where pill — the default is "here" (seed location). Tap
-          to open the main map's pickMode for a different spot. */}
       <Text style={st.stepLabel}>{t('creation.where.label')}</Text>
+
+      {/* Row 1 — "Set pin on map". Same pill style as before, but
+          NO address displayed here. The pill is an ACTION, not a
+          readout. Tap → opens pickMode on the main map. */}
       <TouchableOpacity
         style={[st.locationPill, { borderColor: colors.borderSoft, backgroundColor: colors.surface }]}
         activeOpacity={0.7}
         onPress={handleTapLocation}
       >
         <NomadIcon name="pin" size={s(7)} color={colors.primary} strokeWidth={1.8} />
-        <View style={{ flex: 1 }}>
-          <Text style={[st.locationAddress, { color: colors.dark }]} numberOfLines={1}>
-            {address || cityName || t('creation.where.fallback')}
-          </Text>
-          <Text style={[st.locationHint, { color: colors.textMuted }]}>
-            {t('creation.where.tapToChange')}
-          </Text>
-        </View>
+        <Text style={[st.locationActionText, { color: colors.dark }]} numberOfLines={1}>
+          {t('creation.where.setPin')}
+        </Text>
         <NomadIcon name="forward" size={s(5)} color={colors.textMuted} strokeWidth={1.6} />
       </TouchableOpacity>
+
+      {/* Row 2 — OPTIONAL free-form address / label. Pre-filled with
+          whatever reverseGeocode / pickMode wrote into `address`.
+          User can leave it empty, accept the autofill, or type
+          their own preferred name ("Roee's bar", etc). */}
+      <TextInput
+        style={[st.locationInput, { borderColor: colors.borderSoft, backgroundColor: colors.surface, color: colors.dark }]}
+        placeholder={t('creation.where.addressOptional')}
+        placeholderTextColor={colors.textFaint}
+        value={address}
+        onChangeText={setAddress}
+        returnKeyType="done"
+        blurOnSubmit
+      />
 
       <View style={st.rowCtaWrap}>
         <TouchableOpacity
@@ -620,7 +629,8 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     textAlign: 'center',
   },
 
-  /* Location pill (step WHERE) */
+  /* Location pill (step WHERE) — action row, one line. Tap opens
+     pickMode on the main map. */
   locationPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -629,16 +639,24 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 14,
     borderWidth: 0.5,
-    marginBottom: 20,
+    marginBottom: 10,
   },
-  locationAddress: {
+  locationActionText: {
+    flex: 1,
     fontSize: 15,
     fontWeight: '700',
   },
-  locationHint: {
-    fontSize: 12,
-    fontWeight: '400',
-    marginTop: 2,
+  /* Optional free-form address / label. Same pill footprint as
+     the action row so the two stack cleanly. User can leave it,
+     accept the autofill from reverseGeocode, or override. */
+  locationInput: {
+    fontSize: 14,
+    fontWeight: '500',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 0.5,
+    marginBottom: 18,
   },
 
   /* Chips — non-wrapping "status open/private" variant.

@@ -71,6 +71,8 @@ export const he: Record<string, string> = {
   'creation.what.timerPlaceholder': 'מה אתה עושה ממש עכשיו?',
   'creation.where.label': 'איפה?',
   'creation.where.tapToChange': 'הקש לשינוי',
+  'creation.where.setPin': 'הצב פין במפה',
+  'creation.where.addressOptional': 'הוסף כתובת (אופציונלי)',
   'creation.where.fallback': 'לא ידוע',
   'creation.who.duration': 'לכמה זמן?',
   'creation.who.audience': 'מי יכול להצטרף?',

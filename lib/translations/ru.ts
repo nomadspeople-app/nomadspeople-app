@@ -71,6 +71,8 @@ export const ru: Record<string, string> = {
   'creation.what.timerPlaceholder': 'что ты делаешь прямо сейчас?',
   'creation.where.label': 'где?',
   'creation.where.tapToChange': 'нажми чтобы изменить',
+  'creation.where.setPin': 'поставить метку на карте',
+  'creation.where.addressOptional': 'добавить адрес (по желанию)',
   'creation.where.fallback': 'неизвестно',
   'creation.who.duration': 'на сколько?',
   'creation.who.audience': 'кто может присоединиться?',

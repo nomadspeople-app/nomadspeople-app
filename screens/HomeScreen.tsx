@@ -1684,6 +1684,47 @@ export default function HomeScreen() {
             />
           </View>
 
+          {/* "Center on me" button — forces a fresh Location.getCurrent
+               and animates the map there. Without this the user had to
+               pan manually when the initial GPS snap lagged behind
+               the iOS blue dot. Button sits above the bottom panel,
+               aligned right, so left-handed pan isn't blocked. */}
+          <TouchableOpacity
+            style={[st.pickMyLocBtn, { backgroundColor: colors.card, borderColor: colors.borderSoft, bottom: insets.bottom + s(80) }]}
+            activeOpacity={0.7}
+            onPress={async () => {
+              Haptics.selectionAsync().catch(() => {});
+              try {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') return;
+                // Last-known is instant and matches the iOS blue dot.
+                // Fresh getCurrentPositionAsync refines it a moment later.
+                const last = await Location.getLastKnownPositionAsync();
+                if (last) {
+                  mapRef.current?.animateToRegion({
+                    latitude: last.coords.latitude,
+                    longitude: last.coords.longitude,
+                    latitudeDelta: 0.005,
+                    longitudeDelta: 0.005,
+                  }, 300);
+                }
+                const fresh = await Location.getCurrentPositionAsync({
+                  accuracy: Location.Accuracy.High,
+                });
+                mapRef.current?.animateToRegion({
+                  latitude: fresh.coords.latitude,
+                  longitude: fresh.coords.longitude,
+                  latitudeDelta: 0.004,
+                  longitudeDelta: 0.004,
+                }, 350);
+              } catch (err) {
+                console.warn('[pickMode] center-on-me failed:', err);
+              }
+            }}
+          >
+            <NomadIcon name="crosshair" size={s(8)} color={colors.primary} strokeWidth={1.8} />
+          </TouchableOpacity>
+
           {/* Bottom panel — address label + Continue / Cancel.
                Sits above the tab bar and below the map. The whole
                panel is a solid card so the user understands this is
@@ -2434,6 +2475,26 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     fontWeight: FW.regular,
     textAlign: 'center',
     paddingVertical: s(6),
+  },
+
+  /* Floating "center on me" button inside pickMode. Sits above
+     the bottom panel on the right edge — doesn't obscure the
+     pin or the CTAs. */
+  pickMyLocBtn: {
+    position: 'absolute',
+    right: s(10),
+    width: s(20),
+    height: s(20),
+    borderRadius: s(10),
+    borderWidth: 0.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 88,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: s(2) },
+    shadowOpacity: 0.15,
+    shadowRadius: s(5),
+    elevation: 5,
   },
   pickPanel: {
     position: 'absolute',

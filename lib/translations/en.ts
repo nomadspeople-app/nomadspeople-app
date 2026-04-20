@@ -71,6 +71,8 @@ export const en: Record<string, string> = {
   'creation.what.timerPlaceholder': 'what are you doing right now?',
   'creation.where.label': 'where?',
   'creation.where.tapToChange': 'tap to change',
+  'creation.where.setPin': 'set pin on map',
+  'creation.where.addressOptional': 'add address (optional)',
   'creation.where.fallback': 'unknown',
   'creation.who.duration': 'for how long?',
   'creation.who.audience': 'who can join?',
