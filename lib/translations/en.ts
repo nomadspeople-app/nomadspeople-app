@@ -56,6 +56,7 @@ export const en: Record<string, string> = {
   'pickMode.resolving': 'Finding address…',
   'pickMode.continue': 'Continue',
   'pickMode.cancel': 'Cancel',
+  'pickMode.searchPlaceholder': 'Search an address',
 
   /* ── Collapsible section headers (Settings, etc) ── */
   'section.tapToOpen': 'tap to open',

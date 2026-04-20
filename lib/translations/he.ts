@@ -56,6 +56,7 @@ export const he: Record<string, string> = {
   'pickMode.resolving': 'מאתר כתובת…',
   'pickMode.continue': 'המשך',
   'pickMode.cancel': 'ביטול',
+  'pickMode.searchPlaceholder': 'חיפוש כתובת',
 
   /* ── כותרות מתקפלות ── */
   'section.tapToOpen': 'הקש לפתיחה',

@@ -25,7 +25,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, Animated,
-  Pressable, Dimensions,
+  Pressable, Dimensions, Keyboard, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { s, FW, useTheme, type ThemeColors } from '../lib/theme';
@@ -60,6 +60,30 @@ export default function Bubble({
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(SCREEN_H)).current;
   const [mounted, setMounted] = useState(visible);
+
+  /* ── Keyboard avoidance ──
+   *
+   * The bubble is docked at the bottom of the screen. When a
+   * TextInput inside it focuses, the on-screen keyboard rises
+   * and would cover the bubble. We animate the bubble up by the
+   * exact keyboard height so the input stays visible at all
+   * times. This works for every consumer of <Bubble/> — no per-
+   * component wiring needed. */
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKbHeight(e.endCoordinates?.height || 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKbHeight(0);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (visible) {
@@ -117,10 +141,17 @@ export default function Bubble({
         style={[
           st.wrap,
           {
-            // Gentle gap above the safe area / tab bar — small enough
-            // that the bubble feels docked to the bottom, large enough
-            // that it doesn't visually kiss the tab bar.
-            bottom: insets.bottom + s(3),
+            // Gentle gap above the safe area / tab bar when the
+            // keyboard is closed. When the keyboard rises we bump
+            // the bottom by the full keyboard height so the bubble
+            // floats just above it and the TextInput never gets
+            // covered. On iOS we subtract the safe-area bottom from
+            // kbHeight because UIKit already includes it in the
+            // reported height — on Android it doesn't, so we leave
+            // the raw value.
+            bottom: kbHeight > 0
+              ? (Platform.OS === 'ios' ? kbHeight + s(3) : kbHeight + insets.bottom + s(3))
+              : insets.bottom + s(3),
             opacity,
             transform: [{ translateY }],
           },

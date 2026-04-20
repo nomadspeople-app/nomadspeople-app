@@ -25,7 +25,12 @@ import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
 // pickMode below to label the pin with the current neighborhood /
 // street while the user pans. DO NOT reach into Nominatim directly —
 // all callers go through lib/locationServices (CLAUDE.md Rule Zero).
-import { reverseGeocode as reverseGeocodeAddress } from '../lib/locationServices';
+import {
+  reverseGeocode as reverseGeocodeAddress,
+  searchAddress as searchPickAddress,
+  resolveLiveLocation,
+  type GeoResult,
+} from '../lib/locationServices';
 import { trackEvent } from '../lib/tracking';
 import ProfileCardSheet from '../components/ProfileCardSheet';
 import NotificationsSheet from '../components/NotificationsSheet';
@@ -494,6 +499,18 @@ export default function HomeScreen() {
   >(null);
   const pickGeocodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /* Optional address search inside pickMode.
+   *
+   * Per product request: a search bar sits at the top of pickMode
+   * so users who KNOW the exact address don't have to pan for it.
+   * Pin-drop still works — the search is a shortcut, not the only
+   * path. Typing debounces 300ms then hits Photon via the shared
+   * lib/locationServices.searchAddress. */
+  const [pickSearchQuery, setPickSearchQuery] = useState('');
+  const [pickSearchResults, setPickSearchResults] = useState<GeoResult[]>([]);
+  const [pickSearching, setPickSearching] = useState(false);
+  const pickSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   /** Enter pickMode for either 'status' or 'timer'. Seeds the pin
    *  to the user's last known GPS when available, otherwise to the
    *  current city's center. Animates the map there so the opening
@@ -519,9 +536,49 @@ export default function HomeScreen() {
       clearTimeout(pickGeocodeTimer.current);
       pickGeocodeTimer.current = null;
     }
+    if (pickSearchTimer.current) {
+      clearTimeout(pickSearchTimer.current);
+      pickSearchTimer.current = null;
+    }
     setPickMode('browse');
     setPickAddr('');
     setPickResolving(false);
+    setPickSearchQuery('');
+    setPickSearchResults([]);
+    setPickSearching(false);
+  }, []);
+
+  /** Debounced Photon search for the pickMode search bar. */
+  const onPickSearchChange = useCallback((q: string) => {
+    setPickSearchQuery(q);
+    if (pickSearchTimer.current) clearTimeout(pickSearchTimer.current);
+    if (q.trim().length < 2) {
+      setPickSearchResults([]);
+      setPickSearching(false);
+      return;
+    }
+    setPickSearching(true);
+    pickSearchTimer.current = setTimeout(async () => {
+      const results = await searchPickAddress(q.trim(), pickLat, pickLng, currentCity.name);
+      setPickSearchResults(results);
+      setPickSearching(false);
+    }, 300);
+  }, [pickLat, pickLng, currentCity.name]);
+
+  /** Tap on a search result — animate the map there. The
+   *  onRegionChangeComplete handler below will settle pickLat/Lng
+   *  and reverseGeocode the new address. */
+  const onPickSearchSelect = useCallback((r: GeoResult) => {
+    const lat = parseFloat(r.lat);
+    const lng = parseFloat(r.lon);
+    setPickSearchQuery('');
+    setPickSearchResults([]);
+    setPickSearching(false);
+    Keyboard.dismiss();
+    mapRef.current?.animateToRegion({
+      latitude: lat, longitude: lng,
+      latitudeDelta: 0.006, longitudeDelta: 0.006,
+    }, 500);
   }, []);
 
   /** Commit the current pick and hand it to the appropriate sheet.
@@ -562,6 +619,12 @@ export default function HomeScreen() {
   const [creationSeedLat, setCreationSeedLat] = useState<number>(currentCity.lat);
   const [creationSeedLng, setCreationSeedLng] = useState<number>(currentCity.lng);
   const [creationSeedAddr, setCreationSeedAddr] = useState<string>('');
+  /** Monotonic session token. Incremented ONLY on a fresh open
+   *  (Status/Timer button tap). Stays unchanged when we hide +
+   *  restore the bubble around a pickMode round-trip, so the
+   *  bubble's internal reset effect doesn't wipe the user's
+   *  already-entered text and settings. */
+  const [creationSessionKey, setCreationSessionKey] = useState(0);
   // When we enter pickMode FROM the creation bubble, we stash the
   // kind here so commit-back re-opens the bubble at the right step.
   const [creationPickInFlight, setCreationPickInFlight] = useState(false);
@@ -572,20 +635,60 @@ export default function HomeScreen() {
     ((loc: { lat: number; lng: number; address: string }) => void) | null
   >(null);
 
-  /** Open the creation bubble for status or timer. Seeds location
-   *  from the user's GPS (if available) or the current city. */
+  /** Open the creation bubble for status or timer. Bumps the
+   *  session key so the bubble resets to step WHAT with a clean
+   *  input. Seeds location from the user's latest GPS if we have
+   *  it; otherwise the current city's center.
+   *
+   *  We ALSO kick off a fresh GPS resolve in the background —
+   *  the user is about to create something location-anchored
+   *  and we want the most accurate coords possible by the time
+   *  they reach the WHERE step. */
   const openCreation = useCallback((kind: 'status' | 'timer') => {
     setCreationKind(kind);
-    setCreationSeedLat(userLat ?? currentCity.lat);
-    setCreationSeedLng(userLng ?? currentCity.lng);
+    const initLat = userLat ?? currentCity.lat;
+    const initLng = userLng ?? currentCity.lng;
+    setCreationSeedLat(initLat);
+    setCreationSeedLng(initLng);
     setCreationSeedAddr(currentCity.name);
+    setCreationSessionKey(k => k + 1); // fresh session → bubble resets
     setShowCreation(true);
     Haptics.selectionAsync().catch(() => {});
+    // Fire-and-forget GPS refresh so the seed improves while the
+    // user types. resolveLiveLocation runs GPS + IP + spoof in
+    // parallel and never throws. When it returns, we push the
+    // result into the bubble via its location-updater ref.
+    (async () => {
+      try {
+        const res = await resolveLiveLocation(initLat, initLng);
+        if (!res.usedFallback) {
+          creationLocationUpdater.current?.({
+            lat: res.latitude,
+            lng: res.longitude,
+            address: '',
+          });
+          const addr = await reverseGeocodeAddress(res.latitude, res.longitude);
+          if (addr) {
+            creationLocationUpdater.current?.({
+              lat: res.latitude,
+              lng: res.longitude,
+              address: addr,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[HomeScreen] creation GPS refresh failed:', err);
+      }
+    })();
   }, [userLat, userLng, currentCity.lat, currentCity.lng, currentCity.name]);
 
   /** Called by CreationBubble when the user taps the "change
-   *  location" row. We hide the bubble, enter pickMode on the main
-   *  map, and wait for commit / cancel. */
+   *  location" row. We hide the bubble, enter pickMode on the
+   *  main map, and kick off a FRESH GPS resolve. We seed the map
+   *  with the bubble's current coords for instant feedback, then
+   *  as soon as live GPS returns we snap the map and pin to the
+   *  real location — no more "pin a few streets away" because we
+   *  fell back to city center when userLat was momentarily null. */
   const handleCreationRequestPick = useCallback(
     (current: { lat: number; lng: number; address: string }) => {
       setCreationPickInFlight(true);
@@ -593,12 +696,33 @@ export default function HomeScreen() {
       setPickLat(current.lat);
       setPickLng(current.lng);
       setPickAddr(current.address || '');
-      setPickResolving(false);
+      setPickResolving(true);
       setPickMode(creationKind);
+      // Instant: map flies to whatever we have (bubble seed).
       mapRef.current?.animateToRegion({
         latitude: current.lat, longitude: current.lng,
         latitudeDelta: 0.006, longitudeDelta: 0.006,
       }, 400);
+      // Async: fetch a FRESH GPS + IP + spoof result. When it
+      // lands, re-animate the map to those coords — this is what
+      // fixes the "pin landed a few streets away" bug.
+      (async () => {
+        try {
+          const res = await resolveLiveLocation(current.lat, current.lng);
+          if (!res.usedFallback) {
+            mapRef.current?.animateToRegion({
+              latitude: res.latitude,
+              longitude: res.longitude,
+              latitudeDelta: 0.006,
+              longitudeDelta: 0.006,
+            }, 450);
+            // onRegionChangeComplete below will pick up the new
+            // center and update pickLat/Lng + reverseGeocode.
+          }
+        } catch (err) {
+          console.warn('[HomeScreen] fresh GPS for pickMode failed:', err);
+        }
+      })();
     },
     [creationKind],
   );
@@ -1499,6 +1623,54 @@ export default function HomeScreen() {
            ═══════════════════════════════════════════════════════════ */}
       {pickMode !== 'browse' && (
         <>
+          {/* Top search bar — optional shortcut. The user can still
+               pan the map to drop the center pin anywhere; this is
+               for the common case where they know the street name. */}
+          <View style={[st.pickSearchWrap, { top: insets.top + s(6) }]}>
+            <View style={[st.pickSearchBar, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+              <NomadIcon name="search" size={s(7)} color={colors.textMuted} strokeWidth={1.6} />
+              <TextInput
+                style={[st.pickSearchInput, { color: colors.dark }]}
+                placeholder={t('pickMode.searchPlaceholder')}
+                placeholderTextColor={colors.textFaint}
+                value={pickSearchQuery}
+                onChangeText={onPickSearchChange}
+                returnKeyType="search"
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              {pickSearchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => { setPickSearchQuery(''); setPickSearchResults([]); setPickSearching(false); Keyboard.dismiss(); }}>
+                  <NomadIcon name="close" size={s(6)} color={colors.textMuted} strokeWidth={1.8} />
+                </TouchableOpacity>
+              )}
+            </View>
+            {(pickSearching || pickSearchResults.length > 0) && (
+              <View style={[st.pickSearchResults, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+                {pickSearching ? (
+                  <Text style={[st.pickSearchEmpty, { color: colors.textMuted }]}>…</Text>
+                ) : (
+                  pickSearchResults.map((r, i) => (
+                    <TouchableOpacity
+                      key={`${r.lat},${r.lon}-${i}`}
+                      style={[st.pickSearchRow, { borderBottomColor: colors.borderSoft }]}
+                      onPress={() => onPickSearchSelect(r)}
+                      activeOpacity={0.7}
+                    >
+                      <NomadIcon name="pin" size={s(5)} color={colors.primary} strokeWidth={1.6} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[st.pickSearchMain, { color: colors.dark }]} numberOfLines={1}>{r.mainLine || r.display_name}</Text>
+                        {!!r.subLine && (
+                          <Text style={[st.pickSearchSub, { color: colors.textMuted }]} numberOfLines={1}>{r.subLine}</Text>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </View>
+            )}
+          </View>
+
           {/* Center pin — sits at screen-center, not at any coord.
                pointerEvents="none" so the map underneath still
                receives pan / zoom gestures. */}
@@ -2034,6 +2206,7 @@ export default function HomeScreen() {
       <CreationBubble
         visible={showCreation}
         kind={creationKind}
+        sessionKey={creationSessionKey}
         userAvatarUrl={avatarUri(myProfile?.avatar_url)}
         userFallback={myInitials}
         userFallbackColor={colors.primary}
@@ -2198,6 +2371,69 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     borderRadius: s(1.5),
     backgroundColor: 'rgba(0,0,0,0.25)',
     transform: [{ scaleX: 1.4 }],
+  },
+
+  /* Pick-mode search bar (top) */
+  pickSearchWrap: {
+    position: 'absolute',
+    left: s(8),
+    right: s(8),
+    zIndex: 95,
+  },
+  pickSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: s(4),
+    borderRadius: s(8),
+    borderWidth: 0.5,
+    paddingHorizontal: s(7),
+    paddingVertical: s(5),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: s(2) },
+    shadowOpacity: 0.12,
+    shadowRadius: s(5),
+    elevation: 4,
+  },
+  pickSearchInput: {
+    flex: 1,
+    fontSize: s(7),
+    fontWeight: FW.regular,
+    paddingVertical: 0,
+  },
+  pickSearchResults: {
+    marginTop: s(4),
+    borderRadius: s(8),
+    borderWidth: 0.5,
+    paddingVertical: s(2),
+    maxHeight: s(70),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: s(2) },
+    shadowOpacity: 0.12,
+    shadowRadius: s(5),
+    elevation: 4,
+  },
+  pickSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: s(4),
+    paddingHorizontal: s(7),
+    paddingVertical: s(5),
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  pickSearchMain: {
+    fontSize: s(6.5),
+    fontWeight: FW.semi,
+  },
+  pickSearchSub: {
+    fontSize: s(5.5),
+    fontWeight: FW.regular,
+    marginTop: s(0.5),
+  },
+  pickSearchEmpty: {
+    fontSize: s(6),
+    fontWeight: FW.regular,
+    textAlign: 'center',
+    paddingVertical: s(6),
   },
   pickPanel: {
     position: 'absolute',

@@ -73,6 +73,13 @@ export interface CreationPayload {
 interface Props {
   visible: boolean;
   kind: CreationKind;
+  /** Monotonically increasing token. The bubble resets its
+   *  internal state ONLY when this value changes, NOT every time
+   *  `visible` flips to true. That lets the parent hide + reopen
+   *  the bubble around a pickMode round-trip without losing the
+   *  user's text / category / age / duration. Parent increments
+   *  it on fresh open (button tap); leaves it alone on restore. */
+  sessionKey: number;
   /** User's avatar for the Bubble shell's overlap-on-top circle. */
   userAvatarUrl?: string | null;
   userFallback: string;
@@ -116,7 +123,7 @@ const CATEGORY_EMOJI: Record<string, string> = {
 const DURATION_PRESETS = [15, 30, 45, 60, 90, 120];
 
 export default function CreationBubble({
-  visible, kind, userAvatarUrl, userFallback, userFallbackColor,
+  visible, kind, sessionKey, userAvatarUrl, userFallback, userFallbackColor,
   seedLat, seedLng, seedAddress, cityName, publishing,
   onClose, onRequestLocationPick, onPublish, locationUpdaterRef,
 }: Props) {
@@ -139,25 +146,35 @@ export default function CreationBubble({
 
   const textInputRef = useRef<TextInput>(null);
 
-  /* ── Reset every time the bubble opens afresh ── */
+  /* ── Reset only when a FRESH session starts ──
+   *
+   * Keyed off `sessionKey`, NOT `visible`. Parent hides the
+   * bubble (visible=false) while a pickMode round-trip runs on
+   * the main map, then re-shows (visible=true) with the same
+   * sessionKey to restore. Without this the old useEffect
+   * reset text / category / age / duration on every such
+   * restore and the user had to start over — exactly the bug
+   * the product owner reported. */
+  const lastSessionKey = useRef<number>(-1);
   useEffect(() => {
-    if (visible) {
-      setStep('what');
-      setText('');
-      setCategory('other');
-      setEmoji('✨');
-      setLat(seedLat);
-      setLng(seedLng);
-      setAddress(seedAddress);
-      setAgeMin(18);
-      setAgeMax(80);
-      setIsOpen(true);
-      setDurationMinutes(60);
-      // Auto-focus the input on step 1 — users expect the keyboard
-      // the moment a creation bubble opens.
-      setTimeout(() => textInputRef.current?.focus(), 180);
-    }
-  }, [visible, seedLat, seedLng, seedAddress]);
+    if (!visible) return;
+    if (sessionKey === lastSessionKey.current) return;
+    lastSessionKey.current = sessionKey;
+    setStep('what');
+    setText('');
+    setCategory('other');
+    setEmoji('✨');
+    setLat(seedLat);
+    setLng(seedLng);
+    setAddress(seedAddress);
+    setAgeMin(18);
+    setAgeMax(80);
+    setIsOpen(true);
+    setDurationMinutes(60);
+    // Auto-focus the input on step 1 — users expect the keyboard
+    // the moment a creation bubble opens.
+    setTimeout(() => textInputRef.current?.focus(), 180);
+  }, [visible, sessionKey, seedLat, seedLng, seedAddress]);
 
   /* ── Expose a location updater so the parent (HomeScreen) can
    *    push the result of pickMode back into the bubble without
@@ -531,29 +548,36 @@ const styles = (c: ThemeColors) => StyleSheet.create({
   stepBody: {
     width: '100%',
     alignItems: 'stretch',
-    // Min height roughly matches TimerBubble's content block so
-    // the bubble's total height stays stable across all four
-    // steps. No jumpy reflows between WHAT and PUBLISH.
-    minHeight: 180,
+    // FIXED height (not minHeight) across all four steps so the
+    // bubble does not grow or shrink as the user progresses —
+    // locked rule per product owner. This number is the measured
+    // content height of TimerBubble's info block (title + subtitle
+    // + members row + CTA) so the creation bubble has the exact
+    // same vertical footprint as the "viewing" bubble people see
+    // when they tap a pin. Every step's render must fit inside
+    // this height; the CTA is bottom-pinned via `marginTop: auto`
+    // in the CTA wrapper, and content above flows naturally.
+    height: 260,
+    justifyContent: 'flex-start',
   },
 
   /* STEP 1 — clean canvas */
   whatInput: {
+    flex: 1,                        // fills the vertical space
     fontSize: 22,
     lineHeight: 28,
     fontWeight: '600',
     color: '#111827',
     textAlign: 'center',
-    minHeight: 90,
-    maxHeight: 140,
+    textAlignVertical: 'center',
     paddingHorizontal: 4,
     paddingVertical: 8,
     // No border — feels like a blank page, not a form field.
   },
   whatCtaSlot: {
-    // Fixed height slot so the Continue button appearing doesn't
-    // bounce the layout when it materializes.
-    minHeight: 52,
+    // Bottom-pinned fixed-height slot so Continue appearing /
+    // disappearing doesn't bounce the layout.
+    height: 52,
     justifyContent: 'flex-end',
     marginTop: 8,
   },

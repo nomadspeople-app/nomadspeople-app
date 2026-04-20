@@ -56,6 +56,7 @@ export const ru: Record<string, string> = {
   'pickMode.resolving': 'Ищу адрес…',
   'pickMode.continue': 'Продолжить',
   'pickMode.cancel': 'Отмена',
+  'pickMode.searchPlaceholder': 'Поиск адреса',
 
   /* ── Сворачиваемые секции ── */
   'section.tapToOpen': 'нажми чтобы открыть',
