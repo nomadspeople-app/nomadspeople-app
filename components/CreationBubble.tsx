@@ -548,17 +548,17 @@ const styles = (c: ThemeColors) => StyleSheet.create({
   stepBody: {
     width: '100%',
     alignItems: 'stretch',
-    // FIXED height (not minHeight) across all four steps so the
-    // bubble does not grow or shrink as the user progresses —
-    // locked rule per product owner. This number is the measured
-    // content height of TimerBubble's info block (title + subtitle
-    // + members row + CTA) so the creation bubble has the exact
-    // same vertical footprint as the "viewing" bubble people see
-    // when they tap a pin. Every step's render must fit inside
-    // this height; the CTA is bottom-pinned via `marginTop: auto`
-    // in the CTA wrapper, and content above flows naturally.
-    height: 260,
+    // FIXED height across all four steps so the bubble stays the
+    // same size as the user progresses — locked rule per product
+    // owner. Sized to fit the biggest step (WHO — echo + label +
+    // chips row + age label + slider + CTA) with breathing room.
+    // Every step's render MUST fit inside this height; if a
+    // future field forces a step beyond it, shrink the field,
+    // don't add a scroll view or a second card (that would be
+    // "inventing" — see CLAUDE.md Rule Zero).
+    height: 320,
     justifyContent: 'flex-start',
+    overflow: 'hidden',
   },
 
   /* STEP 1 — clean canvas */
