@@ -313,34 +313,45 @@ export default function CreationBubble({
 
       <Text style={st.stepLabel}>{t('creation.where.label')}</Text>
 
-      {/* Row 1 — "Set pin on map". Same pill style as before, but
-          NO address displayed here. The pill is an ACTION, not a
-          readout. Tap → opens pickMode on the main map. */}
+      {/* Row 1 — "Set pin on map". Action pill, full-width, taller
+          than before so it feels substantial to tap. Opens pickMode
+          on the main map. */}
       <TouchableOpacity
         style={[st.locationPill, { borderColor: colors.borderSoft, backgroundColor: colors.surface }]}
         activeOpacity={0.7}
         onPress={handleTapLocation}
       >
-        <NomadIcon name="pin" size={s(7)} color={colors.primary} strokeWidth={1.8} />
+        <NomadIcon name="pin" size={s(8)} color={colors.primary} strokeWidth={1.8} />
         <Text style={[st.locationActionText, { color: colors.dark }]} numberOfLines={1}>
           {t('creation.where.setPin')}
         </Text>
-        <NomadIcon name="forward" size={s(5)} color={colors.textMuted} strokeWidth={1.6} />
+        <NomadIcon name="forward" size={s(6)} color={colors.textMuted} strokeWidth={1.6} />
       </TouchableOpacity>
 
-      {/* Row 2 — OPTIONAL free-form address / label. Pre-filled with
-          whatever reverseGeocode / pickMode wrote into `address`.
-          User can leave it empty, accept the autofill, or type
-          their own preferred name ("Roee's bar", etc). */}
-      <TextInput
-        style={[st.locationInput, { borderColor: colors.borderSoft, backgroundColor: colors.surface, color: colors.dark }]}
-        placeholder={t('creation.where.addressOptional')}
-        placeholderTextColor={colors.textFaint}
-        value={address}
-        onChangeText={setAddress}
-        returnKeyType="done"
-        blurOnSubmit
-      />
+      {/* Row 2 — OPTIONAL free-form address / label. Seeded from
+          reverseGeocode, but the moment the user taps it the text
+          is selected (selectTextOnFocus) so the first keystroke
+          replaces the auto-fill — no more "stuck" text the user
+          had to backspace through. A clear × inside the input
+          gives them a one-tap escape hatch. */}
+      <View style={[st.locationInputRow, { borderColor: colors.borderSoft, backgroundColor: colors.surface }]}>
+        <NomadIcon name="edit" size={s(7)} color={colors.textMuted} strokeWidth={1.6} />
+        <TextInput
+          style={[st.locationInput, { color: colors.dark }]}
+          placeholder={t('creation.where.addressOptional')}
+          placeholderTextColor={colors.textFaint}
+          value={address}
+          onChangeText={setAddress}
+          selectTextOnFocus
+          returnKeyType="done"
+          blurOnSubmit
+        />
+        {address.length > 0 && (
+          <TouchableOpacity onPress={() => setAddress('')} hitSlop={10}>
+            <NomadIcon name="close" size={s(5.5)} color={colors.textMuted} strokeWidth={1.8} />
+          </TouchableOpacity>
+        )}
+      </View>
 
       <View style={st.rowCtaWrap}>
         <TouchableOpacity
@@ -629,34 +640,45 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     textAlign: 'center',
   },
 
-  /* Location pill (step WHERE) — action row, one line. Tap opens
-     pickMode on the main map. */
+  /* Location pill (step WHERE) — action row, one line, full
+     width, generous vertical padding so it feels like a button
+     the thumb can hit without aim. Tap opens pickMode. */
   locationPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    borderWidth: 0.5,
+    marginBottom: 10,
+    minHeight: 56,
+  },
+  locationActionText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  /* Optional free-form address / label. Same footprint as the
+     action pill above so the two stack cleanly and weigh the
+     same visually. Holds an edit icon on the left, the input
+     in the middle, and a clear × on the right when non-empty. */
+  locationInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     borderRadius: 14,
     borderWidth: 0.5,
-    marginBottom: 10,
+    marginBottom: 14,
+    minHeight: 56,
   },
-  locationActionText: {
+  locationInput: {
     flex: 1,
     fontSize: 15,
-    fontWeight: '700',
-  },
-  /* Optional free-form address / label. Same pill footprint as
-     the action row so the two stack cleanly. User can leave it,
-     accept the autofill from reverseGeocode, or override. */
-  locationInput: {
-    fontSize: 14,
     fontWeight: '500',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    borderWidth: 0.5,
-    marginBottom: 18,
+    paddingVertical: 0,
   },
 
   /* Chips — non-wrapping "status open/private" variant.
