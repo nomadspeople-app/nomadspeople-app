@@ -22,6 +22,7 @@ import DualThumbSlider from './DualThumbSlider';
 import { useI18n } from '../lib/i18n';
 import * as Haptics from 'expo-haptics';
 import { detectCategories } from '../lib/categoryDetector';
+import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 const OFFSCREEN = SH;
@@ -82,25 +83,20 @@ function formatPhoton(f: any): GeoResult {
  */
 async function searchAddress(q: string, lat: number, lng: number, _city?: string): Promise<GeoResult[]> {
   if (q.length < 2) return [];
-  try {
-    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&limit=5&lang=en`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'NomadsPeople/1.0' } });
-    const data = await res.json();
-    if (data.features?.length > 0) return data.features.map(formatPhoton);
-    return [];
-  } catch { return []; }
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&limit=5&lang=en`;
+  const data = await fetchJsonWithTimeout<any>(url, { tag: 'photon.address', timeoutMs: 7000 });
+  if (data?.features?.length > 0) return data.features.map(formatPhoton);
+  return [];
 }
 
 /** Reverse geocode — Nominatim (still best for this) */
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
-  try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=en`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'NomadsPeople/1.0' } });
-    const data = await res.json();
-    const addr = data.address || {};
-    const parts = [addr.road, addr.house_number, addr.neighbourhood || addr.suburb].filter(Boolean);
-    return parts.join(' ') || data.display_name?.split(',').slice(0, 2).join(',') || '';
-  } catch { return ''; }
+  const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=en`;
+  const data = await fetchJsonWithTimeout<any>(url, { tag: 'nominatim.reverse', timeoutMs: 7000 });
+  if (!data) return '';
+  const addr = data.address || {};
+  const parts = [addr.road, addr.house_number, addr.neighbourhood || addr.suburb].filter(Boolean);
+  return parts.join(' ') || data.display_name?.split(',').slice(0, 2).join(',') || '';
 }
 
 /* ═══ Exported interface ═══ */

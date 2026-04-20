@@ -11,6 +11,7 @@ import * as Location from 'expo-location';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { useI18n } from '../lib/i18n';
 import { detectCategories } from '../lib/categoryDetector';
+import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
 import * as Haptics from 'expo-haptics';
 
 const { height: SH, width: SW } = Dimensions.get('window');
@@ -64,42 +65,31 @@ function formatPhoton(f: any): GeoResult {
  */
 async function searchAddress(q: string, lat: number, lng: number, _city?: string): Promise<GeoResult[]> {
   if (q.length < 2) return [];
-  try {
-    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&limit=5&lang=en`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'NomadsPeople/1.0' } });
-    const data = await res.json();
-    if (data.features?.length > 0) return data.features.map(formatPhoton);
-    return [];
-  } catch { return []; }
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&limit=5&lang=en`;
+  const data = await fetchJsonWithTimeout<any>(url, { tag: 'photon.address', timeoutMs: 7000 });
+  if (data?.features?.length > 0) return data.features.map(formatPhoton);
+  return [];
 }
 
 /** Reverse geocode — Nominatim (still best for this) */
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
-  try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=en`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'NomadsPeople/1.0' } });
-    const data = await res.json();
-    const addr = data.address || {};
-    const parts = [addr.road, addr.house_number, addr.neighbourhood || addr.suburb].filter(Boolean);
-    return parts.join(' ') || data.display_name?.split(',').slice(0, 2).join(',') || '';
-  } catch { return ''; }
+  const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=en`;
+  const data = await fetchJsonWithTimeout<any>(url, { tag: 'nominatim.reverse', timeoutMs: 7000 });
+  if (!data) return '';
+  const addr = data.address || {};
+  const parts = [addr.road, addr.house_number, addr.neighbourhood || addr.suburb].filter(Boolean);
+  return parts.join(' ') || data.display_name?.split(',').slice(0, 2).join(',') || '';
 }
 
 /* ── IP-based geolocation (GPS spoofing fallback) ── */
 async function getIpLocation(): Promise<{ lat: number; lng: number } | null> {
-  try {
-    const res = await fetch('https://ipapi.co/json/', { headers: { 'User-Agent': 'NomadsPeople/1.0' } });
-    const data = await res.json();
-    if (data.latitude && data.longitude) {
-      return { lat: data.latitude, lng: data.longitude };
-    }
-  } catch {}
+  const primary = await fetchJsonWithTimeout<any>('https://ipapi.co/json/', { tag: 'ipapi', timeoutMs: 6000 });
+  if (primary?.latitude && primary?.longitude) {
+    return { lat: primary.latitude, lng: primary.longitude };
+  }
   // Fallback to secondary service
-  try {
-    const res = await fetch('http://ip-api.com/json/?fields=lat,lon');
-    const data = await res.json();
-    if (data.lat && data.lon) return { lat: data.lat, lng: data.lon };
-  } catch {}
+  const backup = await fetchJsonWithTimeout<any>('http://ip-api.com/json/?fields=lat,lon', { tag: 'ip-api.com', timeoutMs: 6000 });
+  if (backup?.lat && backup?.lon) return { lat: backup.lat, lng: backup.lon };
   return null;
 }
 

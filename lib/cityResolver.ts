@@ -9,6 +9,7 @@
 
 import { CITIES } from '../components/CityPickerSheet';
 import { haversineKm } from './distance';
+import { fetchJsonWithTimeout } from './fetchWithTimeout';
 
 // Was 50 km — too wide. A user picking a Rehovot venue (≈20 km from Tel
 // Aviv) was getting their event tagged 'Tel Aviv' because Tel Aviv was
@@ -17,19 +18,15 @@ import { haversineKm } from './distance';
 // which returns the actual city name.
 const CITY_SEARCH_RADIUS_KM = 15;
 
-/** Reverse geocode using Nominatim — returns city name or empty string */
+/** Reverse geocode using Nominatim — returns city name or empty string.
+ *  Never throws. On timeout / network error, returns '' and the caller
+ *  falls back to its default. */
 export async function reverseGeocodeCity(lat: number, lng: number): Promise<string> {
-  try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&accept-language=en`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'NomadsPeople/1.0' } });
-    const data = await res.json();
-    const addr = data.address || {};
-    const cityName = addr.city || addr.town || addr.village || addr.state || '';
-    return cityName;
-  } catch (e) {
-    console.warn('[City Resolver] Nominatim failed:', e);
-    return '';
-  }
+  const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&accept-language=en`;
+  const data = await fetchJsonWithTimeout<any>(url, { tag: 'nominatim.reverse', timeoutMs: 8000 });
+  if (!data) return '';
+  const addr = data.address || {};
+  return addr.city || addr.town || addr.village || addr.state || '';
 }
 
 /**

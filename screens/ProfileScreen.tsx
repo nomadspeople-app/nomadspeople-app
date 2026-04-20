@@ -15,6 +15,7 @@ import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList } from '../lib/types';
 import { postEventSystemMessage, eventSystemMsg } from '../lib/eventSystemMessages';
 import { resolveCityFromCoordinates } from '../lib/cityResolver';
+import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
 import { useProfile, useFollow, usePhotoPosts, usePhotoLike, usePhotoComments, createOrJoinStatusChat, createOrFindDM, calcAge, getZodiac, blockUser, approvePendingMember, denyPendingMember, type FollowerPreview } from '../lib/hooks';
 import { AuthContext, useAuthContext } from '../App';
 import type { PhotoPost } from '../lib/hooks';
@@ -1773,25 +1774,28 @@ export default function ProfileScreen() {
                         if (locationTimer.current) clearTimeout(locationTimer.current);
                         if (text.length < 2) { setLocationResults([]); return; }
                         locationTimer.current = setTimeout(async () => {
-                          try {
-                            const res = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=5`);
-                            const json = await res.json();
-                            const results = (json.features || []).map((f: any) => {
-                              const p = f.properties || {};
-                              const coords = f.geometry?.coordinates || [0, 0];
-                              return {
-                                name: p.name || p.street || text,
-                                sub: [p.city, p.state, p.country].filter(Boolean).join(', '),
-                                lat: coords[1],
-                                lng: coords[0],
-                                // Capture the city (or fall back to state/name) so the
-                                // event's city field gets rewritten on save and the
-                                // event shows on the NEW city's map, not the old one.
-                                city: p.city || p.state || p.name || null,
-                              };
-                            });
-                            setLocationResults(results);
-                          } catch {}
+                          // fetchJsonWithTimeout returns null on any failure
+                          // (timeout, network, parse) — user gets an empty
+                          // dropdown instead of a LogBox error.
+                          const json = await fetchJsonWithTimeout<any>(
+                            `https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=5`,
+                            { tag: 'photon.location', timeoutMs: 7000 },
+                          );
+                          const results = (json?.features || []).map((f: any) => {
+                            const p = f.properties || {};
+                            const coords = f.geometry?.coordinates || [0, 0];
+                            return {
+                              name: p.name || p.street || text,
+                              sub: [p.city, p.state, p.country].filter(Boolean).join(', '),
+                              lat: coords[1],
+                              lng: coords[0],
+                              // Capture the city (or fall back to state/name) so the
+                              // event's city field gets rewritten on save and the
+                              // event shows on the NEW city's map, not the old one.
+                              city: p.city || p.state || p.name || null,
+                            };
+                          });
+                          setLocationResults(results);
                         }, 400);
                       }}
                       autoFocus

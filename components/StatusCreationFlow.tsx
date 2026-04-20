@@ -22,6 +22,7 @@ import MapView, { Marker, Circle } from 'react-native-maps';
 import NomadIcon from './NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import DualThumbSlider from './DualThumbSlider';
+import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
 
 const { width: SW, height: SH } = Dimensions.get('window');
 
@@ -56,22 +57,18 @@ interface GeoResult { display_name: string; lat: string; lon: string }
 
 async function searchAddress(query: string, lat: number, lng: number): Promise<GeoResult[]> {
   if (query.length < 3) return [];
-  try {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=8&viewbox=${lng - 0.3},${lat + 0.3},${lng + 0.3},${lat - 0.3}&bounded=0&accept-language=en`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'NomadsPeople/1.0' } });
-    return await res.json();
-  } catch { return []; }
+  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=8&viewbox=${lng - 0.3},${lat + 0.3},${lng + 0.3},${lat - 0.3}&bounded=0&accept-language=en`;
+  const data = await fetchJsonWithTimeout<GeoResult[]>(url, { tag: 'nominatim.search', timeoutMs: 7000 });
+  return data || [];
 }
 
 async function reverseGeocode(lat: number, lng: number): Promise<string> {
-  try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=en`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'NomadsPeople/1.0' } });
-    const data = await res.json();
-    const addr = data.address || {};
-    const parts = [addr.road, addr.house_number, addr.neighbourhood || addr.suburb].filter(Boolean);
-    return parts.join(' ') || data.display_name?.split(',').slice(0, 2).join(',') || '';
-  } catch { return ''; }
+  const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&accept-language=en`;
+  const data = await fetchJsonWithTimeout<any>(url, { tag: 'nominatim.reverse', timeoutMs: 7000 });
+  if (!data) return '';
+  const addr = data.address || {};
+  const parts = [addr.road, addr.house_number, addr.neighbourhood || addr.suburb].filter(Boolean);
+  return parts.join(' ') || data.display_name?.split(',').slice(0, 2).join(',') || '';
 }
 
 /* ═══ Props & Data ═══ */

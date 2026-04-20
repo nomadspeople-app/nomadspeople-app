@@ -20,6 +20,7 @@ import { AuthContext } from '../App';
 import { useAvatar } from '../lib/AvatarContext';
 import { useI18n } from '../lib/i18n';
 import { supabase } from '../lib/supabase';
+import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
 import { trackEvent } from '../lib/tracking';
 import ProfileCardSheet from '../components/ProfileCardSheet';
 import NotificationsSheet from '../components/NotificationsSheet';
@@ -120,33 +121,33 @@ function findNearestCity(lat: number, lng: number, maxKm = 50): City | null {
 
 async function searchCities(q: string): Promise<CitySearchResult[]> {
   if (q.length < 2) return [];
-  try {
-    const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=en&layer=city&layer=state&layer=country`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'NomadsPeople/1.0' } });
-    const data = await res.json();
-    if (!data.features?.length) return [];
-    // Deduplicate by city name + country
-    const seen = new Set<string>();
-    const results: CitySearchResult[] = [];
-    for (const f of data.features) {
-      const p = f.properties || {};
-      const coords = f.geometry?.coordinates || [0, 0];
-      const name = p.name || p.city || p.state || '';
-      const country = p.country || '';
-      const key = `${name}-${country}`.toLowerCase();
-      if (!name || seen.has(key)) continue;
-      seen.add(key);
-      results.push({
-        name,
-        country,
-        lat: coords[1],
-        lng: coords[0],
-        label: country ? `${name}, ${country}` : name,
-      });
-      if (results.length >= 5) break;
-    }
-    return results;
-  } catch { return []; }
+  const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=8&lang=en&layer=city&layer=state&layer=country`;
+  // fetchJsonWithTimeout never throws — on network/timeout failure it
+  // returns null and the user sees an empty dropdown (the search just
+  // "didn't find anything") instead of a scary red LogBox error.
+  const data = await fetchJsonWithTimeout<any>(url, { tag: 'photon.cities', timeoutMs: 7000 });
+  if (!data?.features?.length) return [];
+  // Deduplicate by city name + country
+  const seen = new Set<string>();
+  const results: CitySearchResult[] = [];
+  for (const f of data.features) {
+    const p = f.properties || {};
+    const coords = f.geometry?.coordinates || [0, 0];
+    const name = p.name || p.city || p.state || '';
+    const country = p.country || '';
+    const key = `${name}-${country}`.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    results.push({
+      name,
+      country,
+      lat: coords[1],
+      lng: coords[0],
+      label: country ? `${name}, ${country}` : name,
+    });
+    if (results.length >= 5) break;
+  }
+  return results;
 }
 
 const RECENT_CITIES_KEY = 'nomadspeople_recent_cities';
@@ -814,21 +815,18 @@ export default function HomeScreen() {
       setCurrentCity(nearest);
       return nearest.name;
     }
-    // Fall back to Nominatim reverse geocoding
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${checkinLat}&lon=${checkinLng}&zoom=10&accept-language=en`,
-        { headers: { 'User-Agent': 'NomadsPeople/1.0' } },
-      );
-      const data = await res.json();
-      const addr = data.address || {};
-      const cityName = addr.city || addr.town || addr.village || addr.state || '';
-      if (cityName) {
-        console.log(`[City Resolve] GPS is ${distFromCurrent.toFixed(0)}km from ${currentCity.name}, Nominatim resolved to ${cityName}`);
-        return cityName;
-      }
-    } catch (e) {
-      console.warn('[City Resolve] Nominatim failed, using currentCity as fallback', e);
+    // Fall back to Nominatim reverse geocoding. fetchJsonWithTimeout
+    // returns null on timeout/network error (no throw), so we just
+    // fall through to the currentCity fallback without a stack trace
+    // in LogBox.
+    const data = await fetchJsonWithTimeout<any>(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${checkinLat}&lon=${checkinLng}&zoom=10&accept-language=en`,
+      { tag: 'nominatim.reverse', timeoutMs: 7000 },
+    );
+    const cityName = data?.address?.city || data?.address?.town || data?.address?.village || data?.address?.state || '';
+    if (cityName) {
+      console.log(`[City Resolve] GPS is ${distFromCurrent.toFixed(0)}km from ${currentCity.name}, Nominatim resolved to ${cityName}`);
+      return cityName;
     }
     return currentCity.name;
   };
