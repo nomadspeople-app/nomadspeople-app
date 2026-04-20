@@ -120,7 +120,10 @@ const CATEGORY_EMOJI: Record<string, string> = {
   beach: '🏖', sport: '🏃', bar: '🍺', other: '✨',
 };
 
-const DURATION_PRESETS = [15, 30, 45, 60, 90, 120];
+// Duration presets for the Timer flow — start at 30 min (15 min
+// is too short to be useful for a "I'm at X for a while" signal)
+// and top out at 120. Five options, all fit in one row.
+const DURATION_PRESETS = [30, 45, 60, 90, 120];
 
 export default function CreationBubble({
   visible, kind, sessionKey, userAvatarUrl, userFallback, userFallbackColor,
@@ -356,7 +359,7 @@ export default function CreationBubble({
       {kind === 'timer' ? (
         <>
           <Text style={st.stepLabel}>{t('creation.who.duration')}</Text>
-          <View style={st.chipWrap}>
+          <View style={st.chipRowSingle}>
             {DURATION_PRESETS.map((mins) => {
               const active = durationMinutes === mins;
               return (
@@ -367,16 +370,19 @@ export default function CreationBubble({
                     setDurationMinutes(mins);
                   }}
                   style={[
-                    st.chip,
+                    st.chipCompact,
                     active && { backgroundColor: colors.primary, borderColor: colors.primary },
                   ]}
                   activeOpacity={0.8}
                 >
+                  {/* Uniform "Nm" labels (15m / 30m / 45m / 60m /
+                       90m / 120m) — same pattern, predictable
+                       width, six in one row. */}
                   <Text style={[
-                    st.chipText,
+                    st.chipCompactText,
                     { color: active ? '#fff' : colors.dark },
                   ]}>
-                    {mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60 ? `${mins % 60}m` : ''}`}
+                    {`${mins}m`}
                   </Text>
                 </TouchableOpacity>
               );
@@ -409,7 +415,10 @@ export default function CreationBubble({
         </>
       )}
 
-      <Text style={[st.stepLabel, { marginTop: 14 }]}>
+      {/* Age range label — tighter marginTop (was 14, now 6) so
+           the slider sits closer to the duration row and the CTA
+           lands comfortably inside the 280 template. */}
+      <Text style={[st.stepLabel, { marginTop: 6 }]}>
         {t('creation.who.ageRange')} · {ageMin}–{ageMax}
       </Text>
       <View style={{ paddingHorizontal: 6 }}>
@@ -551,12 +560,10 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     // FIXED height across all four steps so the bubble stays the
     // same size as the user progresses — locked rule per product
     // owner. Sized to fit the biggest step (WHO — echo + label +
-    // chips row + age label + slider + CTA) with breathing room.
-    // Every step's render MUST fit inside this height; if a
-    // future field forces a step beyond it, shrink the field,
-    // don't add a scroll view or a second card (that would be
-    // "inventing" — see CLAUDE.md Rule Zero).
-    height: 320,
+    // one-row chips + age label + slider + CTA) without empty
+    // air. If a future field forces a step beyond it, shrink the
+    // field; don't invent scrolling or a second card.
+    height: 280,
     justifyContent: 'flex-start',
     overflow: 'hidden',
   },
@@ -624,13 +631,14 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     marginTop: 2,
   },
 
-  /* Chips (step WHO) */
+  /* Chips — non-wrapping "status open/private" variant.
+     Still uses flexWrap in case the translation strings grow. */
   chipWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     justifyContent: 'center',
-    marginBottom: 10,
+    marginBottom: 6,
   },
   chip: {
     paddingVertical: 9,
@@ -642,6 +650,31 @@ const styles = (c: ThemeColors) => StyleSheet.create({
   },
   chipText: {
     fontSize: 14,
+    fontWeight: '600',
+  },
+
+  /* Compact chips — duration row (Timer flow). Sized so five
+     "NNm" chips (30m / 45m / 60m / 90m / 120m) fit in a single
+     line with room to spare on every phone width we target. */
+  chipRowSingle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 4,
+    marginBottom: 6,
+  },
+  chipCompact: {
+    flex: 1,                // equal-width across the row
+    paddingVertical: 7,
+    paddingHorizontal: 2,
+    borderRadius: 16,
+    borderWidth: 0.5,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+    alignItems: 'center',
+  },
+  chipCompactText: {
+    fontSize: 13,
     fontWeight: '600',
   },
 
