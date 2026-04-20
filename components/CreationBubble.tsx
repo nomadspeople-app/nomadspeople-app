@@ -182,26 +182,6 @@ export default function CreationBubble({
    * nothing in the WHEN step gets the fastest, most common
    * outcome (1-hour timer right here, right now). */
   const [whenChoice, setWhenChoice] = useState<WhenChoice>('now');
-  /* Celebration — true for ~900 ms after the user taps Publish.
-   * Drives the confetti burst + pulse animation that makes the
-   * creator feel like a creator before we close the bubble. */
-  const [celebrating, setCelebrating] = useState(false);
-  const celebrateAnim = useRef(new Animated.Value(0)).current;
-  const CONFETTI_COUNT = 22;
-  const CONFETTI_COLORS = useRef(
-    ['#E8614D', '#FF9A00', '#FFD700', '#34A853', '#2A9D8F', '#A855F7', '#EC4899', '#1877F2'],
-  ).current;
-  const confetti = useRef(
-    Array.from({ length: CONFETTI_COUNT }, () => ({
-      anim: new Animated.Value(0),
-      angle: Math.random() * Math.PI * 2,
-      distance: 80 + Math.random() * 140,
-      rotation: Math.random() * 720 - 360,
-      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
-      size: 6 + Math.random() * 8,
-      delay: Math.random() * 120,
-    })),
-  ).current;
   /** Only used when whenChoice === 'later'. Null means the user
    *  has not picked a time yet (Continue stays disabled). */
   const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
@@ -402,24 +382,7 @@ export default function CreationBubble({
 
   const handlePublish = () => {
     if (publishing) return;
-    // Celebration burst — confetti + haptic pulse so the creator
-    // FEELS the moment. Kicks off instantly; 900 ms later the
-    // bubble closes and the user lands back on the map where
-    // their new pin is already visible. Per product owner's
-    // "make the creator feel like a creator" instruction.
-    setCelebrating(true);
-    celebrateAnim.setValue(0);
-    Animated.spring(celebrateAnim, { toValue: 1, tension: 70, friction: 9, useNativeDriver: true }).start();
-    confetti.forEach((p) => {
-      p.anim.setValue(0);
-      Animated.sequence([
-        Animated.delay(p.delay),
-        Animated.timing(p.anim, { toValue: 1, duration: 900, useNativeDriver: true }),
-      ]).start();
-    });
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}), 180);
-    setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}), 360);
     onPublish(derivePublishPayload());
   };
 
@@ -1001,76 +964,9 @@ export default function CreationBubble({
       {step === 'where' && renderWhere()}
       {step === 'who' && renderWho()}
       {step === 'publish' && renderPublish()}
-
-      {/* ── Celebration overlay ──
-           Fires the moment the user taps Publish. Confetti
-           explodes outward from the bubble's center; each piece
-           interpolates translate + rotate + scale so you get a
-           brief 3-D feel (pieces flip as they fly) without pulling
-           in a heavy 3D library. Bubble closes ~900 ms later and
-           the user lands back on the map where their pin is
-           already visible. */}
-      {celebrating && (
-        <View style={styles_celebration.overlay} pointerEvents="none">
-          {confetti.map((p, i) => {
-            const tx = p.anim.interpolate({
-              inputRange: [0, 0.5, 1],
-              outputRange: [0, Math.cos(p.angle) * p.distance * 0.7, Math.cos(p.angle) * p.distance],
-            });
-            const ty = p.anim.interpolate({
-              inputRange: [0, 0.5, 1],
-              outputRange: [0, Math.sin(p.angle) * p.distance * 0.7 - 40, Math.sin(p.angle) * p.distance + 20],
-            });
-            const rot = p.anim.interpolate({
-              inputRange: [0, 1],
-              outputRange: ['0deg', `${p.rotation}deg`],
-            });
-            const sc = p.anim.interpolate({
-              inputRange: [0, 0.15, 0.5, 0.85, 1],
-              outputRange: [0, 1.4, 1.1, 0.6, 0],
-            });
-            const op = p.anim.interpolate({
-              inputRange: [0, 0.1, 0.6, 1],
-              outputRange: [0, 1, 0.85, 0],
-            });
-            return (
-              <Animated.View
-                key={i}
-                style={[
-                  styles_celebration.piece,
-                  {
-                    width: p.size,
-                    height: p.size * 0.55,
-                    borderRadius: p.size * 0.18,
-                    backgroundColor: p.color,
-                    opacity: op,
-                    transform: [{ translateX: tx }, { translateY: ty }, { scale: sc }, { rotate: rot }],
-                  },
-                ]}
-              />
-            );
-          })}
-        </View>
-      )}
     </Bubble>
   );
 }
-
-const styles_celebration = StyleSheet.create({
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 100,
-  },
-  piece: {
-    position: 'absolute',
-  },
-});
 
 /* ─── Small inline helper: pill showing one summary field ─── */
 function SummaryPill({
