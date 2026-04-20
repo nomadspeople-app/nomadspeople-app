@@ -73,6 +73,7 @@ export const ru: Record<string, string> = {
   'creation.where.tapToChange': 'нажми чтобы изменить',
   'creation.where.setPin': 'поставить метку на карте',
   'creation.where.addressOptional': 'добавить адрес (по желанию)',
+  'creation.where.searchPlaceholder': 'или найди точный адрес',
   'creation.where.fallback': 'неизвестно',
   'creation.who.duration': 'на сколько?',
   'creation.who.audience': 'кто может присоединиться?',

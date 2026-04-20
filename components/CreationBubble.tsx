@@ -43,6 +43,9 @@ import DualThumbSlider from './DualThumbSlider';
 import { s, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { useI18n } from '../lib/i18n';
 import { detectCategories } from '../lib/categoryDetector';
+// Address autocomplete uses the same Photon-backed helper that the
+// map's pickMode search bar uses. One module, one set of results.
+import { searchAddress as searchPhotonAddress, type GeoResult } from '../lib/locationServices';
 
 export type CreationKind = 'status' | 'timer';
 export type CreationStep = 'what' | 'where' | 'who' | 'publish';
@@ -147,7 +150,14 @@ export default function CreationBubble({
   const [isOpen, setIsOpen] = useState(true);
   const [durationMinutes, setDurationMinutes] = useState(60);
 
+  /* Address autocomplete state (WHERE step, row 2) */
+  const [addressFocused, setAddressFocused] = useState(false);
+  const [addressResults, setAddressResults] = useState<GeoResult[]>([]);
+  const [addressSearching, setAddressSearching] = useState(false);
+  const addressSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const textInputRef = useRef<TextInput>(null);
+  const addressInputRef = useRef<TextInput>(null);
 
   /* ── Reset only when a FRESH session starts ──
    *
@@ -193,6 +203,46 @@ export default function CreationBubble({
       if (locationUpdaterRef) locationUpdaterRef.current = null;
     };
   }, [locationUpdaterRef, cityName]);
+
+  /* ── Address autocomplete (WHERE step, row 2) ──
+   *
+   * When the user types into the address input, we debounce a
+   * Photon call (via the shared lib/locationServices helper) and
+   * show the top results as a dropdown. Tapping a result updates
+   * the bubble's lat/lng/address in one shot — no need to open
+   * the full map for a known-name location. The map pill above
+   * is still there for pan-to-pick. */
+  const onAddressChange = useCallback((next: string) => {
+    setAddress(next);
+    if (addressSearchTimer.current) clearTimeout(addressSearchTimer.current);
+    if (next.trim().length < 2) {
+      setAddressResults([]);
+      setAddressSearching(false);
+      return;
+    }
+    setAddressSearching(true);
+    addressSearchTimer.current = setTimeout(async () => {
+      const results = await searchPhotonAddress(next.trim(), lat, lng, cityName);
+      setAddressResults(results);
+      setAddressSearching(false);
+    }, 300);
+  }, [lat, lng, cityName]);
+
+  /** Tap a result → pin moves there, input closes, dropdown hides. */
+  const onAddressPick = useCallback((r: GeoResult) => {
+    const nextLat = parseFloat(r.lat);
+    const nextLng = parseFloat(r.lon);
+    if (Number.isFinite(nextLat) && Number.isFinite(nextLng)) {
+      setLat(nextLat);
+      setLng(nextLng);
+    }
+    setAddress(r.subLine ? `${r.mainLine}, ${r.subLine}` : r.mainLine || r.display_name);
+    setAddressResults([]);
+    setAddressSearching(false);
+    setAddressFocused(false);
+    addressInputRef.current?.blur();
+    Haptics.selectionAsync().catch(() => {});
+  }, []);
 
   /* ── Category autodetect from the typed text ── */
   const handleTextChange = useCallback((next: string) => {
@@ -305,72 +355,126 @@ export default function CreationBubble({
     </View>
   );
 
-  const renderWhere = () => (
-    <View style={st.stepBody}>
-      {/* Echo of what the user typed — small quote at the top so
-          they remember what they're locating. */}
-      <Text style={st.stepEcho} numberOfLines={2}>"{text.trim()}"</Text>
+  const renderWhere = () => {
+    // When the user is actively typing an address, hide the echo
+    // + "set pin" row to free vertical space for the search
+    // dropdown. Preserving the fixed bubble height is the rule,
+    // so the only way to make room is to hide less-relevant rows
+    // while the dropdown is active.
+    const compact = addressFocused;
+    const showDropdown = addressFocused && (addressSearching || addressResults.length > 0);
+    return (
+      <View style={st.stepBody}>
+        {!compact && (
+          <Text style={st.stepEcho} numberOfLines={2}>"{text.trim()}"</Text>
+        )}
+        <Text style={st.stepLabel}>{t('creation.where.label')}</Text>
 
-      <Text style={st.stepLabel}>{t('creation.where.label')}</Text>
-
-      {/* Row 1 — "Set pin on map". Action pill, full-width, taller
-          than before so it feels substantial to tap. Opens pickMode
-          on the main map. */}
-      <TouchableOpacity
-        style={[st.locationPill, { borderColor: colors.borderSoft, backgroundColor: colors.surface }]}
-        activeOpacity={0.7}
-        onPress={handleTapLocation}
-      >
-        <NomadIcon name="pin" size={s(8)} color={colors.primary} strokeWidth={1.8} />
-        <Text style={[st.locationActionText, { color: colors.dark }]} numberOfLines={1}>
-          {t('creation.where.setPin')}
-        </Text>
-        <NomadIcon name="forward" size={s(6)} color={colors.textMuted} strokeWidth={1.6} />
-      </TouchableOpacity>
-
-      {/* Row 2 — OPTIONAL free-form address / label. Seeded from
-          reverseGeocode, but the moment the user taps it the text
-          is selected (selectTextOnFocus) so the first keystroke
-          replaces the auto-fill — no more "stuck" text the user
-          had to backspace through. A clear × inside the input
-          gives them a one-tap escape hatch. */}
-      <View style={[st.locationInputRow, { borderColor: colors.borderSoft, backgroundColor: colors.surface }]}>
-        <NomadIcon name="edit" size={s(7)} color={colors.textMuted} strokeWidth={1.6} />
-        <TextInput
-          style={[st.locationInput, { color: colors.dark }]}
-          placeholder={t('creation.where.addressOptional')}
-          placeholderTextColor={colors.textFaint}
-          value={address}
-          onChangeText={setAddress}
-          selectTextOnFocus
-          returnKeyType="done"
-          blurOnSubmit
-        />
-        {address.length > 0 && (
-          <TouchableOpacity onPress={() => setAddress('')} hitSlop={10}>
-            <NomadIcon name="close" size={s(5.5)} color={colors.textMuted} strokeWidth={1.8} />
+        {/* Row 1 — "Set pin on map". Hidden while typing an
+            address so the dropdown has room. */}
+        {!compact && (
+          <TouchableOpacity
+            style={[st.locationPill, { borderColor: colors.borderSoft, backgroundColor: colors.card }]}
+            activeOpacity={0.7}
+            onPress={handleTapLocation}
+          >
+            <NomadIcon name="pin" size={s(8)} color={colors.primary} strokeWidth={1.8} />
+            <Text style={[st.locationActionText, { color: colors.dark }]} numberOfLines={1}>
+              {t('creation.where.setPin')}
+            </Text>
+            <NomadIcon name="forward" size={s(6)} color={colors.textMuted} strokeWidth={1.6} />
           </TouchableOpacity>
         )}
-      </View>
 
-      <View style={st.rowCtaWrap}>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={handleBack}
-          style={[st.cta, st.ctaGhost, { flex: 1, borderColor: colors.borderSoft }]}
-        >
-          <Text style={[st.ctaText, { color: colors.textMuted }]}>{t('creation.back')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={handleContinueFromWhere}
-          style={[st.cta, st.ctaJoin, { flex: 2 }]}
-        >
-          <Text style={st.ctaText}>{t('creation.continue')}</Text>
-        </TouchableOpacity>
+        {/* Row 2 — address SEARCH. Type two characters and a
+            Photon-backed dropdown of address suggestions appears;
+            tap one and the pin snaps there. selectTextOnFocus so
+            the autofill doesn't "stick" — first keystroke
+            replaces it. × clears in one tap. */}
+        <View style={[st.locationInputRow, { borderColor: colors.borderSoft, backgroundColor: colors.card }]}>
+          <NomadIcon name="search" size={s(7)} color={colors.textMuted} strokeWidth={1.6} />
+          <TextInput
+            ref={addressInputRef}
+            style={[st.locationInput, { color: colors.dark }]}
+            placeholder={t('creation.where.searchPlaceholder')}
+            placeholderTextColor={colors.textFaint}
+            value={address}
+            onChangeText={onAddressChange}
+            onFocus={() => setAddressFocused(true)}
+            onBlur={() => {
+              // Delay the "unfocused" flag so a tap on a dropdown
+              // result still fires onPress before we hide the list.
+              setTimeout(() => setAddressFocused(false), 120);
+            }}
+            selectTextOnFocus
+            returnKeyType="search"
+            blurOnSubmit
+          />
+          {address.length > 0 && (
+            <TouchableOpacity
+              onPress={() => {
+                setAddress('');
+                setAddressResults([]);
+                addressInputRef.current?.focus();
+              }}
+              hitSlop={10}
+            >
+              <NomadIcon name="close" size={s(5.5)} color={colors.textMuted} strokeWidth={1.8} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Autocomplete dropdown — appears under the search input
+            while the user is focused + typing. Max 3 results so it
+            fits inside the bubble template. */}
+        {showDropdown && (
+          <View style={[st.addressDropdown, { backgroundColor: colors.card, borderColor: colors.borderSoft }]}>
+            {addressSearching ? (
+              <Text style={[st.addressDropdownEmpty, { color: colors.textMuted }]}>…</Text>
+            ) : (
+              addressResults.slice(0, 3).map((r, i) => (
+                <TouchableOpacity
+                  key={`${r.lat},${r.lon}-${i}`}
+                  style={[st.addressDropdownRow, { borderBottomColor: colors.borderSoft }]}
+                  onPress={() => onAddressPick(r)}
+                  activeOpacity={0.7}
+                >
+                  <NomadIcon name="pin" size={s(5)} color={colors.primary} strokeWidth={1.6} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[st.addressDropdownMain, { color: colors.dark }]} numberOfLines={1}>
+                      {r.mainLine || r.display_name}
+                    </Text>
+                    {!!r.subLine && (
+                      <Text style={[st.addressDropdownSub, { color: colors.textMuted }]} numberOfLines={1}>
+                        {r.subLine}
+                      </Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        )}
+
+        <View style={st.rowCtaWrap}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={handleBack}
+            style={[st.cta, st.ctaGhost, { flex: 1, borderColor: colors.borderSoft }]}
+          >
+            <Text style={[st.ctaText, { color: colors.textMuted }]}>{t('creation.back')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleContinueFromWhere}
+            style={[st.cta, st.ctaJoin, { flex: 2 }]}
+          >
+            <Text style={st.ctaText}>{t('creation.continue')}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderWho = () => (
     <View style={st.stepBody}>
@@ -679,6 +783,37 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     fontSize: 15,
     fontWeight: '500',
     paddingVertical: 0,
+  },
+
+  /* Address autocomplete dropdown (under the search input) */
+  addressDropdown: {
+    marginTop: -6,       // pulls it closer to the input
+    marginBottom: 10,
+    borderRadius: 12,
+    borderWidth: 0.5,
+    overflow: 'hidden',
+  },
+  addressDropdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  addressDropdownMain: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  addressDropdownSub: {
+    fontSize: 12,
+    fontWeight: '400',
+    marginTop: 1,
+  },
+  addressDropdownEmpty: {
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 12,
   },
 
   /* Chips — non-wrapping "status open/private" variant.

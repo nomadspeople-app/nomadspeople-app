@@ -73,6 +73,7 @@ export const he: Record<string, string> = {
   'creation.where.tapToChange': 'הקש לשינוי',
   'creation.where.setPin': 'הצב פין במפה',
   'creation.where.addressOptional': 'הוסף כתובת (אופציונלי)',
+  'creation.where.searchPlaceholder': 'או חפש כתובת מדויקת',
   'creation.where.fallback': 'לא ידוע',
   'creation.who.duration': 'לכמה זמן?',
   'creation.who.audience': 'מי יכול להצטרף?',
