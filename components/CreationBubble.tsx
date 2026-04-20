@@ -125,6 +125,16 @@ interface Props {
    *  (e.g. after pickMode commits), it assigns this ref's current
    *  to the updater function. The bubble fills it on mount. */
   locationUpdaterRef?: React.MutableRefObject<((loc: { lat: number; lng: number; address: string }) => void) | null>;
+  /** Informational flags — the user ALREADY has an active
+   *  timer / scheduled. The bubble doesn't block anything; it
+   *  simply shows a "this will replace your current X" banner
+   *  at the PUBLISH step and relabels the button to "Replace &
+   *  publish". The actual expire-old-then-insert-new logic is
+   *  already handled inside handleTimerPublish /
+   *  handleQuickPublish on the parent. One warning, one flow,
+   *  one language — no separate modals. */
+  hasActiveTimer?: boolean;
+  hasActiveScheduled?: boolean;
 }
 
 /* ─── Category emoji lookup — matches QuickStatusSheet's existing
@@ -148,6 +158,7 @@ export default function CreationBubble({
   visible, userName, sessionKey, userAvatarUrl, userFallback, userFallbackColor,
   seedLat, seedLng, seedAddress, cityName, publishing,
   onClose, onRequestLocationPick, onPublish, locationUpdaterRef,
+  hasActiveTimer, hasActiveScheduled,
 }: Props) {
   const { t } = useI18n();
   const { colors } = useTheme();
@@ -209,6 +220,10 @@ export default function CreationBubble({
     setAgeMax(80);
     setIsOpen(true);
     setDurationMinutes(60);
+    // Default WHEN choice — always "now" (timer). A conflict
+    // with an existing active timer is surfaced as a "replace"
+    // banner at the PUBLISH step; the user isn't pre-nudged
+    // toward scheduled.
     setWhenChoice('now');
     setScheduledAt(null);
     // Auto-focus the input on step 1 — users expect the keyboard
@@ -482,16 +497,20 @@ export default function CreationBubble({
     };
 
     const isLater = whenChoice === 'later';
-    const canContinue = whenChoice === 'now' || (isLater && !!scheduledAt && pickedDayIdx >= 0);
+    const canContinue =
+      whenChoice === 'now' ||
+      (isLater && !!scheduledAt && pickedDayIdx >= 0);
 
     return (
       <View style={st.stepBody}>
         <Text style={st.stepLabel}>{t('creation.when.label')}</Text>
 
         <View style={st.whenList}>
-          {/* NOW row — hidden when "later" is active so the picker
-              has room. Tapping the "later" row again OR using the
-              Back button is how the user gets back to "now". */}
+          {/* Both rows always tappable. If the user already has
+              an active timer OR scheduled, the conflict is
+              surfaced at the PUBLISH step as a "replace" banner
+              — not here. This step is the user's choice, not the
+              app's. */}
           {!isLater && (
             <TouchableOpacity
               onPress={() => { Haptics.selectionAsync().catch(() => {}); setWhenChoice('now'); }}
@@ -511,16 +530,11 @@ export default function CreationBubble({
             </TouchableOpacity>
           )}
 
-          {/* LATER row — always visible. Tapping toggles to
-              scheduling mode and reveals the day/hour picker. */}
           <TouchableOpacity
             onPress={() => {
               Haptics.selectionAsync().catch(() => {});
               setWhenChoice(isLater ? 'now' : 'later');
               if (!isLater && !scheduledAt) {
-                // Pre-seed with tomorrow 18:00 so Continue can
-                // enable immediately — user can still change
-                // before advancing.
                 const seed = new Date(dayOptions[0].date);
                 seed.setHours(18, 0, 0, 0);
                 setScheduledAt(seed);
@@ -861,14 +875,16 @@ export default function CreationBubble({
 
   const renderPublish = () => {
     const isNow = whenChoice === 'now';
-    const whenSummary =
-      whenChoice === 'now'
-        ? `${durationMinutes}m`
-        : whenChoice === 'today'
-          ? t('creation.when.today')
-          : (scheduledAt
-              ? scheduledAt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-              : t('creation.when.later'));
+    // Conflict detection — does the derived kind overlap with
+    // something the user already has live? If yes, publishing
+    // will expire the old and replace with the new. The banner
+    // tells them; the Publish button label confirms the action.
+    const willReplace = (isNow && hasActiveTimer) || (!isNow && hasActiveScheduled);
+    const whenSummary = isNow
+      ? (durationMinutes === EOD_SENTINEL ? t('creation.who.allDay') : `${durationMinutes}m`)
+      : (scheduledAt
+          ? scheduledAt.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : t('creation.when.later'));
     const audienceSummary = isOpen ? t('creation.who.openAll') : t('creation.who.private');
     return (
       <View style={st.stepBody}>
@@ -877,13 +893,25 @@ export default function CreationBubble({
         </Text>
         <View style={st.summaryRow}>
           <SummaryPill icon="pin" text={address || cityName} colors={colors} />
-          {/* Time pill — shows the duration for "now", the window
-              for "today", or the scheduled timestamp for "later". */}
+          {/* Time pill — shows the duration for "timer" or the
+              scheduled timestamp for "scheduled". */}
           <SummaryPill icon={isNow ? 'timer' : 'calendar'} text={whenSummary} colors={colors} />
           {/* Audience pill — same meaning across all timing modes. */}
           <SummaryPill icon="users" text={audienceSummary} colors={colors} />
           <SummaryPill icon="users" text={`${ageMin}–${ageMax}`} colors={colors} />
         </View>
+
+        {/* One-active-per-type banner. Appears only when the
+            user's answer conflicts with something they already
+            have live. No second modal, no separate dialog. */}
+        {willReplace && (
+          <View style={st.replaceBanner}>
+            <NomadIcon name="alert" size={s(6)} color="#B45309" strokeWidth={1.8} />
+            <Text style={st.replaceBannerText}>
+              {isNow ? t('creation.publish.replaceTimer') : t('creation.publish.replaceScheduled')}
+            </Text>
+          </View>
+        )}
 
         <View style={st.rowCtaWrap}>
           <TouchableOpacity
@@ -905,7 +933,9 @@ export default function CreationBubble({
             ) : (
               <>
                 <NomadIcon name="zap" size={s(6)} color="#fff" strokeWidth={1.8} />
-                <Text style={st.ctaText}>{t('creation.publish')}</Text>
+                <Text style={st.ctaText}>
+                  {willReplace ? t('creation.publish.replace') : t('creation.publish')}
+                </Text>
               </>
             )}
           </TouchableOpacity>
@@ -1100,6 +1130,30 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     backgroundColor: '#F9FAFB',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  /* PUBLISH step — conflict banner. Shown only when the user's
+     answer will replace an existing active event of the same
+     kind. Amber/warning tone so it reads as "heads up" not
+     "error" — user can still publish, it's their choice. */
+  replaceBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 0.5,
+    borderColor: '#FCD34D',
+    marginBottom: 10,
+  },
+  replaceBannerText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: '#78350F',
   },
   whatCtaSlot: {
     // Bottom-pinned fixed-height slot so Continue appearing /

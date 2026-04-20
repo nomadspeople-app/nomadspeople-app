@@ -439,7 +439,8 @@ export default function HomeScreen() {
   const [showCancelTimer, setShowCancelTimer] = useState(false);
   const [activeTimerCheckin, setActiveTimerCheckin] = useState<string | null>(null); // checkin id
   const [activeTimerChatId, setActiveTimerChatId] = useState<string | null>(null);
-  const [showReplaceStatus, setShowReplaceStatus] = useState(false); // confirm replacing active status
+  // showReplaceStatus removed — conflict is warned inside
+  // CreationBubble at the PUBLISH step (see comment there).
   const [timerBubbleCheckin, setTimerBubbleCheckin] = useState<CheckinWithProfile | null>(null);
   /** Dismiss the timer bubble. Bottom-sheet style — no anchor to clear,
    *  no map state to restore. The Bubble component handles its own
@@ -910,6 +911,21 @@ export default function HomeScreen() {
     return vibeKey ? checkins.filter(c => c.category === vibeKey) : checkins;
   }, [checkins, activeVibe]);
 
+  /* ── Own active checkins — derived, fed into CreationBubble
+   *    so it can show the "replace" banner on the PUBLISH step
+   *    when the user's answer conflicts with something they
+   *    already have live. No separate fetch, no modal. */
+  const myActiveTimer = useMemo(
+    () => checkins.find(c => c.user_id === userId && (c as any).checkin_type === 'timer'),
+    [checkins, userId],
+  );
+  const myActiveScheduled = useMemo(
+    () => checkins.find(c => c.user_id === userId && (c as any).checkin_type === 'status'),
+    [checkins, userId],
+  );
+  const hasActiveTimer = !!myActiveTimer;
+  const hasActiveScheduled = !!myActiveScheduled;
+
   const { profile: myProfile, refetch: refetchProfile } = useProfile(userId);
   const myName = myProfile?.display_name || myProfile?.full_name || myProfile?.username || 'You';
   const myInitials = myName.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -1046,10 +1062,26 @@ export default function HomeScreen() {
       return;
     }
 
-    // STATUS / event pins — follow the locked map-pin-tap flow from
-    // CLAUDE.md: smooth 400ms zoom into the pin's neighborhood, then
-    // 450ms later open the popup. Owner tapping own event → Profile
-    // management; visitors → the visitor sheet.
+    // STATUS / event pins —
+    //   Visitors: smooth 400 ms zoom into the pin's neighborhood,
+    //     then 450 ms later open the visitor sheet
+    //     (ActivityDetailSheet).
+    //   Owners:  skip the zoom and the sheet — show the same
+    //     TimerBubble the visitors see when tapping a timer. This
+    //     is the unified "management popup" the product owner
+    //     requested. NEVER navigate away from the map on an own-
+    //     pin tap; the user's context (where they are looking)
+    //     must stay intact.
+    if (isOwn) {
+      if (timerBubbleCheckin?.id === checkin.id) {
+        dismissTimerBubble();
+        return;
+      }
+      Haptics.selectionAsync().catch(() => {});
+      setTimerBubbleCheckin(checkin);
+      return;
+    }
+
     const lat = checkin.latitude ?? currentCity.lat;
     const lng = checkin.longitude ?? currentCity.lng;
     mapRef.current?.animateToRegion({
@@ -1059,10 +1091,6 @@ export default function HomeScreen() {
       longitudeDelta: 0.008,
     }, 400);
     setTimeout(() => {
-      if (isOwn) {
-        nav.navigate('UserProfile' as any, { userId: checkin.user_id, openCheckinId: checkin.id });
-        return;
-      }
       setTimerBubbleCheckin(null);
       setPopupData(checkin);
       setJoined(false);
@@ -1829,6 +1857,24 @@ export default function HomeScreen() {
         creatorName={timerBubbleCheckin?.profile?.full_name || 'Nomad'}
         creatorAvatarUrl={avatarUri((timerBubbleCheckin?.profile as any)?.avatar_url)}
         onClose={dismissTimerBubble}
+        onOwnerEnd={async (ck) => {
+          // Expire the checkin in place — stays on map, no nav.
+          // Works for both timers and scheduled statuses since
+          // the DB shape is the same: is_active + expires_at.
+          if (!ck?.id) return;
+          const { error } = await supabase
+            .from('app_checkins')
+            .update({
+              is_active: false,
+              expires_at: new Date().toISOString(),
+            })
+            .eq('id', ck.id);
+          if (error) {
+            console.warn('[HomeScreen] onOwnerEnd failed:', error.message);
+            return;
+          }
+          refetchCheckins();
+        }}
       />
 
       {/* ── SNOOZE CLOUD OVERLAY — Simpsons-style clouds covering the map ── */}
@@ -2069,26 +2115,11 @@ export default function HomeScreen() {
           activeOpacity={0.85}
           onPress={() => {
             if (!userId) return;
-            // If the user has an active status we still confirm
-            // replace (their existing status would be expired).
-            // Active timer is handled by the bubble's own WHEN
-            // step — if they post "right now" we expire the old
-            // timer inside handleTimerPublish. No separate prompt.
-            supabase
-              .from('app_checkins')
-              .select('id')
-              .eq('user_id', userId)
-              .eq('is_active', true)
-              .eq('checkin_type', 'status')
-              .limit(1)
-              .maybeSingle()
-              .then(({ data: activeStatus }) => {
-                if (activeStatus) {
-                  setShowReplaceStatus(true);
-                } else {
-                  openCreation();
-                }
-              }, () => openCreation());
+            // Always open. Any conflict (existing timer or
+            // scheduled) is surfaced INSIDE the bubble at its
+            // PUBLISH step — one warning, one flow, one language.
+            // No separate Replace modal any more.
+            openCreation();
           }}
         >
           <NomadIcon name="plus" size={s(10)} color="#4ADE80" strokeWidth={2} />
@@ -2257,6 +2288,8 @@ export default function HomeScreen() {
         onRequestLocationPick={handleCreationRequestPick}
         onPublish={handleCreationPublish}
         locationUpdaterRef={creationLocationUpdater}
+        hasActiveTimer={hasActiveTimer}
+        hasActiveScheduled={hasActiveScheduled}
       />
 
       {/* ── Quick Status Sheet ──
@@ -2331,40 +2364,13 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* ── Replace Active Status Confirmation ── */}
-      <Modal visible={showReplaceStatus} transparent animationType="fade" onRequestClose={() => setShowReplaceStatus(false)}>
-        <View style={st.cancelOverlay}>
-          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowReplaceStatus(false)} />
-          <View style={[st.cancelSheet, { paddingBottom: insets.bottom + s(6) }]}>
-            <View style={st.cancelHandle} />
-            <Text style={st.cancelTitle}>You have an active status</Text>
-            <Text style={st.cancelSub}>Creating a new one will replace it</Text>
-
-            <TouchableOpacity
-              style={[st.cancelReasonBtn, { backgroundColor: colors.primaryLight }]}
-              activeOpacity={0.7}
-              onPress={() => {
-                setShowReplaceStatus(false);
-                // Open the creation bubble — the replace itself
-                // happens inside handleQuickPublish, which expires
-                // the old status before inserting the new one.
-                openCreation();
-              }}
-            >
-              <Text style={st.cancelReasonEmoji}>🔄</Text>
-              <Text style={[st.cancelReasonText, { color: colors.primary }]}>Replace with new status</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={st.cancelKeepBtn}
-              activeOpacity={0.8}
-              onPress={() => setShowReplaceStatus(false)}
-            >
-              <Text style={st.cancelKeepText}>Keep current status</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {/* Replace-status modal removed — the one-active-per-type
+           rule is now enforced inside CreationBubble's PUBLISH
+           step. When the user's answer conflicts with an active
+           timer or scheduled event, a warning banner appears
+           above the summary pills and the Publish button label
+           becomes "Replace and publish". One warning, one flow,
+           one language — per CLAUDE.md Rule Zero. */}
 
       {/* Activity Success Popup — removed, now handled inside QuickStatusSheet */}
 

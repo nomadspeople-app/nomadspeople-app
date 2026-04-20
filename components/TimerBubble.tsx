@@ -46,6 +46,12 @@ interface Props {
   creatorName: string;
   creatorAvatarUrl?: string | null;
   onClose: () => void;
+  /** Owner action — fires when the creator taps "End now" on
+   *  their own pin. Parent is responsible for expiring the
+   *  checkin in Supabase + refreshing the map. If absent, we
+   *  fall back to the legacy "manage" navigation (which we
+   *  keep only so old callers don't break). */
+  onOwnerEnd?: (checkin: AppCheckin) => void;
 }
 
 interface MemberLite {
@@ -171,7 +177,7 @@ function useJoinedMembers(
 }
 
 export default function TimerBubble({
-  visible, checkin, creatorName, creatorAvatarUrl, onClose,
+  visible, checkin, creatorName, creatorAvatarUrl, onClose, onOwnerEnd,
 }: Props) {
   const { userId } = useContext(AuthContext);
   const nav = useNavigation<Nav>();
@@ -308,14 +314,41 @@ export default function TimerBubble({
     );
   };
 
-  /* ── Manage (owner's own timer) ── */
-  const handleManage = () => {
+  /* ── Owner actions (creator tapping their own pin) ──
+   *
+   *  "End now" — confirm alert, then parent's onOwnerEnd expires
+   *  the checkin in Supabase. Stays on the map; no navigation
+   *  away. This is the unified management action for both
+   *  timers and scheduled statuses.
+   *
+   *  If onOwnerEnd isn't provided (legacy callers), we fall back
+   *  to the old nav-to-profile behavior. */
+  const handleEnd = () => {
     if (!checkin) return;
-    Haptics.selectionAsync().catch(() => {});
-    onClose();
-    setTimeout(() => {
-      nav.navigate('UserProfile' as any, { userId: checkin.user_id, openCheckinId: checkin.id });
-    }, 80);
+    if (!onOwnerEnd) {
+      Haptics.selectionAsync().catch(() => {});
+      onClose();
+      setTimeout(() => {
+        nav.navigate('UserProfile' as any, { userId: checkin.user_id, openCheckinId: checkin.id });
+      }, 80);
+      return;
+    }
+    Alert.alert(
+      'End this now?',
+      'People will no longer see it on the map or be able to join.',
+      [
+        { text: 'cancel', style: 'cancel' },
+        {
+          text: 'end',
+          style: 'destructive',
+          onPress: () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+            onOwnerEnd(checkin);
+            onClose();
+          },
+        },
+      ],
+    );
   };
 
   const st = styles(colors);
@@ -409,14 +442,16 @@ export default function TimerBubble({
           doesn't grow/shrink between "not joined" and "joined". */}
       <View style={st.ctaWrap}>
         {isOwn ? (
-          /* Owner: full-width manage button */
+          /* Owner: full-width "End now" button. Stays on the map
+             — no navigation. Firing onOwnerEnd from the parent
+             expires the checkin in Supabase. */
           <TouchableOpacity
             activeOpacity={0.85}
-            onPress={handleManage}
-            style={[st.cta, st.ctaJoin]}
+            onPress={handleEnd}
+            style={[st.cta, st.ctaLeave]}
           >
-            <NomadIcon name="settings" size={s(6)} color="#fff" strokeWidth={1.8} />
-            <Text style={st.ctaText}>manage</Text>
+            <NomadIcon name="close" size={s(6)} color="#fff" strokeWidth={2} />
+            <Text style={st.ctaText}>end now</Text>
           </TouchableOpacity>
         ) : iAmMember ? (
           /* Joined visitor: chat (blue, wide) + leave (red, narrow)
