@@ -8,6 +8,12 @@ import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { supabase } from '../lib/supabase';
 import { TERMS_VERSION, PRIVACY_VERSION } from '../lib/legal/content';
 import NomadIcon from '../components/NomadIcon';
+import {
+  isAppleSignInEnabled,
+  isGoogleSignInEnabled,
+  signInWithApple,
+  signInWithGoogle,
+} from '../lib/auth';
 
 interface Props {
   onSuccess: () => void;
@@ -239,6 +245,61 @@ export default function AuthScreen({ onSuccess }: Props) {
           <Text style={styles.tagline}>find your people, anywhere</Text>
         </View>
 
+        {/* ─── Social sign-in (Apple + Google) ───
+             Rendered ONLY when the provider is both (a) plausibly
+             available on this platform and (b) server-side wired up
+             in Supabase (see app.json → extra.auth.*). Both checks
+             live in lib/auth.ts so nothing slips through.
+             When neither is enabled this whole block is null — no
+             divider, no empty space — so the email form stays the
+             primary CTA without friction. */}
+        {(isAppleSignInEnabled || isGoogleSignInEnabled) && (
+          <View style={styles.socialAuthGroup}>
+            {isAppleSignInEnabled && (
+              <TouchableOpacity
+                style={[styles.socialBtn, styles.appleBtn]}
+                onPress={async () => {
+                  setLoading(true);
+                  setError('');
+                  const { error: e } = await signInWithApple();
+                  if (e) setError(e);
+                  else onSuccess();
+                  setLoading(false);
+                }}
+                disabled={loading}
+                activeOpacity={0.75}
+                accessibilityLabel="Continue with Apple"
+              >
+                <Text style={styles.appleBtnText}>  Continue with Apple</Text>
+              </TouchableOpacity>
+            )}
+            {isGoogleSignInEnabled && (
+              <TouchableOpacity
+                style={[styles.socialBtn, styles.googleBtn]}
+                onPress={async () => {
+                  setLoading(true);
+                  setError('');
+                  const { error: e } = await signInWithGoogle();
+                  if (e) setError(e);
+                  else onSuccess();
+                  setLoading(false);
+                }}
+                disabled={loading}
+                activeOpacity={0.75}
+                accessibilityLabel="Continue with Google"
+              >
+                <Text style={styles.googleBtnText}>Continue with Google</Text>
+              </TouchableOpacity>
+            )}
+
+            <View style={styles.orDivider}>
+              <View style={styles.orLine} />
+              <Text style={styles.orText}>or</Text>
+              <View style={styles.orLine} />
+            </View>
+          </View>
+        )}
+
         {/* ─── Form — no card, floating fields ─── */}
         <View style={styles.form}>
           {mode === 'signup' && (
@@ -446,6 +507,60 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     color: c.textMuted,
     fontWeight: FW.regular,
     letterSpacing: 0.2,
+  },
+
+  /* ── Social sign-in block (Apple + Google) ──
+     Native iOS Apple button guideline: black fill, white text,
+     SF symbol. We approximate with flat black TouchableOpacity +
+     Apple logo emoji fallback (the real Apple SFSymbol requires
+     the `AppleAuthenticationButton` native component; we use our
+     own styled button so we can control disabled state alongside
+     the email form). Google button: white fill, 1px border, dark
+     label — per Google Identity branding. */
+  socialAuthGroup: {
+    gap: s(4),
+    marginBottom: s(8),
+  },
+  socialBtn: {
+    height: s(22),
+    borderRadius: s(6),
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  appleBtn: {
+    backgroundColor: '#000',
+  },
+  appleBtnText: {
+    color: '#fff',
+    fontSize: s(6.5),
+    fontWeight: FW.semi,
+  },
+  googleBtn: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#DADCE0',
+  },
+  googleBtnText: {
+    color: '#1F1F1F',
+    fontSize: s(6.5),
+    fontWeight: FW.medium,
+  },
+  orDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: s(4),
+    gap: s(4),
+  },
+  orLine: {
+    flex: 1,
+    height: 0.5,
+    backgroundColor: c.borderSoft,
+  },
+  orText: {
+    fontSize: s(5.5),
+    color: c.textMuted,
+    fontWeight: FW.regular,
   },
 
   /* ── Form — clean, no border card ── */
