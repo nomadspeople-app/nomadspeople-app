@@ -76,6 +76,16 @@ export default function ChatScreen() {
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [translating, setTranslating] = useState<string | null>(null); // message id being translated
 
+  // Image attach state:
+  //   uploadingImage — flips true while the picked photo is being
+  //     uploaded to Supabase Storage; the camera button swaps to a
+  //     spinner and taps are ignored so we can't queue duplicate
+  //     uploads.
+  //   expandedImage — when the user taps an image message we open
+  //     a full-screen modal with that URI. Null = modal closed.
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
+
   useEffect(() => {
     (async () => {
       const [{ data: convData }, { data: memberData }] = await Promise.all([
@@ -170,22 +180,54 @@ export default function ChatScreen() {
     try {
       if (!userId) return;
 
+      // Ask for permission explicitly first so we can surface a
+      // clean message if the user previously declined in OS settings.
+      // expo-image-picker's launchImageLibraryAsync throws an opaque
+      // error in that case; requesting up-front turns it into a
+      // friendly Alert.
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (perm.status !== 'granted') {
+        Alert.alert(
+          'Photo access needed',
+          'Allow nomadspeople access to your photos to share them in chat. You can change this in Settings.',
+        );
+        return;
+      }
+
+      // mediaTypes as an array of string literals — Expo SDK 54+
+      // deprecated the MediaTypeOptions enum in favour of this
+      // form. Keeping the old enum emits a console warning on
+      // every pick; the new form is the only one documented going
+      // forward.
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 0.7,
         allowsEditing: true,
       });
 
-      if (!result.canceled) {
-        const asset = result.assets[0];
-        const fileName = `chat/${conversationId}/${Date.now()}.jpg`;
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+      const asset = result.assets[0];
 
-        // Upload to Supabase storage.
-        // React Native supports passing a { uri, type, name } object
-        // as the body, which the JS SDK types don't know about
-        // (they expect Blob/FormData). Cast to any so the runtime
-        // path works while the type noise stays quiet.
-        const { data, error: uploadError } = await supabase.storage
+      setUploadingImage(true);
+      try {
+        // Path layout:
+        //   chat/{conversationId}/{userId}-{timestamp}.jpg
+        //
+        // Including userId in the filename is intentional — it makes
+        // abuse cleanup trivial ("delete every chat image authored
+        // by user X") and it lines up with what a future RLS policy
+        // on storage.objects would enforce (uploader can only write
+        // keys containing their own user_id).
+        //
+        // post-images is a public bucket with path-based isolation
+        // (the UUID-ish conversation_id + timestamp make paths
+        // unguessable). Same pattern Slack / Telegram use for their
+        // CDN-hosted chat assets. When we move to a dedicated
+        // chat-images bucket with signed URLs, this is the single
+        // call site to update.
+        const fileName = `chat/${conversationId}/${userId}-${Date.now()}.jpg`;
+
+        const { error: uploadError } = await supabase.storage
           .from('post-images')
           .upload(fileName, {
             uri: asset.uri,
@@ -194,20 +236,29 @@ export default function ChatScreen() {
           } as any);
 
         if (uploadError) {
+          // Surface the real error — "Upload failed" with no body
+          // leaves the user guessing. Most common causes: RLS
+          // block, network drop, file too large. All three deserve
+          // their actual message.
+          console.warn('[ChatScreen] upload failed:', uploadError);
           Alert.alert('Upload failed', uploadError.message);
           return;
         }
 
-        // Get public URL
         const { data: urlData } = supabase.storage
           .from('post-images')
           .getPublicUrl(fileName);
 
-        // Send message with image
         await handleSend(urlData.publicUrl);
+      } finally {
+        setUploadingImage(false);
       }
-    } catch (err) {
-      Alert.alert('Error', 'Failed to pick image');
+    } catch (err: any) {
+      console.warn('[ChatScreen] pick photo failed:', err);
+      Alert.alert(
+        'Could not attach photo',
+        err?.message ?? 'Try again in a moment.',
+      );
     }
   };
 
@@ -478,7 +529,13 @@ export default function ChatScreen() {
                 )}
 
                 {typeof msg.image_url === 'string' && /^https?:\/\//i.test(msg.image_url) && (
-                  <TouchableOpacity style={st.imgHolder} activeOpacity={0.8}>
+                  <TouchableOpacity
+                    style={st.imgHolder}
+                    activeOpacity={0.8}
+                    onPress={() => setExpandedImage(msg.image_url as string)}
+                    onLongPress={() => openContextMenu(msg as MsgWithSender)}
+                    delayLongPress={300}
+                  >
                     <Image
                       source={{ uri: msg.image_url }}
                       style={{ width: '100%', height: s(50), borderRadius: s(2) }}
@@ -557,8 +614,15 @@ export default function ChatScreen() {
             value={inputText}
             onChangeText={setInputText}
           />
-          <TouchableOpacity style={st.cameraBtn} activeOpacity={0.7} onPress={handlePickPhoto}>
-            <NomadIcon name="camera" size={s(7)} color={colors.primary} strokeWidth={1.8} />
+          <TouchableOpacity
+            style={[st.cameraBtn, uploadingImage && { opacity: 0.5 }]}
+            activeOpacity={0.7}
+            onPress={handlePickPhoto}
+            disabled={uploadingImage}
+          >
+            {uploadingImage
+              ? <ActivityIndicator size="small" color={colors.primary} />
+              : <NomadIcon name="camera" size={s(7)} color={colors.primary} strokeWidth={1.8} />}
           </TouchableOpacity>
           {inputText.trim() ? (
             // Wrap in arrow fn — TouchableOpacity passes the press event
@@ -654,6 +718,37 @@ export default function ChatScreen() {
               <Text style={st.safeBtnTxt}>got it</Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+
+      {/* Fullscreen image viewer — opens when the user taps an image
+          message bubble. Deliberately minimal: pinch-to-zoom is
+          deferred to a later PR; today's scope is 'let me see the
+          photo at full size and tap-to-dismiss'. Black background so
+          photos with their own border blend in, and a single absolutely
+          positioned close button in the top-left so RTL users see it
+          where their eye expects. */}
+      <Modal
+        visible={!!expandedImage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setExpandedImage(null)}
+      >
+        <View style={st.fullscreenRoot}>
+          <TouchableOpacity
+            style={st.fullscreenClose}
+            onPress={() => setExpandedImage(null)}
+            hitSlop={{ top: 18, bottom: 18, left: 18, right: 18 }}
+          >
+            <NomadIcon name="close" size={s(8)} color="#fff" strokeWidth={2.2} />
+          </TouchableOpacity>
+          {expandedImage && (
+            <Image
+              source={{ uri: expandedImage }}
+              style={st.fullscreenImg}
+              resizeMode="contain"
+            />
+          )}
         </View>
       </Modal>
     </KeyboardAvoidingView>
@@ -759,6 +854,30 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   imgHolder: {
     width: s(80), height: s(55), borderRadius: s(10),
     backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center',
+  },
+
+  /* Fullscreen image viewer (modal). */
+  fullscreenRoot: {
+    flex: 1,
+    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fullscreenImg: {
+    width: '100%',
+    height: '100%',
+  },
+  fullscreenClose: {
+    position: 'absolute',
+    top: s(12),
+    left: s(6),
+    zIndex: 10,
+    width: s(18),
+    height: s(18),
+    borderRadius: s(9),
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   /* Input */
