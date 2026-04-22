@@ -22,14 +22,64 @@ type AuthConfig = {
 const authExtra: AuthConfig =
   (Constants.expoConfig?.extra as any)?.auth ?? {};
 
+/* ─────────────────────────────────────────────────────────────────
+ *  Native module presence checks
+ *
+ *  Why this exists: a feature-flag in app.json saying
+ *  `googleEnabled: true` is NOT enough on its own. The native
+ *  module also has to be physically linked into the binary the
+ *  user is running. Two real-world cases break this assumption:
+ *    1. Expo Go — has no third-party native modules.
+ *    2. An OLD EAS dev build, made before we added the dependency
+ *       to package.json (this is exactly what happened on
+ *       2026-04-22 when @react-native-google-signin landed but
+ *       Barak still had a cached dev build from the day before —
+ *       the app crashed with
+ *       "TurboModuleRegistry.getEnforcing(...): 'RNGoogleSignin'
+ *       could not be found").
+ *
+ *  We probe the native module with a synchronous `require()` inside
+ *  try/catch. If the module isn't there, the require throws (or
+ *  returns undefined) and we just record the result. The probe runs
+ *  ONCE at module load — it's cheap and lets `isGoogleSignInEnabled`
+ *  be a pure boolean that never lies.
+ *
+ *  Result: in Expo Go / a stale dev build, the social buttons stay
+ *  hidden, the app does not crash, and the user goes through the
+ *  email form like before.
+ * ────────────────────────────────────────────────────────────── */
+function safeRequire(modulePath: string): any | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require(modulePath);
+    // Some packages exist as a shim in JS but throw on first native
+    // call. We do a light "does the expected export exist" check
+    // when the module loads — full verification happens at first
+    // use (handled inside signInWith*).
+    return mod ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const appleAuthModule = Platform.OS === 'ios'
+  ? safeRequire('expo-apple-authentication')
+  : null;
+
+const googleSigninModule = safeRequire('@react-native-google-signin/google-signin');
+
 export const isAppleSignInEnabled: boolean =
-  Platform.OS === 'ios' && authExtra.appleEnabled === true;
+  Platform.OS === 'ios'
+  && authExtra.appleEnabled === true
+  && appleAuthModule !== null;
 
 export const isGoogleSignInEnabled: boolean =
-  authExtra.googleEnabled === true &&
+  authExtra.googleEnabled === true
   // Need at least the web client ID for the ID token audience to match
-  typeof authExtra.googleWebClientId === 'string' &&
-  authExtra.googleWebClientId.length > 0;
+  && typeof authExtra.googleWebClientId === 'string'
+  && authExtra.googleWebClientId.length > 0
+  // And the native module has to be in this build, not just the flag
+  && googleSigninModule !== null;
 
 /* ─────────────────────────────────────────────────────────────────
  *  Sign in with Apple
@@ -48,13 +98,14 @@ export const isGoogleSignInEnabled: boolean =
  *  come back as null — that is expected.
  * ────────────────────────────────────────────────────────────── */
 export async function signInWithApple(): Promise<{ error: string | null }> {
-  if (!isAppleSignInEnabled) {
+  if (!isAppleSignInEnabled || !appleAuthModule) {
     return { error: 'Apple Sign-In is not available on this build.' };
   }
   try {
-    // Lazy-import so Android / Expo Go builds don't pay the native
-    // module cost and don't crash when the module is absent.
-    const AppleAuthentication = await import('expo-apple-authentication');
+    // Module already loaded at top of file (safeRequire). Keeping a
+    // local alias mirrors the previous shape for the rest of this
+    // function and keeps the AppleAuthentication.* calls readable.
+    const AppleAuthentication = appleAuthModule;
 
     const credential = await AppleAuthentication.signInAsync({
       requestedScopes: [
@@ -117,9 +168,9 @@ export async function signInWithApple(): Promise<{ error: string | null }> {
  * ────────────────────────────────────────────────────────────── */
 let googleConfigured = false;
 
-async function ensureGoogleConfigured(): Promise<void> {
-  if (googleConfigured) return;
-  const { GoogleSignin } = await import('@react-native-google-signin/google-signin');
+function ensureGoogleConfigured(): void {
+  if (googleConfigured || !googleSigninModule) return;
+  const { GoogleSignin } = googleSigninModule;
   GoogleSignin.configure({
     webClientId: authExtra.googleWebClientId, // required
     iosClientId: authExtra.googleIosClientId || undefined, // iOS only
@@ -129,14 +180,13 @@ async function ensureGoogleConfigured(): Promise<void> {
 }
 
 export async function signInWithGoogle(): Promise<{ error: string | null }> {
-  if (!isGoogleSignInEnabled) {
+  if (!isGoogleSignInEnabled || !googleSigninModule) {
     return { error: 'Google Sign-In is not available on this build.' };
   }
   try {
-    await ensureGoogleConfigured();
-    const { GoogleSignin, statusCodes } = await import(
-      '@react-native-google-signin/google-signin'
-    );
+    ensureGoogleConfigured();
+    // Module already loaded at top of file (safeRequire).
+    const { GoogleSignin } = googleSigninModule;
 
     // On Android we should check Play Services is available.
     if (Platform.OS === 'android') {

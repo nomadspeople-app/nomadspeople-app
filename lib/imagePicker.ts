@@ -71,12 +71,21 @@ export async function uploadImage(
 
     const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${fileName}`;
 
+    // IMPORTANT: x-upsert is FALSE. When Supabase sees x-upsert=true,
+    // RLS evaluates BOTH the INSERT and the UPDATE policies — and our
+    // UPDATE policies on storage.objects for post-images / avatars
+    // have check_expr = NULL, which Postgres interprets as default-
+    // deny for the row-being-written. Result: 403 "new row violates
+    // row-level security policy" on every chat image upload.
+    // Our paths embed a timestamp, so collisions are impossible —
+    // plain INSERT is the correct primitive. Do NOT flip this back
+    // to 'true' without also fixing the UPDATE policy check_expr.
     const response = await fetch(uploadUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${authToken}`,
         'apikey': supabaseKey,
-        'x-upsert': 'true',
+        'x-upsert': 'false',
       },
       body: formData,
     });
