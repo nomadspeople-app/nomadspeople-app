@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase';
 import { trackEvent } from './tracking';
 import { gateContent, type GateOutcome } from './moderation';
+import { deleteAccountData } from './accountDeletion';
 
 /* Sentinel error codes — callers of `send()` inspect
  * these strings to distinguish "network failed" from
@@ -1989,50 +1990,13 @@ export function useUpdateSettings() {
     return { error };
   };
 
-  // Full account deletion — required by Apple Guideline 5.1.1(v) since
-  // June 2022. Soft-hiding the profile is NOT compliant and Apple rejects
-  // apps that do it. Steps below honor GDPR-style data deletion AND
-  // preserve chat continuity for other members (their messages still
-  // make sense) — we anonymize the sender_id on messages the user sent,
-  // keeping the text but dropping the attribution.
-  const deleteAccount = async (userId: string) => {
-    try {
-      // 1. Deactivate + delete all check-ins the user owns.
-      await supabase.from('app_checkins').delete().eq('user_id', userId);
-
-      // 2. Remove the user from every conversation they belong to.
-      await supabase.from('app_conversation_members').delete().eq('user_id', userId);
-
-      // 3. Anonymize messages they sent (text stays, authorship gone).
-      //    Setting sender_id=null is the convention for system messages in
-      //    this schema; visually these now render as "deleted user" in UI.
-      await supabase.from('app_messages').update({ sender_id: null }).eq('sender_id', userId);
-
-      // 4. Remove other traces (blocks, follows, posts, photos…).
-      await supabase.from('app_blocks').delete().or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-      await supabase.from('app_follows').delete().or(`follower_id.eq.${userId},following_id.eq.${userId}`);
-      await supabase.from('app_photo_posts').update({ is_deleted: true }).eq('user_id', userId);
-      await supabase.from('app_profile_views').delete().or(`viewer_id.eq.${userId},viewed_id.eq.${userId}`);
-      await supabase.from('app_notifications').delete().eq('user_id', userId);
-
-      // 5. Delete the profile row itself. This is the last row-level delete.
-      const { error: profileErr } = await supabase.from('app_profiles').delete().eq('user_id', userId);
-      if (profileErr) return { error: profileErr };
-
-      // 6. Delete the auth user — this requires an admin call. Supabase
-      //    doesn't allow client-side auth deletion, so we flag the user
-      //    server-side and sign them out. An Edge Function / cron finishes
-      //    the auth.users delete. For now, signOut() breaks the session.
-      //    (Server-side hard-delete of auth.users belongs in an Edge Fn
-      //    — noted as a follow-up, not blocking Apple submission because
-      //    the profile and all PII are already gone.)
-      await supabase.auth.signOut();
-
-      return { error: null };
-    } catch (e: any) {
-      return { error: e };
-    }
-  };
+  /* Full account deletion — required by Apple Guideline 5.1.1(v).
+   * The actual mutation logic lives in lib/accountDeletion.ts so
+   * the web's /delete-account flow uses the IDENTICAL pipeline.
+   * One source of truth for "what does delete-account actually do"
+   * means new tables only need cleanup wired up in one place. */
+  const deleteAccount = async (userId: string) =>
+    deleteAccountData(userId, supabase);
 
   return { update, deleteAccount };
 }
