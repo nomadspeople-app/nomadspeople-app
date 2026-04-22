@@ -193,6 +193,50 @@ export function captureError(err: unknown, context?: Record<string, any>): void 
   }
 }
 
+/** Surface a user report as a Sentry event so Barak sees it in the
+ *  Sentry inbox within minutes instead of waiting for an Admin
+ *  dashboard visit. Apple 1.2 expects "timely response" on user
+ *  reports of abusive content; this is the simplest 24-hour SLA
+ *  plumbing that does not require a third-party email service.
+ *
+ *  Why "warning" level:
+ *   - "info" gets filtered to noise and ignored in the default view.
+ *   - "error" triggers on-call paging alerts (we don't want that).
+ *   - "warning" hits the inbox once, stays visible, and is what the
+ *     Sentry UI is designed around for "something happened, a human
+ *     should look".
+ *
+ *  The tag `user_report=true` lets us set up a Sentry Alert rule
+ *  (email / Slack / whatever) specifically for this class of event
+ *  without touching the rest of the crash stream. */
+export function captureUserReport(
+  kind: 'message' | 'user' | 'post' | 'comment',
+  context: {
+    reportedId?: string;
+    reporterId?: string;
+    reason?: string;
+    note?: string;
+  }
+): void {
+  const Sentry = loadSentry();
+  if (!Sentry || !_initialized) return;
+  try {
+    Sentry.withScope((scope: any) => {
+      scope.setTag('user_report', 'true');
+      scope.setTag('report_kind', kind);
+      scope.setLevel?.('warning');
+      for (const [k, v] of Object.entries(context)) {
+        if (v !== undefined && v !== null) scope.setExtra(k, v);
+      }
+      Sentry.captureMessage(
+        `User report: ${kind} — ${context.reason ?? 'no reason'}`
+      );
+    });
+  } catch {
+    /* no-op — never let Sentry break a report flow */
+  }
+}
+
 /** Wrap the top-level App component so Sentry captures renders
  *  that throw. Returns the component as-is when Sentry isn't
  *  available — the caller's code path is identical either way. */

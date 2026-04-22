@@ -3,6 +3,7 @@ import { supabase } from './supabase';
 import { trackEvent } from './tracking';
 import { gateContent, type GateOutcome } from './moderation';
 import { deleteAccountData } from './accountDeletion';
+import { captureUserReport } from './sentry';
 
 /* Sentinel error codes — callers of `send()` inspect
  * these strings to distinguish "network failed" from
@@ -1029,15 +1030,25 @@ export async function deleteMessage(messageId: string, userId: string): Promise<
   return error ? { success: false, error: error.message } : { success: true };
 }
 
-/** Report a message */
+/** Report a message. On success we also push a Sentry event so Barak
+ *  sees it in the inbox within minutes — Apple 1.2 expects a "timely
+ *  response" on user reports of abusive content and this closes the
+ *  loop without a separate email service. The Admin Dashboard is
+ *  still the source of truth for moderation decisions; Sentry is the
+ *  notification layer. */
 export async function reportMessage(messageId: string, reporterId: string, reason: string = 'inappropriate'): Promise<{ success: boolean }> {
   const { error } = await supabase
     .from('app_message_reports')
     .insert({ message_id: messageId, reporter_id: reporterId, reason });
+  if (!error) {
+    captureUserReport('message', { reportedId: messageId, reporterId, reason });
+  }
   return { success: !error };
 }
 
-/** Report content (user / post / comment) */
+/** Report content (user / post / comment). Like reportMessage, a
+ *  successful insert also pushes a Sentry warning so Barak sees the
+ *  report without needing to open the Admin Dashboard. */
 export async function reportContent(
   reporterId: string,
   contentType: 'user' | 'post' | 'comment',
@@ -1051,6 +1062,13 @@ export async function reportContent(
     reported_user_id: opts.reportedUserId ?? null,
     content_id: opts.contentId ?? null,
   });
+  if (!error) {
+    captureUserReport(contentType, {
+      reportedId: opts.contentId ?? opts.reportedUserId,
+      reporterId,
+      reason,
+    });
+  }
   return { success: !error };
 }
 
