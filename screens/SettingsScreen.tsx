@@ -820,7 +820,7 @@ export default function SettingsScreen() {
             icon="close"
             label="Blocked Users"
             sublabel="Manage blocked users"
-            onPress={() => Alert.alert('Blocked Users', 'No blocked users yet.')}
+            onPress={() => nav.navigate('BlockedUsers')}
           />
         </View>
         </Section>

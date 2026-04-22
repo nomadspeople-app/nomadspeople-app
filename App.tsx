@@ -28,6 +28,7 @@ import SettingsScreen from './screens/SettingsScreen';
 import GroupInfoScreen from './screens/GroupInfoScreen';
 import LegalScreen from './screens/LegalScreen';
 import FlightDetailScreen from './screens/FlightDetailScreen';
+import BlockedUsersScreen from './screens/BlockedUsersScreen';
 import { useAuth } from './lib/auth';
 import { supabase } from './lib/supabase';
 import { useUnreadTotal } from './lib/hooks';
@@ -470,6 +471,11 @@ function App() {
                 <Stack.Screen
                   name="Legal"
                   component={LegalScreen}
+                  options={{ animation: 'slide_from_right' }}
+                />
+                <Stack.Screen
+                  name="BlockedUsers"
+                  component={BlockedUsersScreen}
                   options={{ animation: 'slide_from_right' }}
                 />
                 <Stack.Screen

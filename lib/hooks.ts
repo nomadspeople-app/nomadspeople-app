@@ -834,11 +834,40 @@ export async function lockConversation(conversationId: string): Promise<{ error:
    CHAT — messages for a conversation
    ═══════════════════════════════════════════ */
 
+/** One-shot fetch of the blocked-user set for the signed-in viewer.
+ *  Shape: a Set of user IDs the viewer has blocked. Used by
+ *  useMessages and anywhere else we render user-authored content that
+ *  the viewer opted out of seeing. Apple 1.2: blocks must hide the
+ *  author's content end-to-end, not just prevent DMs. */
+export async function fetchBlockedIds(myUserId: string | null | undefined): Promise<Set<string>> {
+  if (!myUserId) return new Set();
+  const { data } = await supabase
+    .from('app_blocks')
+    .select('blocked_id')
+    .eq('blocker_id', myUserId);
+  return new Set((data || []).map((r: any) => r.blocked_id as string));
+}
+
 export function useMessages(conversationId: string) {
   const [messages, setMessages] = useState<(AppMessage & { sender?: Pick<AppProfile, 'full_name' | 'avatar_url'> })[]>([]);
   const [loading, setLoading] = useState(true);
 
+  /* A Set of user_ids the signed-in viewer has blocked. Kept in a
+   * ref (not state) because the Realtime INSERT callback below needs
+   * the current value on every fire — if we used state, the closure
+   * would capture the initial empty Set and never see the fetched
+   * value. Apple 1.2 relies on this filter: a blocked user's messages
+   * must not reach the viewer's screen via any path (initial load OR
+   * Realtime push). */
+  const blockedIdsRef = useRef<Set<string>>(new Set());
+
   const fetch = async () => {
+    // Resolve the signed-in user + their block list BEFORE the
+    // messages query so the same filter applies on first paint.
+    const { data: sess } = await supabase.auth.getSession();
+    const myId = sess?.session?.user?.id ?? null;
+    blockedIdsRef.current = await fetchBlockedIds(myId);
+
     const { data } = await supabase
       .from('app_messages')
       .select('*, sender:app_profiles!sender_id(full_name, display_name, avatar_url)')
@@ -846,7 +875,10 @@ export function useMessages(conversationId: string) {
       .is('deleted_at', null)
       .order('sent_at', { ascending: true });
 
-    if (data) setMessages(data as any);
+    if (data) {
+      const filtered = (data as any[]).filter(m => !blockedIdsRef.current.has(m.sender_id));
+      setMessages(filtered as any);
+    }
     setLoading(false);
   };
 
@@ -862,8 +894,16 @@ export function useMessages(conversationId: string) {
         table: 'app_messages',
         filter: `conversation_id=eq.${conversationId}`,
       }, (payload) => {
-        console.log(`[Realtime] ✅ chat message received:`, payload.new?.id);
-        setMessages(prev => [...prev, payload.new as any]);
+        const newMsg = payload.new as any;
+        // Drop incoming messages from blocked authors. Same guard as
+        // the initial fetch above — see blockedIdsRef comment for why
+        // this is a ref and not state.
+        if (newMsg?.sender_id && blockedIdsRef.current.has(newMsg.sender_id)) {
+          console.log(`[Realtime] 🚫 blocked sender's message dropped: ${newMsg.id}`);
+          return;
+        }
+        console.log(`[Realtime] ✅ chat message received:`, newMsg?.id);
+        setMessages(prev => [...prev, newMsg]);
       })
       .on('postgres_changes', {
         event: 'UPDATE',

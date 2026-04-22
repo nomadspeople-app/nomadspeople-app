@@ -247,6 +247,7 @@ export type RootStackParamList = {
   UserProfile: { userId: string; name?: string };
   PhotoViewer: { posts: any[]; startIndex: number; authorName: string; profileUserId: string };
   Settings: undefined;
+  BlockedUsers: undefined;
   PostFeed: { postIndex?: number };
   Notifications: undefined;
   Legal: { type: 'terms' | 'privacy' | 'guidelines' | 'safety' };
