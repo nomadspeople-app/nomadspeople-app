@@ -1,0 +1,18 @@
+{
+  "_comment": "Local tsconfig for lib/ so that esbuild (when invoked from the web Vite build) finds this file before walking up to the root Expo-extending tsconfig. Mobile's tsc invocation runs from the repo root and still uses /tsconfig.json (extends expo/tsconfig.base); this file is only consulted by esbuild/Vite.",
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "moduleDetection": "force",
+    "noEmit": true
+  }
+}
