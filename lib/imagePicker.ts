@@ -27,18 +27,31 @@ export async function pickImage(aspect?: [number, number]): Promise<string | nul
 /**
  * Upload a local image URI to Supabase Storage.
  * Uses FormData approach which is the most reliable on React Native.
+ *
+ * Why this detour around supabase.storage.from().upload({uri,type,name}):
+ * the Supabase JS SDK quietly JSON-serializes the object instead of
+ * reading the file on RN, producing a 341-byte text/plain upload that
+ * the Image component can't render. We hit that in ChatScreen image
+ * attachments on 2026-04-22 and moved every image path here as a
+ * result.
+ *
+ * `customFileName` lets callers override the default `${userId}/time.ext`
+ * layout — used by chat attachments, which want
+ * `chat/{conversationId}/{userId}-{ts}.{ext}` so admin cleanup is
+ * trivial.
  */
 export async function uploadImage(
   localUri: string,
   bucket: 'avatars' | 'post-images',
   userId: string,
+  customFileName?: string,
 ): Promise<string | null> {
   try {
     // Determine extension and content type
     const uriParts = localUri.split('.');
     const ext = uriParts[uriParts.length - 1]?.toLowerCase() || 'jpg';
     const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
-    const fileName = `${userId}/${Date.now()}.${ext}`;
+    const fileName = customFileName || `${userId}/${Date.now()}.${ext}`;
 
     // Create FormData — the most reliable method on React Native
     const formData = new FormData();

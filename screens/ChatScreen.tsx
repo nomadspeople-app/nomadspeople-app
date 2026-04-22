@@ -21,6 +21,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18n';
 import { renderChatContent } from '../lib/chatText';
+import { uploadImage } from '../lib/imagePicker';
 import { AuthContext, UnreadContext } from '../App';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -196,13 +197,15 @@ export default function ChatScreen() {
 
       // mediaTypes as an array of string literals — Expo SDK 54+
       // deprecated the MediaTypeOptions enum in favour of this
-      // form. Keeping the old enum emits a console warning on
-      // every pick; the new form is the only one documented going
-      // forward.
+      // form. allowsEditing intentionally OFF: the default iOS
+      // editor forces a 1:1 crop that chopped most of the photo
+      // out — users want to send the WHOLE image they took, not a
+      // square cut. If we ever want in-app cropping we'll ship a
+      // proper aspect-preserving cropper, not the OS one.
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         quality: 0.7,
-        allowsEditing: true,
+        allowsEditing: false,
       });
 
       if (result.canceled || !result.assets?.[0]?.uri) return;
@@ -210,46 +213,42 @@ export default function ChatScreen() {
 
       setUploadingImage(true);
       try {
-        // Path layout:
-        //   chat/{conversationId}/{userId}-{timestamp}.jpg
+        // File path layout: chat/{conversationId}/{userId}-{timestamp}.{ext}
         //
-        // Including userId in the filename is intentional — it makes
-        // abuse cleanup trivial ("delete every chat image authored
-        // by user X") and it lines up with what a future RLS policy
-        // on storage.objects would enforce (uploader can only write
-        // keys containing their own user_id).
+        // Including userId in the filename makes abuse cleanup
+        // trivial ("delete every chat image from user X") and
+        // lines up with the shape of the future RLS policy we'll
+        // add to storage.objects.
         //
-        // post-images is a public bucket with path-based isolation
-        // (the UUID-ish conversation_id + timestamp make paths
-        // unguessable). Same pattern Slack / Telegram use for their
-        // CDN-hosted chat assets. When we move to a dedicated
-        // chat-images bucket with signed URLs, this is the single
-        // call site to update.
-        const fileName = `chat/${conversationId}/${userId}-${Date.now()}.jpg`;
+        // post-images is a public bucket with path-based isolation.
+        // When we move to a dedicated chat-images bucket with signed
+        // URLs, this is the single call site to update.
+        //
+        // We route through lib/imagePicker.uploadImage() instead of
+        // calling supabase.storage.from().upload() directly because
+        // the SDK's {uri,type,name} object path JSON-serializes on
+        // RN instead of reading the file (341-byte text/plain
+        // uploads — exactly what we saw in DB row 7edb46fa on
+        // 2026-04-22). uploadImage() uses FormData + raw fetch
+        // against the Storage REST endpoint, which is the only
+        // approach that actually streams the bytes.
+        const uriParts = asset.uri.split('.');
+        const ext = (uriParts[uriParts.length - 1] || 'jpg').toLowerCase();
+        const fileName = `chat/${conversationId}/${userId}-${Date.now()}.${ext}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from('post-images')
-          .upload(fileName, {
-            uri: asset.uri,
-            type: 'image/jpeg',
-            name: fileName,
-          } as any);
-
-        if (uploadError) {
-          // Surface the real error — "Upload failed" with no body
-          // leaves the user guessing. Most common causes: RLS
-          // block, network drop, file too large. All three deserve
-          // their actual message.
-          console.warn('[ChatScreen] upload failed:', uploadError);
-          Alert.alert('Upload failed', uploadError.message);
+        const publicUrl = await uploadImage(
+          asset.uri,
+          'post-images',
+          userId,
+          fileName,
+        );
+        if (!publicUrl) {
+          // uploadImage surfaces its own Alert on failure, so we
+          // just stop here without a duplicate alert.
           return;
         }
 
-        const { data: urlData } = supabase.storage
-          .from('post-images')
-          .getPublicUrl(fileName);
-
-        await handleSend(urlData.publicUrl);
+        await handleSend(publicUrl);
       } finally {
         setUploadingImage(false);
       }
