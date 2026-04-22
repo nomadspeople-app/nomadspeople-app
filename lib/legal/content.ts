@@ -29,8 +29,11 @@
 export const LEGAL_META = {
   /** Name used in headers and as the copyright holder. */
   entity: 'nomadspeople',
-  /** Public contact for legal questions (appears in every doc). */
-  contactEmail: 'nomadspeople1@gmail.com',
+  /** Public contact for legal questions (appears in every doc).
+   *  Branded address — MX points at ImprovMX which forwards to the
+   *  team inbox (nomadspeople1@gmail.com). Verified with
+   *  `mx:nomadspeople.com` on mxtoolbox on 2026-04-22. */
+  contactEmail: 'support@nomadspeople.com',
   /** Effective date shown on Terms and Privacy. Update when
    *  content materially changes; minor wording tweaks do NOT
    *  need a new effective date. */

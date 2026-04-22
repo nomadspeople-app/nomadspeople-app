@@ -9,10 +9,10 @@
 - **App Name:** nomadspeople
 - **Bundle ID:** com.nomadspeople.app
 - **Version:** 1.0.0
-- **Contact Email:** nomadspeople1@gmail.com
+- **Contact Email:** support@nomadspeople.com (ImprovMX forwards to team inbox)
 - **Privacy Policy URL:** https://nomadspeople.com/privacy
 - **Terms of Service URL:** https://nomadspeople.com/terms
-- **Support URL:** https://nomadspeople.com
+- **Support URL:** https://nomadspeople.com/support
 - **Account Deletion URL:** https://nomadspeople.com/delete-account
 
 ---

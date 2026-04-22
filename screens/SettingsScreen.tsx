@@ -970,7 +970,7 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="chat"
             label={t('settings.messageFounder')}
-            onPress={() => Linking.openURL('mailto:nomadspeople1@gmail.com?subject=nomadspeople Feedback')}
+            onPress={() => Linking.openURL('mailto:support@nomadspeople.com?subject=nomadspeople Feedback')}
           />
           <View style={styles.divider} />
           <SettingsRow
@@ -989,7 +989,7 @@ export default function SettingsScreen() {
             iconColor="#F59E0B"
             label="Report an Issue"
             sublabel="Let us know if something is broken"
-            onPress={() => Linking.openURL('mailto:nomadspeople1@gmail.com?subject=nomadspeople Bug Report')}
+            onPress={() => Linking.openURL('mailto:support@nomadspeople.com?subject=nomadspeople Bug Report')}
           />
         </View>
         </Section>

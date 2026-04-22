@@ -8,7 +8,12 @@
  * come post-launch.
  */
 
-const contactEmail = 'nomadspeople1@gmail.com';
+// Branded support email; MX points at ImprovMX which forwards to the
+// team inbox (nomadspeople1@gmail.com). Verified with `mx:nomadspeople.com`
+// on mxtoolbox on 2026-04-22 — records are live. If you switch this to a
+// bare gmail again, remember the whole landing/legal/app references this
+// address and Apple / Google will see it too.
+const contactEmail = 'support@nomadspeople.com';
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
