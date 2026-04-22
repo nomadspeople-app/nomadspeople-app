@@ -499,11 +499,21 @@ export default function ProfileScreen() {
     // Missing `scheduled_for` / `is_open` / `is_flexible_time` here was
     // causing save-then-reopen to show stale date/time/privacy because
     // those fields were never loaded back into activeStatus/activeTimer.
+    // Double guard against expired rows:
+    //   1) is_active = true   (the cron flips this every 5 min)
+    //   2) expires_at > now() (belt + suspenders — if the cron
+    //      fell behind for any reason, the UI still won't show
+    //      a finished timer / status on the profile)
+    // Both conditions must hold. Status-type and timer-type
+    // checkins both set expires_at at insert time, so this
+    // filter is symmetric.
+    const nowIso = new Date().toISOString();
     const { data, error } = await supabase
       .from('app_checkins')
       .select('id, user_id, city, checkin_type, status_text, status_emoji, category, activity_text, location_name, latitude, longitude, member_count, is_active, is_open, checked_in_at, expires_at, scheduled_for, is_flexible_time, age_min, age_max, visibility')
       .eq('user_id', profileUserId)
       .eq('is_active', true)
+      .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
       .order('checked_in_at', { ascending: false });
     if (error) console.error('Error fetching active checkins:', error);
     const items = data || [];
