@@ -55,7 +55,7 @@
       [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.GOOGLE_IOS_CLIENT_ID_PLACEHOLDER"
+          "iosUrlScheme": "com.googleusercontent.apps.622916189529-1hqs52vr20nd6h72ca5pf5o86i9k83kl"
         }
       ],
       [
@@ -97,11 +97,11 @@
       "auth": {
         "// appleEnabled / googleEnabled": "Feature flags that gate the Apple / Google sign-in buttons in AuthScreen. Flip to true AFTER the Apple Developer + Google Cloud + Supabase Provider configuration is complete (see docs/2026-04-22-apple-google-signin.md). Until then the buttons stay hidden so we don't ship a non-working CTA.",
         "appleEnabled": false,
-        "googleEnabled": false,
-        "// googleWebClientId": "OAuth 2.0 Web Client ID from Google Cloud Console. Used by Android for server-side token verification; also passed to GoogleSignin.configure on iOS so the ID token is audience-matched to what Supabase expects. Fill in once we have it — string format ending in '.apps.googleusercontent.com'.",
-        "googleWebClientId": "",
-        "// googleIosClientId": "OAuth 2.0 iOS Client ID from Google Cloud Console. This is what GoogleSignin uses natively on iOS; Android reads its value from google-services.json and does not need this field.",
-        "googleIosClientId": ""
+        "googleEnabled": true,
+        "// googleWebClientId": "OAuth 2.0 Web Client ID — listed in Supabase Dashboard → Auth → Providers → Google → Client IDs (this one is the one paired with the Client Secret). Filled in 2026-04-22 from the 'NomadsPeople Production' OAuth client in nearby-discovery-pro Google Cloud project.",
+        "googleWebClientId": "622916189529-9plps2f4omirhkv7p88gi6237622mfoe.apps.googleusercontent.com",
+        "// googleIosClientId": "OAuth 2.0 iOS Client ID. GoogleSignin.configure uses this on iOS so the ID token's audience is iosClientId — Supabase has this same iosClientId added to its Authorized Client IDs list, so the audience check passes.",
+        "googleIosClientId": "622916189529-1hqs52vr20nd6h72ca5pf5o86i9k83kl.apps.googleusercontent.com"
       }
     },
     "owner": "nomadspeople",
