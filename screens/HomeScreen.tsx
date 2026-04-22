@@ -2640,7 +2640,7 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     color: c.white,
   },
 
-  /* ── Map Pins — NomadsPeople bubble design ── */
+  /* ── Map Pins — nomadspeople bubble design ── */
   pinWrap: { alignItems: 'center' },
 
   /* Outer ring = the colored border around the avatar (compact: -15%) */

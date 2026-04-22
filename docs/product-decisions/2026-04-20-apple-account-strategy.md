@@ -15,13 +15,13 @@
    Eyal's involvement isn't required for releases, builds,
    analytics, support replies, etc.
 3. **In parallel** — Barak requests a D-U-N-S number from
-   dnb.com for the business name "NomadsPeople". Free, takes
+   dnb.com for the business name "nomadspeople". Free, takes
    5 business days to ~3 weeks.
 4. **In ~4–8 weeks** — Eyal contacts Apple Developer Support
    to perform an **Entity Change** (Individual → Organization)
    on the SAME account, using the now-available D-U-N-S.
 5. **Post-change** — the App Store listing's "Seller" field
-   updates from "Eyal Halef" to "NomadsPeople" with zero code
+   updates from "Eyal Halef" to "nomadspeople" with zero code
    change, zero downtime, zero data loss.
 
 ## Why Entity Change (A) over App Transfer (B)
@@ -29,7 +29,7 @@
 Entity Change keeps a single account for the entire app
 lifetime. App Transfer would create a parallel Organization
 account ($198 first year) and move the app between them
-(small downtime + complexity). For NomadsPeople MVP, none of
+(small downtime + complexity). For nomadspeople MVP, none of
 the three legitimate reasons for App Transfer apply (Eyal
 doesn't have other personal apps, no investor demands legal
 separation, no account is in trouble).
@@ -55,7 +55,7 @@ App Store listing shows "Seller: Eyal Halef" beside the app
 name.
 
 **After Entity Change:**
-App Store listing shows "Seller: NomadsPeople". All other
+App Store listing shows "Seller: nomadspeople". All other
 metadata (icon, screenshots, name, description, reviews,
 ratings, downloads) stays exactly the same.
 
@@ -69,8 +69,8 @@ hours after Eyal completes enrollment).
 ## Red lines
 
 1. Never create the App Store Connect listing under Eyal's
-   personal name (e.g. "Eyal's NomadsPeople") — the listing
-   name should always be "NomadsPeople" regardless of
+   personal name (e.g. "Eyal's nomadspeople") — the listing
+   name should always be "nomadspeople" regardless of
    Seller field.
 2. Never expose Eyal's Apple ID password to Barak. Barak's
    own Apple ID + Admin role is enough for everything.

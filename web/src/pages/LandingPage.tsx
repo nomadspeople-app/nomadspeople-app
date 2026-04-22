@@ -210,7 +210,7 @@ export default function LandingPage() {
             <a href="/delete-account" style={styles.footerLink}>Delete Account</a>
             <a href="/support" style={styles.footerLink}>Support</a>
           </div>
-          <span style={styles.footerCopy}>&copy; {new Date().getFullYear()} NomadsPeople</span>
+          <span style={styles.footerCopy}>&copy; {new Date().getFullYear()} nomadspeople</span>
         </div>
       </footer>
     </div>

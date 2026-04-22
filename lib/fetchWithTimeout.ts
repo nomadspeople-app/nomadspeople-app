@@ -24,7 +24,7 @@
 interface Options {
   /** Max time to wait, in ms. Default 8000. */
   timeoutMs?: number;
-  /** Headers to pass through. User-Agent is always set to NomadsPeople. */
+  /** Headers to pass through. User-Agent is always set to nomadspeople. */
   headers?: Record<string, string>;
   /** Tag used in the console log when it fails. Defaults to the URL host. */
   tag?: string;
@@ -46,7 +46,7 @@ export async function fetchJsonWithTimeout<T = any>(
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'NomadsPeople/1.0', ...headers },
+      headers: { 'User-Agent': 'nomadspeople/1.0', ...headers },
     });
     if (!res.ok) {
       console.warn(`[${label}] ${res.status} ${res.statusText}`);

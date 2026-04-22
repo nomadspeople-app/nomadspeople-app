@@ -1,4 +1,4 @@
-# NomadsPeople — Cowork Handoff Prompt
+# nomadspeople — Cowork Handoff Prompt
 
 ## Project Details
 - Folder: ~/nomadspeople-app

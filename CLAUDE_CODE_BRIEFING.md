@@ -5,7 +5,7 @@
 
 ## 📋 SUMMARY OF WHAT WE'RE DOING
 
-We have a **working nomads map app** (NomadsPeople). Barak just:
+We have a **working nomads map app** (nomadspeople). Barak just:
 1. Fixed Timer/Status button taps (hitSlop + instant feedback)
 2. Fixed city validation (wrong city on checkins)
 3. Fixed Realtime filter (case-sensitive bug)

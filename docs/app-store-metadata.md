@@ -1,4 +1,4 @@
-# NomadsPeople — App Store Metadata
+# nomadspeople — App Store Metadata
 **Prepared:** April 9, 2026
 **Status:** Ready for submission when Apple Developer account activates
 
@@ -6,7 +6,7 @@
 
 ## APP IDENTITY
 
-- **App Name:** NomadsPeople
+- **App Name:** nomadspeople
 - **Bundle ID:** com.nomadspeople.app
 - **Version:** 1.0.0
 - **Contact Email:** nomadspeople1@gmail.com
@@ -30,12 +30,12 @@ digital nomad,remote work,travel,coliving,coworking,expat,nomad community,meetup
 - **Secondary:** Social Networking
 
 ### Promotional Text (170 chars max — can be updated without new build)
-See who's in your neighborhood right now. NomadsPeople is the real-time map for digital nomads to find each other and connect wherever they land.
+See who's in your neighborhood right now. nomadspeople is the real-time map for digital nomads to find each other and connect wherever they land.
 
 ### Description (4,000 chars max)
-NomadsPeople helps digital nomads find their people — not just a city, but a neighborhood.
+nomadspeople helps digital nomads find their people — not just a city, but a neighborhood.
 
-See who's around you in real-time on the map. Join local activities. Connect with people who actually get the lifestyle. Whether you just landed or you've been here for months, NomadsPeople shows you who's already nearby.
+See who's around you in real-time on the map. Join local activities. Connect with people who actually get the lifestyle. Whether you just landed or you've been here for months, nomadspeople shows you who's already nearby.
 
 HOW IT WORKS
 
@@ -68,7 +68,7 @@ FEATURES
 
 BUILT FOR NOMADS, BY NOMADS
 
-NomadsPeople was built because finding your people in a new city shouldn't be this hard. No algorithms, no feeds, no noise — just a map showing who's nearby and a simple way to connect.
+nomadspeople was built because finding your people in a new city shouldn't be this hard. No algorithms, no feeds, no noise — just a map showing who's nearby and a simple way to connect.
 
 Currently active in cities worldwide including Bangkok, Lisbon, Mexico City, Chiang Mai, Berlin, Buenos Aires, and everywhere nomads roam.
 
@@ -142,4 +142,4 @@ Find digital nomads near you. See who's in your neighborhood and connect.
 
 ## REVIEW NOTES FOR APPLE
 
-"NomadsPeople is a real-time map-based social app for digital nomads. Users go live on the map to show their neighborhood, browse other nomads nearby, join activities, and chat. The app requires location permission to place the user on the map. A demo account is provided with pre-set location data for review purposes. The app connects to Supabase (PostgreSQL) for backend services."
+"nomadspeople is a real-time map-based social app for digital nomads. Users go live on the map to show their neighborhood, browse other nomads nearby, join activities, and chat. The app requires location permission to place the user on the map. A demo account is provided with pre-set location data for review purposes. The app connects to Supabase (PostgreSQL) for backend services."

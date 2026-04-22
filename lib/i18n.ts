@@ -1,5 +1,5 @@
 /**
- * NomadsPeople i18n system
+ * nomadspeople i18n system
  * ─────────────────────────
  * Lightweight translation engine with React context.
  *

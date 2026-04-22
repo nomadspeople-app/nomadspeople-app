@@ -15,7 +15,7 @@
  *    EAS env profiles override per-branch.
  *
  * 3. **EU region.** Our project is in sentry.io's Frankfurt data
- *    center (ingest.de.sentry.io) to keep all NomadsPeople data
+ *    center (ingest.de.sentry.io) to keep all nomadspeople data
  *    in the EU alongside the Supabase DB (eu-central-1). See
  *    docs/product-decisions for the data-residency rationale.
  *

@@ -555,7 +555,7 @@ export default function SettingsScreen() {
         '• Your membership in all group chats\n' +
         '• Your follows, blocks, notifications\n\n' +
         'Messages you sent in group chats will stay visible to members for context, but your name will be removed.\n\n' +
-        'This cannot be undone. You will need to sign up again to use NomadsPeople.',
+        'This cannot be undone. You will need to sign up again to use nomadspeople.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -970,7 +970,7 @@ export default function SettingsScreen() {
           <SettingsRow
             icon="chat"
             label={t('settings.messageFounder')}
-            onPress={() => Linking.openURL('mailto:nomadspeople1@gmail.com?subject=NomadsPeople Feedback')}
+            onPress={() => Linking.openURL('mailto:nomadspeople1@gmail.com?subject=nomadspeople Feedback')}
           />
           <View style={styles.divider} />
           <SettingsRow
@@ -989,7 +989,7 @@ export default function SettingsScreen() {
             iconColor="#F59E0B"
             label="Report an Issue"
             sublabel="Let us know if something is broken"
-            onPress={() => Linking.openURL('mailto:nomadspeople1@gmail.com?subject=NomadsPeople Bug Report')}
+            onPress={() => Linking.openURL('mailto:nomadspeople1@gmail.com?subject=nomadspeople Bug Report')}
           />
         </View>
         </Section>

@@ -115,7 +115,7 @@ this first.
 ### UX skill created
 
 - **`docs/ux-skill-v1.md`** + `ux.skill` package. Canonical UX
-  contract for NomadsPeople. Reference this, ux skill in
+  contract for nomadspeople. Reference this, ux skill in
   `.claude/skills/ux/`, and the logic skill together for every UI
   change.
 

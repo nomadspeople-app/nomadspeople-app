@@ -242,7 +242,7 @@ export default function PhotoViewerScreen() {
 
   const handleShare = useCallback(async (caption?: string | null) => {
     try {
-      await Share.share({ message: caption ? `${caption} — NomadsPeople` : 'Check this out on NomadsPeople!' });
+      await Share.share({ message: caption ? `${caption} — nomadspeople` : 'Check this out on nomadspeople!' });
     } catch (err) {
       // Share.share rejects only on real failures; user cancel
       // returns a clean object. Log so a broken share doesn't

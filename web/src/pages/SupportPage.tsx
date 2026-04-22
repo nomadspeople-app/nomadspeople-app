@@ -147,7 +147,7 @@ export default function SupportPage() {
         <div style={styles.kicker}>Support</div>
         <h1 style={styles.h1}>We're here to help.</h1>
         <p style={styles.lead}>
-          NomadsPeople is built by a small team. For the fastest reply, email us
+          nomadspeople is built by a small team. For the fastest reply, email us
           directly — we usually respond within one business day.
         </p>
 

@@ -1,8 +1,8 @@
 /**
- * NomadIcon — Custom SVG icon system for NomadsPeople
+ * NomadIcon — Custom SVG icon system for nomadspeople
  *
  * Modern, creative, fine-line icons with color support.
- * Designed to be unique to NomadsPeople — not Instagram, not Feather.
+ * Designed to be unique to nomadspeople — not Instagram, not Feather.
  *
  * Usage:
  *   <NomadIcon name="coffee" size={24} color="#E8614D" />

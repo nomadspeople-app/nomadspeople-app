@@ -228,7 +228,7 @@ export default function GroupInfoScreen() {
   const handleShare = async () => {
     const name = group?.name || 'Activity';
     await Share.share({
-      message: `Join "${name}" on NomadsPeople! 🎉`,
+      message: `Join "${name}" on nomadspeople! 🎉`,
     }).catch(() => {});
   };
 

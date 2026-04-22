@@ -10,7 +10,7 @@ it's the blueprint for the analytics pass that follows launch.
 
 ## The Thesis
 
-Every active user on NomadsPeople is actually two users
+Every active user on nomadspeople is actually two users
 cognitively, depending on the moment:
 
 - The **Scheduler** — the version of them planning next

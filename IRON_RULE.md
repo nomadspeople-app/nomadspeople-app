@@ -2,7 +2,7 @@
 
 > **Once a user enters with a profile, the system is theirs. The tools are theirs. They build, manage, decide — alone.**
 
-This is the foundational product principle of NomadsPeople. Everything else flows from it.
+This is the foundational product principle of nomadspeople. Everything else flows from it.
 
 ---
 

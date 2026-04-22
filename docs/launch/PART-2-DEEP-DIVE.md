@@ -459,7 +459,7 @@ async function requestTracking(): Promise<PermissionOutcome> {
 "infoPlist": {
   // ...existing
   "NSUserTrackingUsageDescription":
-    "NomadsPeople uses anonymous usage stats to improve the app. Your chats, profile, and location are NEVER tracked across apps."
+    "nomadspeople uses anonymous usage stats to improve the app. Your chats, profile, and location are NEVER tracked across apps."
 }
 ```
 
@@ -580,7 +580,7 @@ git.
 Barak must do this in the Apple web portal:
 
 1. **App Info**:
-   - Name: "NomadsPeople"
+   - Name: "nomadspeople"
    - Subtitle: "find your people, right now"
    - Primary category: Social Networking
    - Secondary: Travel
@@ -654,7 +654,7 @@ legal updates are rare).
 #### Content audit (the actual work for this item)
 
 Open each tab and verify:
-1. **Terms** — reference to "NomadsPeople", mention of
+1. **Terms** — reference to "nomadspeople", mention of
    account deletion, age requirement (17+), UGC policy,
    termination clause, jurisdiction (Israeli law).
 2. **Privacy** — mention of every data type we collect,

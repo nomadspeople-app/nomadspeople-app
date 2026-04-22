@@ -1,6 +1,6 @@
 # Status Button — Locked Spec (2026-04-19)
 
-The status flow is the core of NomadsPeople: how a nomad announces "I'm here doing X" or "I'm planning event Y, who's in?". Everything below is the **locked logic**. Any change must respect every section of this document or revisit the spec first.
+The status flow is the core of nomadspeople: how a nomad announces "I'm here doing X" or "I'm planning event Y, who's in?". Everything below is the **locked logic**. Any change must respect every section of this document or revisit the spec first.
 
 ## Concept
 

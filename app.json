@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "NomadsPeople",
+    "name": "nomadspeople",
     "slug": "nomadspeople-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -27,17 +27,17 @@
           "he",
           "ru"
         ],
-        "NSLocationWhenInUseUsageDescription": "NomadsPeople uses your location to show where you are on the map when you go live.",
-        "NSPhotoLibraryUsageDescription": "NomadsPeople needs access to your photos so you can choose a profile picture or share images in group chats.",
-        "NSPhotoLibraryAddUsageDescription": "NomadsPeople may save images you share from the app.",
-        "NSUserTrackingUsageDescription": "NomadsPeople uses anonymous usage stats to improve the app. Your chats, profile, and location are NEVER tracked across other apps."
+        "NSLocationWhenInUseUsageDescription": "nomadspeople uses your location to show where you are on the map when you go live.",
+        "NSPhotoLibraryUsageDescription": "nomadspeople needs access to your photos so you can choose a profile picture or share images in group chats.",
+        "NSPhotoLibraryAddUsageDescription": "nomadspeople may save images you share from the app.",
+        "NSUserTrackingUsageDescription": "nomadspeople uses anonymous usage stats to improve the app. Your chats, profile, and location are NEVER tracked across other apps."
       }
     },
     "plugins": [
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "NomadsPeople uses your location to show where you are on the map when you go live."
+          "locationWhenInUsePermission": "nomadspeople uses your location to show where you are on the map when you go live."
         }
       ],
       [

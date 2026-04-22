@@ -1,4 +1,4 @@
-# NomadsPeople App — Development Rules
+# nomadspeople App — Development Rules
 
 ## Rule Zero — No Band-Aids (Locked April 2026)
 
@@ -86,7 +86,7 @@ don't ship.
 
 ## Repo Boundary (Locked April 2026)
 
-This repo is **only** the NomadsPeople mobile app and its marketing landing page. Nothing else.
+This repo is **only** the nomadspeople mobile app and its marketing landing page. Nothing else.
 
 **What lives here:**
 - `/` — Expo / React Native mobile app (SDK 54)

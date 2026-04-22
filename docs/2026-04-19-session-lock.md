@@ -9,7 +9,7 @@ Everything landed in today's session, in order. Every item below is **live on `m
 | `logic` | Every button must close its loop — writes DB, ripples to every affected surface, posts system messages, surfaces success/failure. No hollow toggles. |
 | `thorough` | Before any code change: query DB, grep all read/write sites, check RLS and cron jobs, patch stale data in the same commit. |
 
-Both are installed as `.skill` packages. They trigger automatically for NomadsPeople work in future sessions.
+Both are installed as `.skill` packages. They trigger automatically for nomadspeople work in future sessions.
 
 ## Dev environment
 
@@ -125,7 +125,7 @@ Both are installed as `.skill` packages. They trigger automatically for NomadsPe
 
 - ⏳ `npx expo install --fix` must be run on the Mac (the sandbox blocks `api.expo.dev`). 9 packages drift from SDK 54 expected versions.
 - ⏳ `eas.json` Apple submit placeholders (`appleId`, `ascAppId`, `appleTeamId`) — need real values before EAS production build.
-- ⏳ Password `NomadsPeopleDev2026!` is in `App.tsx` git history. Before public launch: reset via Supabase Auth + move to `.env.local`.
+- ⏳ Password `nomadspeopleDev2026!` is in `App.tsx` git history. Before public launch: reset via Supabase Auth + move to `.env.local`.
 - ⏳ PAT token exposed in `origin` remote URL (`ghp_...@github.com/nomadspeople-app/...`). Rotate and replace.
 - ⏳ Push notifications for event changes (currently only in-chat system messages — push wrapper deferred to an Edge Function).
 - ⏳ Auth.users hard-delete via Edge Function (deleteAccount handles PII; auth row is soft-orphaned).

@@ -78,7 +78,7 @@ const TAG_EMOJI_MAP: Record<string, string> = {
 const PROFILE = {
   initials: 'NP',
   username: 'nomadspeople',
-  displayName: 'NomadsPeople',
+  displayName: 'nomadspeople',
   creatorTag: true,
   bio: 'Your neighborhood-level intelligence platform\nFind YOUR neighborhood, not just a city\nWhere nomads like you actually live',
   website: 'nomadspeople.com',
@@ -805,7 +805,7 @@ export default function ProfileScreen() {
 
   const handleShare = useCallback(async (caption?: string | null) => {
     try {
-      await Share.share({ message: caption ? `${caption} — NomadsPeople` : 'Check this out on NomadsPeople!' });
+      await Share.share({ message: caption ? `${caption} — nomadspeople` : 'Check this out on nomadspeople!' });
     } catch (err) {
       // Share.share rejects only on real failures (native-module
       // error, etc.); user-cancellation returns a clean result
@@ -852,7 +852,7 @@ export default function ProfileScreen() {
               <TouchableOpacity
                 style={styles.hdrBtnDark}
                 activeOpacity={0.7}
-                onPress={() => Share.share({ message: `Check out ${username} on NomadsPeople!` }).catch(() => {})}
+                onPress={() => Share.share({ message: `Check out ${username} on nomadspeople!` }).catch(() => {})}
               >
                 <NomadIcon name="share" size={s(7)} color="#1A1A1A" strokeWidth={1.8} />
               </TouchableOpacity>
@@ -865,7 +865,7 @@ export default function ProfileScreen() {
             <TouchableOpacity
               style={styles.hdrBtnDark}
               activeOpacity={0.7}
-              onPress={() => Share.share({ message: `Check out ${username} on NomadsPeople!` }).catch(() => {})}
+              onPress={() => Share.share({ message: `Check out ${username} on nomadspeople!` }).catch(() => {})}
             >
               <NomadIcon name="dots" size={s(6)} color="#1A1A1A" strokeWidth={1.4} />
             </TouchableOpacity>
@@ -1589,7 +1589,7 @@ export default function ProfileScreen() {
                 style={aiStyles.row}
                 activeOpacity={0.6}
                 onPress={() => {
-                  Share.share({ message: `Join my activity: ${editCheckin?.activity_text || 'Activity'} on NomadsPeople!` });
+                  Share.share({ message: `Join my activity: ${editCheckin?.activity_text || 'Activity'} on nomadspeople!` });
                 }}
               >
                 <View style={[aiStyles.rowIcon, { backgroundColor: colors.surface }]}>

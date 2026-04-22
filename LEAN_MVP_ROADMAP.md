@@ -1,4 +1,4 @@
-# 🎯 NomadsPeople - Lean MVP v1.0 Roadmap
+# 🎯 nomadspeople - Lean MVP v1.0 Roadmap
 
 ## סטטוס: CLEANUP MODE - עדיפות לגודל קובץ מעל כל דבר
 

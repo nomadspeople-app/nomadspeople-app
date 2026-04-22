@@ -327,7 +327,7 @@ export default function PostFeedScreen() {
 
                   <TouchableOpacity
                     style={styles.actionBtn}
-                    onPress={() => Share.share({ message: `${post.content} — NomadsPeople` }).catch(() => {})}
+                    onPress={() => Share.share({ message: `${post.content} — nomadspeople` }).catch(() => {})}
                   >
                     <NomadIcon name="share" size={s(7)} color="#1A1A1A" strokeWidth={1.6} />
                   </TouchableOpacity>

@@ -1,7 +1,7 @@
-# NomadsPeople — Handoff Prompt (11 אפריל 2026)
+# nomadspeople — Handoff Prompt (11 אפריל 2026)
 
 ## מי אתה
-אתה ממשיך פיתוח של **NomadsPeople** — מוצר אחד עם שתי חזיתות:
+אתה ממשיך פיתוח של **nomadspeople** — מוצר אחד עם שתי חזיתות:
 1. **אפליקציית מובייל** (Expo React Native) — הלב
 2. **דף נחיתה** (Vite + React, Vercel) — שיווק + privacy/terms/delete חובה לחנויות
 
@@ -182,7 +182,7 @@ npm run build  # ל-production
 2. 🔴 **Google OAuth** ב-Supabase dashboard + redirect URLs + החזרת הכפתור ב-AuthScreen.
 3. 🔴 **Apple Sign-In** — Service ID, Key עם Sign in with Apple capability, הגדרה ב-Supabase Auth Providers.
 4. 🟡 **Development build עם EAS** — `eas build --profile development` ל-iOS (דורש מק).
-5. 🟡 **App Store submission kit** — צילומי מסך, חשבון דמו לסוקרי Apple. יש `NomadsPeople-Store-Submission-Kit.docx` בפרויקט.
+5. 🟡 **App Store submission kit** — צילומי מסך, חשבון דמו לסוקרי Apple. יש `nomadspeople-Store-Submission-Kit.docx` בפרויקט.
 6. 🟡 **Supabase Pro** — Free מוגבל ל-60 חיבורים. מומלץ לפני השקה (~$25/חודש).
 7. 🟡 **בדיקה מקצה לקצה** — הרשמה חדשה → onboarding → avatar upload → check-in → map → שליחת הודעה.
 8. 🟢 **ניקוי** — יש קבצי `web-preview-*.html` ישנים ב-root שמיותרים, עדיף להעביר ל-`docs/` או למחוק.

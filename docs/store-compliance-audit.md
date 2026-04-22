@@ -1,4 +1,4 @@
-# NomadsPeople — Store Compliance Audit
+# nomadspeople — Store Compliance Audit
 **Date:** April 9, 2026 | **Target:** Apple App Store + Google Play Store
 
 ---
@@ -102,7 +102,7 @@
 
 ### 14. Apple Privacy Nutrition Labels
 - **Status:** ⚠️ MEDIUM
-- **Required declarations for NomadsPeople:**
+- **Required declarations for nomadspeople:**
   - Location (precise) — map pins, show_on_map
   - User Content — posts, comments, photos, chat messages
   - Contact Info — name, email
@@ -121,7 +121,7 @@
 
 ### 16. Sign in with Apple — Currently Implemented
 - **Status:** ✅ PASS
-- **Note:** No longer mandatory as exclusive login (changed January 2024), but NomadsPeople already has it (expo-apple-authentication plugin in app.json)
+- **Note:** No longer mandatory as exclusive login (changed January 2024), but nomadspeople already has it (expo-apple-authentication plugin in app.json)
 - **No action needed**
 
 ### 17. Android Target API Level

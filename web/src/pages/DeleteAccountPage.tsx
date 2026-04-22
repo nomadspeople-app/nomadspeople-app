@@ -129,7 +129,7 @@ export default function DeleteAccountPage() {
         {step === 'form' && (
           <>
             <p style={p}>
-              Enter the email address associated with your NomadsPeople account. We'll send
+              Enter the email address associated with your nomadspeople account. We'll send
               you a verification link. After you click it, you can confirm permanent deletion
               from this page.
             </p>
@@ -163,7 +163,7 @@ export default function DeleteAccountPage() {
             </div>
 
             <p style={hint}>
-              Prefer to delete from inside the app? Open NomadsPeople &rarr; Settings &rarr;
+              Prefer to delete from inside the app? Open nomadspeople &rarr; Settings &rarr;
               Delete Account.
             </p>
           </>
@@ -194,7 +194,7 @@ export default function DeleteAccountPage() {
             </p>
             <p style={p}>
               Tapping the button below will <strong>permanently delete</strong> your
-              NomadsPeople account and every piece of personal data tied to it. Your messages
+              nomadspeople account and every piece of personal data tied to it. Your messages
               in group chats will remain (so the conversation still makes sense to other
               members) but your name will no longer be attached to them.
             </p>
@@ -223,7 +223,7 @@ export default function DeleteAccountPage() {
             <h2 style={{ ...h2, marginTop: 0 }}>Account deleted</h2>
             <p style={p}>
               Your account and all personal data have been permanently removed from
-              NomadsPeople. We&rsquo;re sorry to see you go &mdash; safe travels.
+              nomadspeople. We&rsquo;re sorry to see you go &mdash; safe travels.
             </p>
             <p style={p}>
               <a href="/" style={link}>Return home</a>
@@ -257,7 +257,7 @@ export default function DeleteAccountPage() {
           <a href="/privacy" style={footerLk}>Privacy</a>
           <a href="/support" style={footerLk}>Support</a>
         </div>
-        <p style={footerCopy}>&copy; {new Date().getFullYear()} NomadsPeople</p>
+        <p style={footerCopy}>&copy; {new Date().getFullYear()} nomadspeople</p>
       </footer>
     </div>
   )

@@ -348,7 +348,7 @@ export default function ChatScreen() {
         </TouchableOpacity>
         <View style={st.hdrBtns}>
           <TouchableOpacity style={st.hdrBtn} activeOpacity={0.7}
-            onPress={() => Share.share({ message: `Join our chat "${title}" on NomadsPeople!` }).catch(() => {})}
+            onPress={() => Share.share({ message: `Join our chat "${title}" on nomadspeople!` }).catch(() => {})}
           >
             <NomadIcon name="share" size={s(7)} color={colors.dark} strokeWidth={1.8} />
           </TouchableOpacity>

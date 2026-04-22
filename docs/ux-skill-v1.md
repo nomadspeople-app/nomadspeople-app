@@ -1,9 +1,9 @@
 ---
 name: ux
-description: The UI/UX contract for NomadsPeople — the discipline that turns our social product into something nomads actually enjoy using instead of abandoning. Use this skill BEFORE adding, designing, editing, or reviewing ANY screen, sheet, modal, button, pill, input, toggle, or layout in the NomadsPeople mobile app. Trigger whenever the work touches visual design, button placement, screen structure, modal vs sheet choice, copy, microinteractions, haptics, empty states, loading, error UX, role-aware affordances (creator vs participant), or anything a user's eye or finger will land on. Also trigger whenever the user says "ugly", "not consistent", "looks different from X", "button is wrong", "feels off", "it's crowded", "move this", "keyboard covers", "put it at the top", "רזה", "אסתטי", "קו אחיד", "מבלבל", or anything that signals a UX complaint — the app is a social product for anxious nomads with patchy 4G, and the margin for a cluttered or inconsistent interface is zero. If in doubt, trigger.
+description: The UI/UX contract for nomadspeople — the discipline that turns our social product into something nomads actually enjoy using instead of abandoning. Use this skill BEFORE adding, designing, editing, or reviewing ANY screen, sheet, modal, button, pill, input, toggle, or layout in the nomadspeople mobile app. Trigger whenever the work touches visual design, button placement, screen structure, modal vs sheet choice, copy, microinteractions, haptics, empty states, loading, error UX, role-aware affordances (creator vs participant), or anything a user's eye or finger will land on. Also trigger whenever the user says "ugly", "not consistent", "looks different from X", "button is wrong", "feels off", "it's crowded", "move this", "keyboard covers", "put it at the top", "רזה", "אסתטי", "קו אחיד", "מבלבל", or anything that signals a UX complaint — the app is a social product for anxious nomads with patchy 4G, and the margin for a cluttered or inconsistent interface is zero. If in doubt, trigger.
 ---
 
-# UX — The UI/UX Contract for NomadsPeople
+# UX — The UI/UX Contract for nomadspeople
 
 ## How to Communicate With the Product Owner
 
@@ -44,7 +44,7 @@ Every UI decision must pass the **"coffee-in-hand, 4G-spotty, a-little-lonely"**
 
 The same "activity info" view must render identically whether the user got there from the Messages tab, from their own profile card, from a push notification deep-link, or from a map pin tap. Role controls (edit, end, kick) are additional affordances rendered *inside the same screen* — they never trigger a parallel screen.
 
-Concrete NomadsPeople examples of this rule:
+Concrete nomadspeople examples of this rule:
 
 | Concept | Canonical screen | Who sees what |
 |---|---|---|

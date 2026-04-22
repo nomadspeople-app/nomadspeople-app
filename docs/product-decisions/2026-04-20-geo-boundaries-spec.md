@@ -10,7 +10,7 @@ geo behavior MUST read this file first.
 
 ## The One Rule
 
-> **NomadsPeople is "real place, real time, real people".
+> **nomadspeople is "real place, real time, real people".
 > Creation and participation are anchored to the physical
 > country the user is currently in. Browsing is lightly
 > restricted so a foreign viewer feels the density without

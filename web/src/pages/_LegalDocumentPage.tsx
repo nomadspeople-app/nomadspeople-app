@@ -44,7 +44,7 @@ export default function LegalDocumentPage({ doc }: { doc: LegalDocument }) {
           <a href="/privacy" style={footerLink}>Privacy</a>
           <a href="/delete-account" style={footerLink}>Delete Account</a>
         </div>
-        <p style={footerCopy}>&copy; {new Date().getFullYear()} NomadsPeople</p>
+        <p style={footerCopy}>&copy; {new Date().getFullYear()} nomadspeople</p>
       </footer>
     </div>
   );

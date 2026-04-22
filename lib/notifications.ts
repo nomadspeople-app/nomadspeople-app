@@ -1,5 +1,5 @@
 /**
- * NomadsPeople — Push Notification Service
+ * nomadspeople — Push Notification Service
  *
  * Handles:
  * - Permission requests (iOS/Android)

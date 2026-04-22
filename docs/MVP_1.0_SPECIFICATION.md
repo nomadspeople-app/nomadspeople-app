@@ -1,4 +1,4 @@
-# NomadsPeople MVP 1.0 — Complete Specification
+# nomadspeople MVP 1.0 — Complete Specification
 
 **Version:** 1.0  
 **Status:** Ready for Apple Submission  
@@ -22,7 +22,7 @@
 
 ## Overview
 
-**NomadsPeople MVP 1.0** is a location-based social app for digital nomads to:
+**nomadspeople MVP 1.0** is a location-based social app for digital nomads to:
 - Discover other nomads nearby on a map
 - Join spontaneous activities/timers
 - Chat in real-time with groups
@@ -89,7 +89,7 @@ App Launch
 
 ### Step 1: Welcome
 ```
-Screen: "Welcome to NomadsPeople"
+Screen: "Welcome to nomadspeople"
 - Logo + tagline
 - "Let's get you set up (3 min)"
 - [Continue] button

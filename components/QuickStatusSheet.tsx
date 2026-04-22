@@ -1,5 +1,5 @@
 /**
- * QuickStatusSheet — NomadsPeople activity creation (3-page wizard).
+ * QuickStatusSheet — nomadspeople activity creation (3-page wizard).
  *
  *   Page 1 — WHAT?   → Free text + 10 categories (2-col grid)
  *   Page 2 — WHEN & WHO → Day + Flexible/Specific time + Age range + Open/Private

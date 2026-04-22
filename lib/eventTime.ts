@@ -38,7 +38,7 @@ export interface EventTimeState {
    *  36h; null otherwise (caller uses `dayLabel` instead). */
   dayKey?: 'today' | 'tomorrow' | null;
   /** Human day label for starts-on — English weekday + short date
-   *  fallback, e.g. "mon 21 apr". Lowercase per NomadsPeople copy
+   *  fallback, e.g. "mon 21 apr". Lowercase per nomadspeople copy
    *  rules. */
   dayLabel?: string;
   /** "18:00" in 24h format; null if flexible/all-day. */

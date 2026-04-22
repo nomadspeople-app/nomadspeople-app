@@ -28,7 +28,7 @@
 
 export const LEGAL_META = {
   /** Name used in headers and as the copyright holder. */
-  entity: 'NomadsPeople',
+  entity: 'nomadspeople',
   /** Public contact for legal questions (appears in every doc). */
   contactEmail: 'nomadspeople1@gmail.com',
   /** Effective date shown on Terms and Privacy. Update when
@@ -59,7 +59,7 @@ export interface LegalSection {
 export interface LegalDocument {
   /** Document title — "Terms of Service", "Privacy Policy", etc. */
   title: string;
-  /** Meta line shown under the title ("NomadsPeople · email ·
+  /** Meta line shown under the title ("nomadspeople · email ·
    *  Effective April 5, 2026"). */
   meta: string;
   sections: LegalSection[];
@@ -79,9 +79,9 @@ export const TERMS: LegalDocument = {
   meta: `${LEGAL_META.entity} · ${LEGAL_META.contactEmail} · Effective ${LEGAL_META.effectiveDate}`,
   sections: [
     {
-      title: 'Welcome to NomadsPeople',
+      title: 'Welcome to nomadspeople',
       body: [p(
-        'NomadsPeople is a platform that connects digital nomads and expats in your neighborhood. By using our app, you are agreeing to these terms. We built this for nomads by nomads, so we keep it real, respectful, and safe.'
+        'nomadspeople is a platform that connects digital nomads and expats in your neighborhood. By using our app, you are agreeing to these terms. We built this for nomads by nomads, so we keep it real, respectful, and safe.'
       )],
     },
     {
@@ -103,7 +103,7 @@ export const TERMS: LegalDocument = {
     {
       title: 'Content You Create',
       body: [p(
-        'When you post activities, messages, or update your profile, you retain ownership. But by posting, you give NomadsPeople permission to use, display, and improve the platform based on your content (while keeping your data private per our Privacy Policy).'
+        'When you post activities, messages, or update your profile, you retain ownership. But by posting, you give nomadspeople permission to use, display, and improve the platform based on your content (while keeping your data private per our Privacy Policy).'
       )],
     },
     {
@@ -121,7 +121,7 @@ export const TERMS: LegalDocument = {
     {
       title: 'Intellectual Property',
       body: [p(
-        'NomadsPeople, its logo, design, and features are ours. You cannot copy, modify, or use them without permission. Your content stays yours.'
+        'nomadspeople, its logo, design, and features are ours. You cannot copy, modify, or use them without permission. Your content stays yours.'
       )],
     },
     {
@@ -139,7 +139,7 @@ export const TERMS: LegalDocument = {
     {
       title: 'No Guarantees (Disclaimer)',
       body: [p(
-        "NomadsPeople is provided as-is. We don't run background checks, verify identities, or guarantee anyone's safety or authenticity. You use the platform at your own risk. Trust your instincts and follow our Safety Tips."
+        "nomadspeople is provided as-is. We don't run background checks, verify identities, or guarantee anyone's safety or authenticity. You use the platform at your own risk. Trust your instincts and follow our Safety Tips."
       )],
     },
     {
@@ -236,13 +236,13 @@ export const PRIVACY: LegalDocument = {
     {
       title: "Children's Privacy",
       body: [p(
-        "NomadsPeople is for ages 18+. We don't knowingly collect data from minors. If we find out a user is under 18, we will terminate their account."
+        "nomadspeople is for ages 18+. We don't knowingly collect data from minors. If we find out a user is under 18, we will terminate their account."
       )],
     },
     {
       title: 'International Data',
       body: [p(
-        'We operate globally. Your data may be processed in different countries. By using NomadsPeople, you consent to this.'
+        'We operate globally. Your data may be processed in different countries. By using nomadspeople, you consent to this.'
       )],
     },
     {
@@ -293,7 +293,7 @@ export const GUIDELINES: LegalDocument = {
     {
       title: 'No Spam or Selling',
       body: [p(
-        "NomadsPeople is not a marketplace. Don't use it to advertise services, sell courses, recruit for MLMs, or blast promotional messages. Keep it social."
+        "nomadspeople is not a marketplace. Don't use it to advertise services, sell courses, recruit for MLMs, or blast promotional messages. Keep it social."
       )],
     },
     {
@@ -342,7 +342,7 @@ export const GUIDELINES: LegalDocument = {
     {
       title: 'The Bottom Line',
       body: [p(
-        'NomadsPeople works because of trust. We are a community of real people looking for genuine connection. Keep it authentic, respectful, and safe.'
+        'nomadspeople works because of trust. We are a community of real people looking for genuine connection. Keep it authentic, respectful, and safe.'
       )],
     },
   ],
@@ -361,7 +361,7 @@ export const SAFETY: LegalDocument = {
       body: [ul(
         'Meet in a public place (cafe, restaurant, co-working space)',
         'Tell a trusted friend where you are going and who you are meeting',
-        'Keep chatting on NomadsPeople until you feel comfortable',
+        'Keep chatting on nomadspeople until you feel comfortable',
         'Trust your gut. If something feels off, cancel',
         'Plan to leave whenever you want (no obligation to stay)',
         "Check the person's profile history and mutual connections",
@@ -400,7 +400,7 @@ export const SAFETY: LegalDocument = {
     {
       title: 'For LGBTQ+ Nomads',
       body: [p(
-        'Your safety comes first. Research local laws and customs before meeting up. Use NomadsPeople visibility settings (city-only or invisible) if needed. Connect with community groups for support.'
+        'Your safety comes first. Research local laws and customs before meeting up. Use nomadspeople visibility settings (city-only or invisible) if needed. Connect with community groups for support.'
       )],
     },
     {
@@ -419,14 +419,14 @@ export const SAFETY: LegalDocument = {
         'Contact local police if you are in immediate danger',
         'Tell a trusted friend or family member',
         'Document what happened (screenshots, times, dates)',
-        'Report the user on NomadsPeople with details',
+        'Report the user on nomadspeople with details',
         'Contact your embassy if you are abroad',
       )],
     },
     {
       title: 'Trust Your Instincts',
       body: [p(
-        "You know yourself. If something feels wrong, it probably is. There are plenty of good people on NomadsPeople. Don't settle for anyone who makes you uncomfortable."
+        "You know yourself. If something feels wrong, it probably is. There are plenty of good people on nomadspeople. Don't settle for anyone who makes you uncomfortable."
       )],
     },
     {

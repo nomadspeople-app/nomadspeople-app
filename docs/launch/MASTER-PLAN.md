@@ -1,4 +1,4 @@
-# NomadsPeople — Pre-Launch Master Plan
+# nomadspeople — Pre-Launch Master Plan
 
 **Prepared:** 2026-04-20 (ערב יום הזיכרון)
 **For:** Barak — return day, press play, start.
@@ -228,7 +228,7 @@ or any future SDK uses IDFA, we need the prompt.
 2. Call `requestTrackingPermissionsAsync` once at first launch
    (after onboarding).
 3. Add `NSUserTrackingUsageDescription` to `app.json`
-   infoPlist: "NomadsPeople uses anonymous usage stats to
+   infoPlist: "nomadspeople uses anonymous usage stats to
    improve the app. Your chats and location are NEVER
    tracked."
 

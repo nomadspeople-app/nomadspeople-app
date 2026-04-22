@@ -1,4 +1,4 @@
-# NomadsPeople — App Store Launch Checklist
+# nomadspeople — App Store Launch Checklist
 
 **Generated:** April 9, 2026
 **Target:** Apple App Store + Google Play (both)
@@ -58,8 +58,8 @@
 ### iOS Section — Add These:
 ```json
 "infoPlist": {
-  "NSPhotoLibraryUsageDescription": "NomadsPeople lets you upload a profile photo and share moments from your travels.",
-  "NSCameraUsageDescription": "NomadsPeople lets you take photos for your profile and moments.",
+  "NSPhotoLibraryUsageDescription": "nomadspeople lets you upload a profile photo and share moments from your travels.",
+  "NSCameraUsageDescription": "nomadspeople lets you take photos for your profile and moments.",
   "CFBundleDevelopmentRegion": "en",
   "CFBundleAllowMixedLocalizations": true,
   "ITSAppUsesNonExemptEncryption": false
@@ -122,7 +122,7 @@
 ## STORE METADATA — Prepare These
 
 ### App Name
-- **Primary:** NomadsPeople
+- **Primary:** nomadspeople
 - **Subtitle (iOS):** Find Your Neighborhood, Not Just a City
 
 ### Description (both stores)
