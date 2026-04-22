@@ -181,20 +181,24 @@ export default function LandingPage() {
           <p style={styles.downloadSub}>
             Join the community of digital nomads who stopped traveling alone.
           </p>
-          <div style={styles.downloadBtns}>
-            <a href="#" style={styles.storeBtn}>
-              <span style={{ fontSize: 24 }}>🍎</span>
-              <div>
-                <div style={{ fontSize: 10, opacity: 0.8 }}>Download on the</div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>App Store</div>
-              </div>
-            </a>
-            <a href="#" style={styles.storeBtn}>
-              <span style={{ fontSize: 24 }}>▶️</span>
-              <div>
-                <div style={{ fontSize: 10, opacity: 0.8 }}>Get it on</div>
-                <div style={{ fontSize: 16, fontWeight: 700 }}>Google Play</div>
-              </div>
+          {/*
+            Pre-launch state: the App Store and Google Play listings
+            don't exist yet, so we deliberately do NOT render the Apple /
+            Google store badges. Apple Marketing Brand Guidelines and
+            Google Play branding rules require those badges to link to
+            real apps.apple.com / play.google.com URLs. Using them with
+            href="#" is a deceptive UX and a fast-track to App Store
+            review rejection. Once the app is approved, replace this
+            block with the real badges (see git history at commit
+            894df5d for the original markup and styles.storeBtn).
+          */}
+          <div style={styles.comingSoon}>
+            <div style={styles.comingSoonBadge}>Launching Q2 2026</div>
+            <p style={styles.comingSoonText}>
+              nomadspeople is coming to App Store and Google Play.
+            </p>
+            <a href="/support" style={styles.notifyCta}>
+              Get notified <ArrowRight size={16} />
             </a>
           </div>
         </div>
@@ -352,26 +356,46 @@ function getStyles(isMobile: boolean): Record<string, React.CSSProperties> {
     downloadInner: { maxWidth: 600, margin: '0 auto', textAlign: 'center' },
     downloadTitle: { fontSize: isMobile ? 28 : 36, fontWeight: 800, color: '#fff', marginBottom: 12, marginTop: 0, letterSpacing: -0.5 },
     downloadSub: { fontSize: isMobile ? 15 : 16, color: '#aaa', marginBottom: 32, marginTop: 0 },
-    downloadBtns: {
+    // Pre-launch "coming soon" block — replaces the Apple / Google
+    // store badges until the app is live in both stores. See the
+    // comment at the JSX site for the rationale (Apple / Google
+    // branding rules).
+    comingSoon: {
       display: 'flex',
-      flexDirection: isMobile ? 'column' : 'row',
-      justifyContent: 'center',
+      flexDirection: 'column',
       alignItems: 'center',
-      gap: 16,
+      gap: 18,
     },
-    storeBtn: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-      background: '#333',
+    comingSoonBadge: {
+      display: 'inline-block',
+      padding: '6px 14px',
+      background: '#E8614D',
       color: '#fff',
-      padding: '12px 24px',
+      borderRadius: 999,
+      fontSize: 11,
+      fontWeight: 700,
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+    },
+    comingSoonText: {
+      fontSize: isMobile ? 15 : 17,
+      color: '#ccc',
+      margin: 0,
+      maxWidth: 440,
+      lineHeight: 1.5,
+    },
+    notifyCta: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 8,
+      background: '#fff',
+      color: '#1A1A1A',
+      padding: '14px 28px',
       borderRadius: 12,
       textDecoration: 'none',
-      border: '1px solid #555',
-      width: isMobile ? '100%' : 'auto',
-      maxWidth: 260,
-      justifyContent: 'center',
+      fontWeight: 700,
+      fontSize: 15,
+      border: '1px solid #fff',
     },
 
     // Footer
