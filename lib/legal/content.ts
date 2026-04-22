@@ -34,8 +34,20 @@ export const LEGAL_META = {
   /** Effective date shown on Terms and Privacy. Update when
    *  content materially changes; minor wording tweaks do NOT
    *  need a new effective date. */
-  effectiveDate: '2026-04-05',
+  effectiveDate: '2026-04-22',
 } as const;
+
+/* ── Versioned consent identifiers ──
+ *
+ * Written to app_profiles.{terms,privacy}_version_accepted and to
+ * app_consent_events.version when a user signs up or re-consents.
+ * When a material change to Terms or Privacy lands, bump the
+ * corresponding version here AND add a forced re-consent prompt on
+ * next launch.
+ *
+ * Format: 'YYYY-MM-DD' of the effective date of the version. */
+export const TERMS_VERSION = '2026-04-22';
+export const PRIVACY_VERSION = '2026-04-22';
 
 /* ── Structural types ── */
 
@@ -177,83 +189,146 @@ export const TERMS: LegalDocument = {
 
 export const PRIVACY: LegalDocument = {
   title: 'Privacy Policy',
-  meta: `${LEGAL_META.entity} · ${LEGAL_META.contactEmail} · Effective ${LEGAL_META.effectiveDate}`,
+  meta: `${LEGAL_META.entity} · ${LEGAL_META.contactEmail} · Effective ${LEGAL_META.effectiveDate} · Version ${PRIVACY_VERSION}`,
   sections: [
+    {
+      title: 'Who We Are',
+      body: [p(
+        `nomadspeople is a social platform for digital nomads. This policy explains what personal data we collect, why we collect it, who we share it with, and the rights you have over your data. For any privacy question, email ${LEGAL_META.contactEmail}.`
+      )],
+    },
     {
       title: 'What We Collect',
       body: [ul(
-        'Profile info: name, photo, bio, interests, job, home country',
-        'Location: city-level grid position for map display',
-        'Activity: statuses, activities, timers you create',
-        'Messages: DMs and group chat conversations',
-        'Device info: phone type, OS version, unique identifiers',
-        'Usage: features you use, how long, what you tap',
-        'Push notification preferences',
+        'Identity: email address, password (encrypted, never readable by us), display name, username',
+        'Profile: photo, bio, interests, job type, home country, date of birth (for age verification)',
+        'Location: approximate (city) and precise (latitude/longitude) — only shared when you publish a status, timer, or check-in',
+        'Content you create: status posts, chat messages, photos, activity descriptions',
+        'Device info: push notification token, device language, operating system version',
+        'Usage signals: features you use, what you tap (only when the app is running)',
+        'Diagnostics: crash reports tied to your user ID (helps us fix bugs you encountered)',
       )],
     },
     {
-      title: 'How We Use Your Data',
-      body: [ul(
-        'Show your profile and location to other nomads in your city',
-        'Match you with people based on interests (DNA matching)',
-        'Deliver push notifications you have opted into',
-        'Improve the app with analytics (anonymized)',
-        'Support you with customer service',
-        'Keep the platform safe from abuse',
-      )],
-    },
-    {
-      title: 'What We Share',
+      title: 'Why We Collect It — Legal Basis (GDPR Article 6)',
       body: [
-        p('Your Public Profile — other users see your name, photo, bio, interests, and location (city-level grid).'),
-        p('Service Providers — we use Supabase (PostgreSQL) for data storage and Expo for push notifications. They have access to your data to provide these services.'),
-        p('Law Enforcement — if required by law, we may share data with authorities.'),
-        p('We never sell your data to third parties.'),
+        p('Under the EU General Data Protection Regulation (GDPR), every piece of personal data must be processed under a lawful basis. Ours are:'),
+        ul(
+          'Contract — we cannot provide the service (profile, messaging, map) without processing your identity, profile, and location data. When you create an account, you enter a service agreement with us.',
+          'Consent — marketing emails, push notifications, and cross-app tracking (iOS) all require your explicit opt-in. You can withdraw consent at any time in Settings.',
+          'Legitimate interest — crash diagnostics, fraud prevention, and basic security telemetry help us keep the platform stable and safe. We minimize what we collect for these purposes.',
+          'Legal obligation — when authorities issue a valid legal request, we comply within applicable law.',
+        ),
+      ],
+    },
+    {
+      title: 'What We Share — Third-Party Processors',
+      body: [
+        p('We share your data only with service providers that help us deliver nomadspeople. Each of these parties is bound by a data-processing agreement (or equivalent) limiting how they can use your data:'),
+        ul(
+          'Supabase (EU, Frankfurt) — primary database and authentication. Stores all account and content data.',
+          'Sentry (EU, Frankfurt) — crash and error reporting. Receives stack traces with your user ID attached (no chat content).',
+          'Vercel — hosts nomadspeople.com (static website files only; no personal data processed here).',
+          'ImprovMX — routes email sent to support@nomadspeople.com to our team inbox. Receives only message headers + body of support emails you choose to send.',
+          'Apple Push Notification Service (APNs) — delivers push notifications to iOS devices. Receives your push token and the notification content.',
+          'Google Firebase Cloud Messaging (FCM) — delivers push notifications to Android devices. Same data as Apple.',
+          'OpenStreetMap Nominatim — reverse-geocodes coordinates to city/country names. Receives coordinates only; no user ID.',
+          'Photon (Komoot) — search bar for addresses and cities. Receives your search query and the coordinates you are searching near.',
+          'ipapi.co — coarse IP-based location as a fallback when GPS is unavailable. Receives your IP address only.',
+        ),
+        p('We do not sell your personal data to anyone. We do not share your data with advertisers.'),
+      ],
+    },
+    {
+      title: 'International Data Transfers',
+      body: [
+        p('Your data is processed primarily in the European Union (Supabase and Sentry are both hosted in Frankfurt, Germany). Some service providers listed above (Apple APNs, Google FCM, Vercel, ipapi.co) may process data in other regions including the United States. Where data leaves the EU, we rely on Standard Contractual Clauses (SCCs) and equivalent safeguards as required under GDPR Chapter V.'),
+      ],
+    },
+    {
+      title: 'Your Rights (GDPR + CCPA)',
+      body: [
+        p('Under EU GDPR and similar laws worldwide, you have the following rights regarding your personal data:'),
+        ul(
+          'Right of access (GDPR Art. 15) — request a copy of all personal data we hold on you.',
+          'Right to rectification (Art. 16) — correct inaccurate data. You can edit most fields directly in your profile; for anything you cannot edit, email us.',
+          'Right to erasure (Art. 17) — delete your account entirely. You can do this at Settings → Delete Account, or via nomadspeople.com/delete-account.',
+          'Right to data portability (Art. 20) — receive your data in a structured, machine-readable format so you can move it to another service.',
+          'Right to object (Art. 21) — stop us from processing your data for a particular purpose (e.g. marketing).',
+          'Right to withdraw consent — opt out of marketing emails, push notifications, or cross-app tracking at any time.',
+          'Right to lodge a complaint — if you are in the EU, you may file a complaint with your national data protection authority.',
+        ),
+        p(`To exercise any right listed above, email ${LEGAL_META.contactEmail} with your request. We respond within 14 days (30 days maximum under GDPR).`),
+      ],
+    },
+    {
+      title: 'Your Consent Choices',
+      body: [
+        p('When you sign up, we ask you to agree to the Terms of Service and Privacy Policy (required), confirm you are 18+ (required), and optionally opt in to marketing emails. These choices are logged with a timestamp so we can demonstrate compliance with GDPR Article 7(1).'),
+        p('You can change any optional consent later in Settings → Email Preferences and Settings → Notifications. Withdrawing consent does not affect the lawfulness of processing that happened while you were opted in.'),
       ],
     },
     {
       title: 'Data Security',
-      body: [p(
-        'We use encryption, secure authentication, and Row Level Security (database-level protection) to keep your data safe. But no system is 100 percent secure. If there is a breach, we will notify you.'
-      )],
-    },
-    {
-      title: 'Your Rights',
-      body: [ul(
-        'Access your data: request a copy of what we have on you',
-        'Delete your account: removes your profile and messages',
-        'Export your data: get your profile info in a portable format',
-        'Correct info: update your profile anytime',
-        'Block users: they cannot see you or message you',
-      )],
+      body: [
+        p('We protect your data with:'),
+        ul(
+          'HTTPS/TLS encryption for every network request (no plaintext traffic anywhere).',
+          'AES-256 encryption at rest in the Supabase database.',
+          'bcrypt password hashing and automatic check against the HaveIBeenPwned breach corpus so compromised passwords are rejected.',
+          'Row Level Security on every database table — users can only access their own rows, enforced at the database engine level.',
+          'Automatic rate limits and content moderation to block abuse.',
+          'Isolated European data residency (Frankfurt) for the primary database and error reporting.',
+        ),
+        p('No security system is 100 percent impenetrable. If a breach involves your personal data, we will notify you and, where required by law, the relevant data protection authority within 72 hours per GDPR Article 33.'),
+      ],
     },
     {
       title: 'Data Retention',
-      body: [p(
-        'Messages are kept as long as the conversation exists. Your profile data stays until you delete it. We keep some anonymized usage data to improve the service.'
-      )],
+      body: [
+        p('We keep your data as follows:'),
+        ul(
+          'Account and profile data — as long as your account is active. Removed immediately on account deletion.',
+          'Chat messages — retained in the conversation as long as it exists. When you delete your account, your messages are anonymized (the text remains so the chat makes sense to other members, but your authorship is removed).',
+          'Crash reports — 90 days on Sentry by default, then automatically deleted.',
+          'Database backups — 30 days rolling window (Supabase Pro). After 30 days, a deleted account is unrecoverable from backup.',
+          'Support correspondence — as long as needed to handle your request and then archived for 12 months for compliance.',
+        ),
+      ],
     },
     {
       title: "Children's Privacy",
       body: [p(
-        "nomadspeople is for ages 18+. We don't knowingly collect data from minors. If we find out a user is under 18, we will terminate their account."
+        "nomadspeople is for adults aged 18 or older. We do not knowingly collect data from anyone under 18. If you believe we have collected data from a minor, contact us immediately and we will delete it. The 18+ requirement is enforced at signup (we ask for date of birth) and we will terminate any account found to violate it."
       )],
     },
     {
-      title: 'International Data',
+      title: 'Email Communications',
+      body: [
+        p('We send two types of emails:'),
+        ul(
+          'Transactional — account confirmation, password reset, security alerts, account deletion confirmations. These are essential to the service; you cannot opt out of them while you have an active account.',
+          'Marketing — occasional product updates, tips, and announcements. These require your explicit opt-in at signup, and every message includes an unsubscribe link. You can change your preference anytime in Settings → Email Preferences.',
+        ),
+      ],
+    },
+    {
+      title: 'Push Notifications',
       body: [p(
-        'We operate globally. Your data may be processed in different countries. By using nomadspeople, you consent to this.'
+        'We send push notifications for messages, new followers, event joins, and similar activity. Your operating system asks for permission the first time we send one; you can revoke that permission anytime in your phone settings. Inside the app, Settings → Notifications lets you choose which categories you want to receive.'
       )],
     },
     {
       title: 'Changes to This Policy',
       body: [p(
-        'We update this policy as needed. Big changes will be notified to you. Continuing to use means you accept the changes.'
+        'We update this policy when our practices change. Material changes will be notified to you via email and/or an in-app prompt, and you may be asked to re-consent. Minor wording fixes do not require notification. The version and effective date at the top of this document always reflect the current live version.'
       )],
     },
     {
       title: 'Contact Us',
-      body: [p(`Have privacy questions? Email ${LEGAL_META.contactEmail}`)],
+      body: [p(
+        `For any privacy matter — including requests to exercise your rights — email ${LEGAL_META.contactEmail}. We respond within one business day for general questions and within 14 days for formal data-subject requests.`
+      )],
     },
   ],
 };

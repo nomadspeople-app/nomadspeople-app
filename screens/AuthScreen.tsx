@@ -1,11 +1,13 @@
 import { useState, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, ScrollView, Platform, ActivityIndicator, Alert,
+  KeyboardAvoidingView, ScrollView, Platform, ActivityIndicator, Alert, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { supabase } from '../lib/supabase';
+import { TERMS_VERSION, PRIVACY_VERSION } from '../lib/legal/content';
+import NomadIcon from '../components/NomadIcon';
 
 interface Props {
   onSuccess: () => void;
@@ -59,6 +61,17 @@ export default function AuthScreen({ onSuccess }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  /* ── Consent state (signup only) ──────────────────────────────
+     Three checkboxes: age (required), terms (required), privacy
+     (required), plus one optional marketing opt-in. All four start
+     unchecked — GDPR requires explicit opt-in for every consent.
+     handleSubmit blocks if any of the three required boxes is
+     unchecked. */
+  const [agreedAge, setAgreedAge] = useState(false);
+  const [agreedTerms, setAgreedTerms] = useState(false);
+  const [agreedPrivacy, setAgreedPrivacy] = useState(false);
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
+
   const handleSubmit = async () => {
     setError('');
     if (!email.trim() || !password.trim()) {
@@ -72,6 +85,27 @@ export default function AuthScreen({ onSuccess }: Props) {
     if (password.length < 6) {
       setError('Password must be at least 6 characters');
       return;
+    }
+
+    /* ── Consent gate (signup only) ─────────────────────────────
+       GDPR Article 7(1): we must be able to demonstrate that the
+       user has consented. If any of the three required boxes is
+       unchecked, we refuse to create the account — no account, no
+       consent event, no data stored. Marketing opt-in is optional
+       and does NOT block signup. */
+    if (mode === 'signup') {
+      if (!agreedAge) {
+        setError('Please confirm you are 18 or older.');
+        return;
+      }
+      if (!agreedTerms) {
+        setError('Please accept the Terms of Service to continue.');
+        return;
+      }
+      if (!agreedPrivacy) {
+        setError('Please accept the Privacy Policy to continue.');
+        return;
+      }
     }
 
     setLoading(true);
@@ -97,8 +131,11 @@ export default function AuthScreen({ onSuccess }: Props) {
           return;
         }
 
-        // Create profile in app_profiles
+        // Create profile in app_profiles with consent timestamps baked in
+        // so we have proof from the very first DB write that the user
+        // agreed to Terms + Privacy before the account existed.
         if (data.user) {
+          const nowIso = new Date().toISOString();
           const { error: profileErr } = await supabase
             .from('app_profiles')
             .insert({
@@ -110,10 +147,46 @@ export default function AuthScreen({ onSuccess }: Props) {
               creator_tag: false,
               is_premium: false,
               visibility: 'public',
+              /* Consent snapshot — these fields pin the exact version
+                 the user agreed to. Required by GDPR Article 7(1). */
+              terms_accepted_at: nowIso,
+              terms_version_accepted: TERMS_VERSION,
+              privacy_accepted_at: nowIso,
+              privacy_version_accepted: PRIVACY_VERSION,
+              marketing_emails_opt_in: marketingOptIn,
+              marketing_opt_in_at: marketingOptIn ? nowIso : null,
             });
 
           if (profileErr) {
             console.warn('[Auth] Profile creation error:', profileErr.message);
+          }
+
+          /* Append-only audit log — an immutable record of every
+             consent action. A profile row can be updated later, but
+             these events are never modified. If a dispute arises,
+             this is the legal record. */
+          const events = [
+            { user_id: data.user.id, event_type: 'age_verified',     version: null,                   surface: 'signup' as const },
+            { user_id: data.user.id, event_type: 'terms_accepted',   version: TERMS_VERSION,          surface: 'signup' as const },
+            { user_id: data.user.id, event_type: 'privacy_accepted', version: PRIVACY_VERSION,        surface: 'signup' as const },
+          ];
+          if (marketingOptIn) {
+            events.push({
+              user_id: data.user.id,
+              event_type: 'marketing_opt_in',
+              version: null,
+              surface: 'signup' as const,
+            });
+          }
+          const { error: consentErr } = await supabase
+            .from('app_consent_events')
+            .insert(events);
+          if (consentErr) {
+            console.warn('[Auth] Consent event log failed:', consentErr.message);
+            // Non-fatal: the profile fields are authoritative for the
+            // "did they agree" question. The event log is redundant
+            // belt-and-braces. A missing event here still leaves the
+            // profile row with the correct timestamps.
           }
         }
 
@@ -201,6 +274,72 @@ export default function AuthScreen({ onSuccess }: Props) {
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
           />
 
+          {/* ─── Consent checkboxes (signup only) ───
+               GDPR Article 7 requires explicit, verifiable consent.
+               Three required boxes, one optional. The three required
+               must be checked to enable the Create Account button. */}
+          {mode === 'signup' && (
+            <View style={styles.consentGroup}>
+              <ConsentRow
+                checked={agreedAge}
+                onToggle={() => setAgreedAge(!agreedAge)}
+                colors={colors}
+                styles={styles}
+              >
+                <Text style={styles.consentText}>
+                  I am <Text style={styles.consentStrong}>18 years or older</Text>.
+                </Text>
+              </ConsentRow>
+
+              <ConsentRow
+                checked={agreedTerms}
+                onToggle={() => setAgreedTerms(!agreedTerms)}
+                colors={colors}
+                styles={styles}
+              >
+                <Text style={styles.consentText}>
+                  I agree to the{' '}
+                  <Text
+                    style={styles.consentLink}
+                    onPress={() => Linking.openURL('https://nomadspeople.com/terms')}
+                  >
+                    Terms of Service
+                  </Text>
+                  .
+                </Text>
+              </ConsentRow>
+
+              <ConsentRow
+                checked={agreedPrivacy}
+                onToggle={() => setAgreedPrivacy(!agreedPrivacy)}
+                colors={colors}
+                styles={styles}
+              >
+                <Text style={styles.consentText}>
+                  I agree to the{' '}
+                  <Text
+                    style={styles.consentLink}
+                    onPress={() => Linking.openURL('https://nomadspeople.com/privacy')}
+                  >
+                    Privacy Policy
+                  </Text>
+                  .
+                </Text>
+              </ConsentRow>
+
+              <ConsentRow
+                checked={marketingOptIn}
+                onToggle={() => setMarketingOptIn(!marketingOptIn)}
+                colors={colors}
+                styles={styles}
+              >
+                <Text style={styles.consentTextOptional}>
+                  Send me occasional updates and tips from nomadspeople (optional).
+                </Text>
+              </ConsentRow>
+            </View>
+          )}
+
           {error ? <Text style={styles.error}>{error}</Text> : null}
 
           <TouchableOpacity
@@ -232,6 +371,49 @@ export default function AuthScreen({ onSuccess }: Props) {
 
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+/* ── ConsentRow — single row with a square checkbox + label.
+      Tapping anywhere on the row toggles. Used for the three
+      required consents + the optional marketing opt-in. Kept
+      local to AuthScreen because it has specific sizing to fit
+      under the password field and because its only consumer is
+      the signup form. If a second surface ever needs this, lift
+      to components/. */
+function ConsentRow({
+  checked,
+  onToggle,
+  children,
+  colors,
+  styles,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+  colors: ThemeColors;
+  styles: any;
+}) {
+  return (
+    <TouchableOpacity
+      style={styles.consentRow}
+      onPress={onToggle}
+      activeOpacity={0.7}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked }}
+    >
+      <View
+        style={[
+          styles.checkbox,
+          checked && { backgroundColor: colors.primary, borderColor: colors.primary },
+        ]}
+      >
+        {checked && (
+          <NomadIcon name="check" size={s(3.5)} color="#fff" strokeWidth={2.5} />
+        )}
+      </View>
+      <View style={{ flex: 1 }}>{children}</View>
+    </TouchableOpacity>
   );
 }
 
@@ -286,6 +468,49 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     color: c.danger,
     textAlign: 'center',
   },
+
+  /* ── Consent group ── */
+  consentGroup: {
+    gap: s(3),
+    marginTop: s(3),
+    marginBottom: s(3),
+  },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: s(4),
+    paddingVertical: s(2),
+  },
+  checkbox: {
+    width: s(7),
+    height: s(7),
+    borderRadius: s(1.5),
+    borderWidth: 1.5,
+    borderColor: c.textMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: s(0.5),
+  },
+  consentText: {
+    fontSize: s(5.5),
+    color: c.dark,
+    lineHeight: s(8),
+  },
+  consentTextOptional: {
+    fontSize: s(5),
+    color: c.textSec,
+    lineHeight: s(7.5),
+    fontStyle: 'italic',
+  },
+  consentStrong: {
+    fontWeight: FW.bold,
+  },
+  consentLink: {
+    color: c.primary,
+    textDecorationLine: 'underline',
+    fontWeight: FW.semi,
+  },
+
   submitBtn: {
     height: s(22),
     backgroundColor: c.dark,

@@ -271,43 +271,29 @@ export default function ChatScreen() {
   }, [activeMsg, userId]);
 
   const handleTranslate = useCallback(async () => {
+    /* Translation is disabled in v1.
+     *
+     * Before 2026-04-22 this called Google Translate's unofficial
+     * `translate.googleapis.com/translate_a/single?client=gtx`
+     * endpoint. That endpoint has no Terms of Service, no DPA, and
+     * no contractual protection for the user data it receives —
+     * we'd be sending potentially private chat content to a third
+     * party without a data-processing agreement. Per GDPR Article 28
+     * that's a violation even if the intent is benign.
+     *
+     * Removed for v1 per the privacy master spec
+     * (docs/product-decisions/2026-04-22-privacy-security-master-spec.md).
+     * Re-introduced post-launch once we move to a provider with a
+     * signed DPA (DeepL Pro, or Google Translate API with Cloud
+     * Terms). Until then, the Translate button remains in the UI
+     * as a "coming soon" affordance. */
     if (!activeMsg) return;
-    const msgId = activeMsg.id;
-    const text = activeMsg.content;
     setActiveMsg(null);
-
-    // If already translated, toggle it off
-    if (translations[msgId]) {
-      setTranslations(prev => { const next = { ...prev }; delete next[msgId]; return next; });
-      return;
-    }
-
-    setTranslating(msgId);
-    try {
-      // Google Translate unofficial endpoint — high quality, auto-detect source
-      const tl = locale || 'en';
-      const res = await fetch(
-        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${tl}&dt=t&q=${encodeURIComponent(text.slice(0, 1000))}`
-      );
-      const json = await res.json();
-      // Response format: [[["translated text","original text",null,null,X],...]]
-      const segments = json?.[0];
-      if (Array.isArray(segments)) {
-        const translated = segments.map((seg: any) => seg?.[0] || '').join('');
-        const detectedLang = json?.[2]; // detected source language code
-        if (translated && detectedLang !== tl) {
-          setTranslations(prev => ({ ...prev, [msgId]: translated }));
-        } else {
-          Alert.alert('translate', 'message is already in your language');
-        }
-      } else {
-        Alert.alert('translate', 'translation failed — try again later');
-      }
-    } catch {
-      Alert.alert('translate', 'translation failed — try again later');
-    }
-    setTranslating(null);
-  }, [activeMsg, locale, translations]);
+    Alert.alert(
+      'translate',
+      'Message translation is coming in a future update.'
+    );
+  }, [activeMsg]);
 
   const openContextMenu = useCallback((msg: MsgWithSender) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
