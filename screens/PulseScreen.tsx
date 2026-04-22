@@ -729,7 +729,14 @@ export default function PulseScreen() {
 /* ═══════════════════════════════════════════════════════
    STYLES — Instagram DM–inspired: flat, clean, spacious
    ═══════════════════════════════════════════════════════ */
-const AVATAR_SIZE = s(28);
+// Chat-list avatar — reduced from s(28) → s(22) on 2026-04-20
+// per product-owner directive ("עצומים / שיהיו אסתטים").
+// s(28) computes to ~55pt on 390-wide, ~60pt on 430-wide —
+// heavier than WhatsApp (50pt) and made the whole Messages
+// row read as "all avatar". At s(22) the avatar is ~43pt,
+// the row feels balanced with the name / preview text, and
+// avatars still scan at a glance without bullying the layout.
+const AVATAR_SIZE = s(22);
 
 const makeStyles = (c: ThemeColors) => StyleSheet.create({
   root: {
@@ -877,17 +884,20 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     borderRadius: AVATAR_SIZE / 2,
   },
   avatarText: {
-    fontSize: s(8),
+    // Scaled down together with AVATAR_SIZE — keeps the
+    // ratio between avatar diameter and inner text so the
+    // text never gets cropped or feels floaty.
+    fontSize: s(6.5),
     fontWeight: FW.bold,
     // Dark chocolate-brown reads well on peach pastels AND on the DM
     // fallback. White (old value) washes out on these pastels.
     color: '#3B1F1A',
   },
   avatarInitials: {
-    fontSize: s(6.5),
+    fontSize: s(5.5),
   },
   avatarEmoji: {
-    fontSize: s(13),
+    fontSize: s(10.5),
   },
 
   /* ── Info ── */

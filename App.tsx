@@ -35,6 +35,16 @@ import { s, C, FW, getColors, ThemeContext } from './lib/theme';
 import type { RootTabParamList, RootStackParamList } from './lib/types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { I18nContext, translate, isRTL, applyRTL, type Locale } from './lib/i18n';
+import { requestOnboardingPermissions } from './lib/permissions';
+import { checkForOtaUpdate } from './lib/updates';
+import { initSentry, setSentryUser, clearSentryUser, wrapWithSentry } from './lib/sentry';
+
+/* ─── Sentry init — runs at module load, before React renders.
+ *    initSentry is idempotent + graceful (no-ops in Expo Go / if
+ *    DSN missing), so this is safe to call unconditionally at the
+ *    top level. Placing it here (vs inside a useEffect) means even
+ *    errors during the very first render are captured. */
+initSentry();
 
 /* ─── Auth Context ─── */
 interface AuthCtx {
@@ -173,7 +183,7 @@ const tabStyles = StyleSheet.create({
 /* ─── Navigation ref for deep linking from notifications ─── */
 const navigationRef = createRef<NavigationContainerRef<RootStackParamList>>();
 
-export default function App() {
+function App() {
   const { userId: authUserId, loading: authLoading, signOut } = useAuth();
 
   // Single source of truth — whatever Supabase session says.
@@ -198,6 +208,46 @@ export default function App() {
 
   const toggleDark = useCallback((val: boolean) => {
     setIsDark(val);
+  }, []);
+
+  /* Sentry user context — attach userId after auth so every
+     error captured after this point carries the user's id. On
+     sign-out (userId → null), the context is cleared so errors
+     from the next signed-in user aren't mis-attributed. We
+     never send email, display name, or any PII beyond user_id.
+     Graceful: setSentryUser is a no-op when Sentry isn't
+     initialized (Expo Go, missing DSN, init failure). */
+  useEffect(() => {
+    if (userId) {
+      setSentryUser(userId);
+    } else {
+      clearSentryUser();
+    }
+  }, [userId]);
+
+  /* OTA update check — fire-and-forget on cold launch.
+   *
+   * Runs ONCE when the App component mounts. If a newer JS
+   * bundle is available on the current channel, it gets
+   * downloaded in the background; the user keeps using the
+   * current build and the new one applies on their next
+   * cold launch.
+   *
+   * Safe in every environment:
+   *   • Expo Go / dev client → isEnabled=false → no-op
+   *   • expo-updates not installed → import fails → no-op
+   *   • Network offline → catch fires → no-op, retry next launch
+   *
+   * Critical launch-readiness: without this, a single crashy
+   * bug after launch requires App Store resubmission (1-3
+   * days). With this, `eas update --branch production` ships
+   * the fix in minutes. */
+  useEffect(() => {
+    void checkForOtaUpdate().then(outcome => {
+      if (outcome.state === 'downloaded') {
+        console.log('[updates] new bundle downloaded; will apply on next cold launch');
+      }
+    });
   }, []);
 
   // After login, check if user completed onboarding + load dark_mode
@@ -236,6 +286,20 @@ export default function App() {
     }
     setJustFinishedSetup(true);
     setOnboardingDone(true);
+
+    /* Ask the 3 onboarding permissions (location →
+     * notifications → ATT on iOS) in a paced sequence. Fire
+     * AFTER marking onboarding done so the user is already
+     * committed to the app — permission prompts during
+     * onboarding feel intrusive; after it, expected.
+     *
+     * Fire-and-forget: we don't block the transition on the
+     * result. Individual per-feature re-request paths still
+     * exist (HomeScreen's map, etc.) for users who deny
+     * initially. */
+    void requestOnboardingPermissions().then(outcomes => {
+      console.log('[onboarding] permissions:', outcomes);
+    });
   };
 
   const resetOnboarding = useCallback(() => {
@@ -422,3 +486,10 @@ export default function App() {
     </I18nContext.Provider>
   );
 }
+
+/* Wrap App with Sentry's error boundary so render-phase throws
+   are captured. wrapWithSentry is graceful — if Sentry isn't
+   available (Expo Go, missing DSN), it returns the component
+   unchanged. Either way the default export stays a valid React
+   component. */
+export default wrapWithSentry(App);

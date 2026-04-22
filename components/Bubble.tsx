@@ -141,17 +141,23 @@ export default function Bubble({
         style={[
           st.wrap,
           {
-            // Gentle gap above the safe area / tab bar when the
-            // keyboard is closed. When the keyboard rises we bump
-            // the bottom by the full keyboard height so the bubble
-            // floats just above it and the TextInput never gets
-            // covered. On iOS we subtract the safe-area bottom from
-            // kbHeight because UIKit already includes it in the
-            // reported height — on Android it doesn't, so we leave
-            // the raw value.
+            // Sit just above the tab bar with a tiny visible gap,
+            // not a chunky margin. The parent screen lives inside
+            // the bottom-tab navigator, so "bottom: 0" on this
+            // absolutely-positioned sheet already means the top of
+            // the tab bar — we only need the small s(2) lift to
+            // keep the shadow from being clipped and to give the
+            // eye a thin line between bubble and tab.
+            //
+            // Keyboard case: UIKit reports the keyboard height
+            // including the safe-area bottom on iOS; Android
+            // doesn't, so we add insets.bottom only on Android.
+            // Either way we keep the s(2) breathing room above
+            // the keyboard so the TextInput never looks
+            // swallowed by its own virtual keyboard.
             bottom: kbHeight > 0
-              ? (Platform.OS === 'ios' ? kbHeight + s(3) : kbHeight + insets.bottom + s(3))
-              : insets.bottom + s(3),
+              ? (Platform.OS === 'ios' ? kbHeight + s(2) : kbHeight + insets.bottom + s(2))
+              : s(2),
             opacity,
             transform: [{ translateY }],
           },

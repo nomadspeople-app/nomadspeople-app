@@ -18,6 +18,7 @@ import { supabase } from '../lib/supabase';
 import { leaveGroupChat, removeGroupMember } from '../lib/hooks';
 import MembersModal from '../components/MembersModal';
 import { postEventSystemMessage, eventSystemMsg } from '../lib/eventSystemMessages';
+import { useEventTime } from '../lib/eventTime';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'GroupInfo'>;
@@ -98,6 +99,17 @@ export default function GroupInfoScreen() {
   const [showMembersModal, setShowMembersModal] = useState(false);
   // Fallback coords from linked checkin
   const [checkinCoords, setCheckinCoords] = useState<{ lat: number; lng: number; locName?: string } | null>(null);
+  /* Timing info pulled from the linked app_checkins row — feeds
+   * the "when" row right under the activity name so a member
+   * always knows whether this is running now (timer) or scheduled
+   * for later (status). Nothing in the chat/info UI should ever
+   * make the user guess when an activity happens. */
+  const [checkinTiming, setCheckinTiming] = useState<{
+    type: 'timer' | 'status';
+    scheduledFor: string | null;
+    expiresAt: string | null;
+    isFlexible: boolean;
+  } | null>(null);
 
   /* ─── Fetch group data ─── */
   const fetchAll = useCallback(async () => {
@@ -119,35 +131,62 @@ export default function GroupInfoScreen() {
       // If the conversation row has no coords (typical — coords live on
       // app_checkins), resolve via the linked checkin. Prefer checkin_id
       // (exact link) over created_by (ambiguous when >1 active checkin).
-      if (!conv.latitude) {
-        let checkinRow: { latitude: number | null; longitude: number | null; location_name: string | null } | null = null;
-        if ((conv as any).checkin_id) {
-          const { data } = await supabase
-            .from('app_checkins')
-            .select('latitude, longitude, location_name')
-            .eq('id', (conv as any).checkin_id)
-            .maybeSingle();
-          checkinRow = data as any;
-        }
-        if (!checkinRow && conv.created_by) {
-          // Older chats may have no checkin_id — fall back to active-checkin lookup.
-          const { data } = await supabase
-            .from('app_checkins')
-            .select('latitude, longitude, location_name')
-            .eq('user_id', conv.created_by)
-            .eq('is_active', true)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          checkinRow = data as any;
-        }
-        if (checkinRow?.latitude && checkinRow?.longitude) {
-          setCheckinCoords({
-            lat: checkinRow.latitude,
-            lng: checkinRow.longitude,
-            locName: checkinRow.location_name || undefined,
-          });
-        }
+      // We ALSO pull checkin_type / expires_at / is_flexible_time from
+      // the same row so the "when" display under the title can render
+      // a live countdown (timer) or the exact scheduled date/time
+      // (status) without a second roundtrip.
+      let checkinRow: {
+        latitude: number | null;
+        longitude: number | null;
+        location_name: string | null;
+        checkin_type: string | null;
+        expires_at: string | null;
+        scheduled_for: string | null;
+        is_flexible_time: boolean | null;
+      } | null = null;
+      if ((conv as any).checkin_id) {
+        const { data } = await supabase
+          .from('app_checkins')
+          .select('latitude, longitude, location_name, checkin_type, expires_at, scheduled_for, is_flexible_time')
+          .eq('id', (conv as any).checkin_id)
+          .maybeSingle();
+        checkinRow = data as any;
+      }
+      if (!checkinRow && conv.created_by) {
+        // Older chats may have no checkin_id — fall back to active-checkin lookup.
+        const { data } = await supabase
+          .from('app_checkins')
+          .select('latitude, longitude, location_name, checkin_type, expires_at, scheduled_for, is_flexible_time')
+          .eq('user_id', conv.created_by)
+          .eq('is_active', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        checkinRow = data as any;
+      }
+      if (!conv.latitude && checkinRow?.latitude && checkinRow?.longitude) {
+        setCheckinCoords({
+          lat: checkinRow.latitude,
+          lng: checkinRow.longitude,
+          locName: checkinRow.location_name || undefined,
+        });
+      }
+      if (checkinRow) {
+        setCheckinTiming({
+          type: (checkinRow.checkin_type as 'timer' | 'status') || 'status',
+          scheduledFor: checkinRow.scheduled_for || conv.scheduled_for || null,
+          expiresAt: checkinRow.expires_at,
+          isFlexible: !!checkinRow.is_flexible_time,
+        });
+      } else if (conv.scheduled_for) {
+        // No checkin row at all — best we can do is use the conversation's
+        // scheduled_for. Treat it as a status event with no hard expiry.
+        setCheckinTiming({
+          type: 'status',
+          scheduledFor: conv.scheduled_for,
+          expiresAt: null,
+          isFlexible: false,
+        });
       }
     }
 
@@ -399,6 +438,17 @@ export default function GroupInfoScreen() {
           ) : (
             <Text style={st.groupName}>{group?.name || 'Activity'}</Text>
           )}
+
+          {/* WHEN row — live countdown for timers, exact
+               date/time for scheduled. Rendered directly under
+               the title so a member looking at the info screen
+               always knows when the event is happening without
+               scrolling. Tied to the linked app_checkins row
+               via useEventTime (ticks every 30 s). */}
+          {checkinTiming && (
+            <EventWhenRow timing={checkinTiming} t={t} style={st.whenRow} />
+          )}
+
           <Text style={st.memberCountText}>{memberCount} Members</Text>
 
           {/* Creator-only pills — moved from the bottom so tapping Edit
@@ -630,6 +680,92 @@ export default function GroupInfoScreen() {
   );
 }
 
+/* ─── EventWhenRow ──────────────────────────────────────────────
+     Small pill that sits under the activity name and tells the
+     member EXACTLY when the event is. For timers it's a live
+     countdown ("ends in 23m"), for scheduled events it's the
+     concrete date + time ("tomorrow · 18:00", "mon 21 apr ·
+     18:00"). Re-ticks every 30 s via useEventTime. Composed
+     entirely from i18n keys under event.when.* so every locale
+     renders the same shape. */
+function EventWhenRow({
+  timing, t, style,
+}: {
+  timing: {
+    type: 'timer' | 'status';
+    scheduledFor: string | null;
+    expiresAt: string | null;
+    isFlexible: boolean;
+  };
+  t: (key: string, vars?: Record<string, string | number>) => string;
+  style?: any;
+}) {
+  const state = useEventTime({
+    type: timing.type,
+    scheduledFor: timing.scheduledFor,
+    expiresAt: timing.expiresAt,
+    isFlexible: timing.isFlexible,
+  });
+
+  const isLive = state.kind === 'timer-live' || state.kind === 'live-now' || state.kind === 'starts-soon';
+  const iconName = timing.type === 'timer' ? 'timer' : 'calendar';
+
+  let text = '';
+  switch (state.kind) {
+    case 'timer-live':
+      text = t('event.when.endsIn', { dur: state.durationShort || '' });
+      break;
+    case 'timer-ended':
+    case 'ended':
+      text = t('event.when.ended');
+      break;
+    case 'starts-soon':
+      text = t('event.when.startsIn', { dur: state.durationShort || '' });
+      break;
+    case 'live-now':
+      text = `${t('event.when.liveNow')}${t('event.when.sep')}${t('event.when.endsIn', { dur: state.durationShort || '' })}`;
+      break;
+    case 'starts-on': {
+      const dayPart = state.dayKey === 'today'
+        ? t('event.when.today')
+        : state.dayKey === 'tomorrow'
+          ? t('event.when.tomorrow')
+          : (state.dayLabel || '');
+      /* A specific time beats "all day" — same display
+         rule as TimerBubble, see the 2026-04-20 fix there
+         for the full reasoning. */
+      const timePart = state.timeShort
+        ? state.timeShort
+        : state.flexible
+          ? t('event.when.allDay')
+          : '';
+      text = timePart ? `${dayPart}${t('event.when.sep')}${timePart}` : dayPart;
+      break;
+    }
+  }
+
+  if (!text) return null;
+
+  return (
+    <View style={style}>
+      <NomadIcon
+        name={iconName as any}
+        size={s(5)}
+        color={isLive ? '#E8614D' : '#1A1A1A'}
+        strokeWidth={1.8}
+      />
+      <Text
+        style={[
+          { fontSize: s(5.5), fontWeight: '600', color: '#1A1A1A' },
+          isLive && { color: '#E8614D', fontWeight: '700' },
+        ]}
+      >
+        {text}
+      </Text>
+    </View>
+  );
+}
+
 /* ─── Styles ─── */
 const makeStyles = (c: ThemeColors) => StyleSheet.create({
   root: { flex: 1, backgroundColor: c.card },
@@ -656,6 +792,24 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   },
   emojiText: { fontSize: s(14) },
   groupName: { fontSize: s(8.5), fontWeight: FW.extra, color: c.dark, marginBottom: s(2) },
+  /* WHEN row — pill-style chip under the title. We use a
+     small filled pill (not a plain text row) so the timing
+     info reads as a status, not a caption, and the eye
+     lands on it the moment the screen opens. Inner text /
+     icon styling lives inline inside EventWhenRow so it can
+     flip to the live (brand coral) variant without a theme
+     lookup. */
+  whenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: c.pill,
+    paddingHorizontal: s(5),
+    paddingVertical: s(2.5),
+    borderRadius: s(10),
+    gap: s(3),
+    marginTop: s(1),
+    marginBottom: s(3),
+  },
   memberCountText: { fontSize: s(5.5), fontWeight: FW.medium, color: c.textMuted },
 
   /* Creator-only action pills (top of screen, under group name) */

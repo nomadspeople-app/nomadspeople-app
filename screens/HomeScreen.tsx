@@ -19,6 +19,15 @@ import { useActiveCheckins, useHotCheckins, useNomadsInCity, useFollow, useProfi
 import { AuthContext } from '../App';
 import { useAvatar } from '../lib/AvatarContext';
 import { useI18n } from '../lib/i18n';
+import { gateContent } from '../lib/moderation';
+import {
+  resolveCurrentCountry,
+  pinCountryFromCoords,
+  isSameCountryAsViewer,
+} from '../lib/geo';
+import { countryLabel } from '../lib/countryNames';
+import { wakeUpVisibility } from '../lib/visibility';
+import { resolveCityFromCoordinates, reverseGeocodeCityFull } from '../lib/cityResolver';
 import { supabase } from '../lib/supabase';
 import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
 // The single source of truth for address reverse-geocoding. Used by
@@ -35,11 +44,19 @@ import { trackEvent } from '../lib/tracking';
 import ProfileCardSheet from '../components/ProfileCardSheet';
 import NotificationsSheet from '../components/NotificationsSheet';
 import CityPickerSheet, { CITIES, type City } from '../components/CityPickerSheet';
-import QuickStatusSheet, { type QuickActivityData } from '../components/QuickStatusSheet';
-import TimerSheet, { type TimerData } from '../components/TimerSheet';
+/* QuickStatusSheet + TimerSheet were retired when the unified
+ * CreationBubble shipped (Stage 17 of the no-band-aids
+ * refactor). We only import the payload TYPES because
+ * handleQuickPublish / handleTimerPublish still use them as
+ * function signatures. The components themselves are no
+ * longer rendered anywhere — the type imports keep the old
+ * files from going totally orphaned until they're deleted in
+ * a dedicated cleanup pass. */
+import type { QuickActivityData } from '../components/QuickStatusSheet';
+import type { TimerData } from '../components/TimerSheet';
 import CreationBubble, { type CreationPayload } from '../components/CreationBubble';
+import CachedImage from '../components/CachedImage';
 import NomadsListSheet from '../components/NomadsListSheet';
-import ActivityDetailSheet from '../components/ActivityDetailSheet';
 import TimerBubble from '../components/TimerBubble';
 import WisdomPrompt from '../components/WisdomPrompt';
 
@@ -114,6 +131,11 @@ const VIBES: { label: string; icon?: NomadIconName; color?: string; catKey?: str
 interface CitySearchResult {
   name: string;
   country: string;
+  /** ISO 3166-1 alpha-2 country code, uppercase. Populated from
+   *  Photon's `properties.countrycode`. Optional because rare
+   *  results (disputed zones, etc) may omit it — callers should
+   *  fail-open per the geo spec. */
+  countryCode?: string;
   lat: number;
   lng: number;
   label: string; // "Tel Aviv, Israel"
@@ -146,12 +168,19 @@ async function searchCities(q: string): Promise<CitySearchResult[]> {
     const coords = f.geometry?.coordinates || [0, 0];
     const name = p.name || p.city || p.state || '';
     const country = p.country || '';
+    // Photon returns `countrycode` as an uppercase ISO 3166-1 alpha-2
+    // code (e.g. 'IL', 'TH'). Capture it so the downstream City object
+    // can participate in the geo gates instead of silently bypassing
+    // them for user-searched cities.
+    const rawCC: string | undefined = p.countrycode;
+    const countryCode = rawCC ? rawCC.toUpperCase() : undefined;
     const key = `${name}-${country}`.toLowerCase();
     if (!name || seen.has(key)) continue;
     seen.add(key);
     results.push({
       name,
       country,
+      countryCode,
       lat: coords[1],
       lng: coords[0],
       label: country ? `${name}, ${country}` : name,
@@ -306,7 +335,11 @@ function buildNomadMarker(
           <View style={[st.avatarRing, { borderColor }]}>
             <View style={[st.avatar, { backgroundColor: catStyle.color }]}>
               {avatarUrl ? (
-                <Image source={{ uri: avatarUri(avatarUrl) }} style={st.avatarImg} />
+                <CachedImage
+                  source={{ uri: avatarUri(avatarUrl) }}
+                  style={st.avatarImg}
+                  recyclingKey={c.id}
+                />
               ) : (
                 <Text style={st.avatarTxt}>{ini}</Text>
               )}
@@ -378,7 +411,7 @@ export default function HomeScreen() {
   const route = useRoute<any>();
   const { userId, justFinishedSetup, clearSetupFlag } = useContext(AuthContext);
   const { avatarUri } = useAvatar();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { colors, isDark } = useTheme();
   const st = useMemo(() => makeStyles(colors), [colors]);
   const mapRef = useRef<MapView>(null);
@@ -405,15 +438,12 @@ export default function HomeScreen() {
     }
   }, [justFinishedSetup]);
 
-  // ── Popup state: only shown when a group pin is tapped ──
-  const [showPopup, setShowPopup] = useState(false);
-  const [popupData, setPopupData] = useState<CheckinWithProfile | null>(null);
-
-  // ── Activity success popup — now handled inside QuickStatusSheet ──
-
+  // Publish success feedback lives inside CreationBubble's own
+  // 'success' step — see components/CreationBubble.tsx. HomeScreen
+  // just clears the deep-link param so the user doesn't see a
+  // stale "newActivity" hint after they navigate away.
   useEffect(() => {
     if (route.params?.newActivity) {
-      // Activity popup now handled inside QuickStatusSheet
       nav.setParams({ newActivity: undefined } as any);
     }
   }, [route.params?.newActivity]);
@@ -431,9 +461,11 @@ export default function HomeScreen() {
   const [citySearching, setCitySearching] = useState(false);
   const citySearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchInputRef = useRef<TextInput>(null);
-  const [showQuickStatus, setShowQuickStatus] = useState(false);
+  /* Publishing flags are still used by handleQuickPublish /
+   * handleTimerPublish (to show the "publishing…" spinner in
+   * CreationBubble via the `publishing` prop). The show…
+   * flags from the retired sheets are gone. */
   const [quickPublishing, setQuickPublishing] = useState(false);
-  const [showTimer, setShowTimer] = useState(false);
   const [timerPublishing, setTimerPublishing] = useState(false);
   const [showNomadsList, setShowNomadsList] = useState(false);
   const [showCancelTimer, setShowCancelTimer] = useState(false);
@@ -462,42 +494,24 @@ export default function HomeScreen() {
 
   /* ═══ PICK MODE — the one-map location picker ═══════════════════
    *
-   * Before this existed, Status and Timer each rendered their OWN
-   * MapView inside their sheet. That's how the codebase ended up
-   * with 6 MapView instances — each a different world with its own
-   * state, GPS fetcher, and race conditions. The product felt like
-   * "why did my pin jump to the sea when I opened Timer".
+   * The ONE MapView in the app is HomeScreen's. pickMode flips
+   * that map into a location-picker overlay so new activities
+   * can pin themselves without a second MapView anywhere.
    *
-   * pickMode folds location-picking back onto the ONE MapView —
-   * the HomeScreen map the user is already looking at. When the
-   * user taps the Status or Timer button:
-   *
-   *   1. pickMode flips from 'browse' to 'status' | 'timer'
-   *   2. A center-pin overlay appears on the main map
-   *   3. A bottom panel shows the reverse-geocoded address and
-   *      the "Continue" / "Cancel" buttons
-   *   4. As the user pans, onRegionChangeComplete updates pickLat
-   *      / pickLng and debounces reverseGeocodeAddress so the
-   *      address label tracks the pin
-   *   5. On Continue — we open QuickStatusSheet / TimerSheet with
-   *      the pre-picked coords via `initialPick`, and the sheet
-   *      skips its internal map page entirely
-   *
-   * The sheet's own MapView is reachable only if a sheet opens
-   * without `initialPick` (nothing does any more), so in practice
-   * it never mounts. Stage 7 of this refactor deletes it outright. */
+   * Today the ONLY caller is CreationBubble — it hands off via
+   * `handleCreationRequestPick`, the user pans, then
+   * `commitPickFromCreation` feeds the result back to the
+   * bubble via `creationLocationUpdater` without ever unmounting
+   * it. The legacy QuickStatusSheet / TimerSheet entry points
+   * (`enterPickMode`, `commitPick`, and `initialPick`) were
+   * retired with the CreationBubble unification — see Stage 17
+   * of the no-band-aids refactor. */
   type PickMode = 'browse' | 'status' | 'timer';
   const [pickMode, setPickMode] = useState<PickMode>('browse');
   const [pickLat, setPickLat] = useState<number>(0);
   const [pickLng, setPickLng] = useState<number>(0);
   const [pickAddr, setPickAddr] = useState<string>('');
   const [pickResolving, setPickResolving] = useState(false);
-  // Captured-at-commit-time payload handed into the sheet as
-  // `initialPick`. We freeze it when the user taps Continue so the
-  // sheet never sees the pick mutate underneath it.
-  const [initialPick, setInitialPick] = useState<
-    { latitude: number; longitude: number; address: string } | null
-  >(null);
   const pickGeocodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* Optional address search inside pickMode.
@@ -516,21 +530,6 @@ export default function HomeScreen() {
    *  to the user's last known GPS when available, otherwise to the
    *  current city's center. Animates the map there so the opening
    *  experience always lands somewhere sensible. */
-  const enterPickMode = useCallback((kind: 'status' | 'timer') => {
-    const seedLat = userLat ?? currentCity.lat;
-    const seedLng = userLng ?? currentCity.lng;
-    setPickLat(seedLat);
-    setPickLng(seedLng);
-    setPickAddr('');
-    setPickResolving(true);
-    setPickMode(kind);
-    mapRef.current?.animateToRegion({
-      latitude: seedLat, longitude: seedLng,
-      latitudeDelta: 0.006, longitudeDelta: 0.006,
-    }, 450);
-    Haptics.selectionAsync().catch(() => {});
-  }, [userLat, userLng, currentCity.lat, currentCity.lng]);
-
   /** Exit pickMode without committing. Also called on Cancel. */
   const exitPickMode = useCallback(() => {
     if (pickGeocodeTimer.current) {
@@ -582,23 +581,6 @@ export default function HomeScreen() {
     }, 500);
   }, []);
 
-  /** Commit the current pick and hand it to the appropriate sheet.
-   *  The sheet receives a frozen snapshot of coords + address so
-   *  the pin can't shift under its feet while the user fills in
-   *  the form. */
-  const commitPick = useCallback(() => {
-    const kind = pickMode;
-    const snapshot = {
-      latitude: pickLat,
-      longitude: pickLng,
-      address: pickAddr,
-    };
-    exitPickMode();
-    setInitialPick(snapshot);
-    if (kind === 'status') setShowQuickStatus(true);
-    if (kind === 'timer') setShowTimer(true);
-  }, [pickMode, pickLat, pickLng, pickAddr, exitPickMode]);
-
   /* ═══ CREATION BUBBLE — the unified Status / Timer flow ═══════════
    *
    * The user asked for the creation experience to live inside the
@@ -628,9 +610,6 @@ export default function HomeScreen() {
    *  bubble's internal reset effect doesn't wipe the user's
    *  already-entered text and settings. */
   const [creationSessionKey, setCreationSessionKey] = useState(0);
-  // When we enter pickMode FROM the creation bubble, we stash the
-  // kind here so commit-back re-opens the bubble at the right step.
-  const [creationPickInFlight, setCreationPickInFlight] = useState(false);
   // Exposed by CreationBubble — parent calls it after pickMode
   // commits so the bubble can update its internal location state
   // without unmounting. Stays null when the bubble isn't mounted.
@@ -702,7 +681,6 @@ export default function HomeScreen() {
    *       doesn't jiggle pointlessly. */
   const handleCreationRequestPick = useCallback(
     (current: { lat: number; lng: number; address: string }) => {
-      setCreationPickInFlight(true);
       setShowCreation(false);
       setPickResolving(true);
       // pickMode value is only used by the pickMode overlay to
@@ -768,7 +746,6 @@ export default function HomeScreen() {
   const commitPickFromCreation = useCallback(() => {
     const snap = { lat: pickLat, lng: pickLng, address: pickAddr };
     exitPickMode();
-    setCreationPickInFlight(false);
     creationLocationUpdater.current?.(snap);
     setShowCreation(true);
   }, [pickLat, pickLng, pickAddr, exitPickMode]);
@@ -777,7 +754,6 @@ export default function HomeScreen() {
    *  creation. Re-show the bubble with the PREVIOUS location intact. */
   const cancelPickFromCreation = useCallback(() => {
     exitPickMode();
-    setCreationPickInFlight(false);
     setShowCreation(true);
   }, [exitPickMode]);
 
@@ -863,11 +839,15 @@ export default function HomeScreen() {
     // Save to recents (Supabase + AsyncStorage cache)
     await saveRecentCity(result, userId);
     setRecentCities(await loadRecentCities(userId));
-    // Create a City object for the app
+    // Create a City object for the app. countryCode comes from
+    // Photon's `properties.countrycode` — carried through so the geo
+    // gates (nomads list blur, join button) treat this user-searched
+    // city the same as a hardcoded CITIES entry.
     const city: City = {
       id: `${result.name}-${result.country}`.toLowerCase().replace(/\s/g, '-'),
       name: result.name,
       country: result.country,
+      countryCode: result.countryCode,
       flag: '',
       lat: result.lat,
       lng: result.lng,
@@ -1002,16 +982,12 @@ export default function HomeScreen() {
         useNativeDriver: true,
       }),
     ]).start(async () => {
-      // Wake up: make visible again
-      // Wake up — write only show_on_map (the one truth).
-      // snooze_mode is no longer read anywhere in the client as of
-      // Stage 9, so we stop writing it. The legacy column stays in
-      // the DB; dropping it is a follow-up migration.
-      await supabase.from('app_profiles').update({
-        show_on_map: true,
-      }).eq('user_id', userId);
-      await supabase.from('app_checkins').update({ visibility: 'public' })
-        .eq('user_id', userId).eq('is_active', true);
+      // Wake up — delegate both writes (show_on_map=true + checkin
+      // visibility=public) to the shared lib/visibility helper.
+      // PeopleScreen's wake-up uses the same call. Previously we had
+      // two copies of these writes diverging by comment alone; per
+      // Rule Zero the mutation now lives in one place.
+      await wakeUpVisibility(userId);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       refetchProfile();
       refetchCheckins();
@@ -1041,54 +1017,23 @@ export default function HomeScreen() {
    *  hot-checkin refetches, pickMode state changes, and so on. */
   const handlePinTap = useCallback((checkin: CheckinWithProfile) => {
     trackEvent(userId, 'tap_map_pin', 'checkin', checkin.id);
-    const isTimer = (checkin as any).checkin_type === 'timer';
-    const isOwn = checkin.user_id === userId;
 
-    // TIMER pins — Waze-style anchored Bubble.
-    //
-    // Unified flow for BOTH owner and visitor (per ux skill's
-    // Bottom-sheet style: tap pin → haptic → bubble slides up from
-    // below the bottom tab bar. The map does NOT move — the user
-    // said this was too dizzying. Re-tapping the same pin dismisses.
-    //
-    // No anchor math, no pointForCoordinate, no map pan. The sheet
-    // always lands in the same place, which makes the interaction
-    // predictable and familiar (same pattern as Apple/Google Maps).
-    // One path for both cases that open the TimerBubble:
-    //   - Any timer pin (visitor or owner)
-    //   - Any status pin owned by the user
-    // All land on the same docked bubble; the bubble itself
-    // branches on isOwn to show "end now" vs "join/chat/leave".
-    if (isTimer || isOwn) {
-      if (timerBubbleCheckin?.id === checkin.id) {
-        dismissTimerBubble();
-        return;
-      }
-      Haptics.selectionAsync().catch(() => {});
-      setTimerBubbleCheckin(checkin);
+    /* Unified pin-tap flow (2026-04-20) — product-owner
+     * directive "same bubble, same idea". Every pin — timer,
+     * scheduled, own, visitor — opens the SAME anchored
+     * TimerBubble. The bubble itself branches on owner vs
+     * visitor and on timer vs scheduled to render the right
+     * time label and the right CTA set. The ActivityDetailSheet
+     * modal that used to open on visitor-on-status taps is
+     * retired from the main flow — it was the one outlier that
+     * used a different shell and broke the visual language. */
+    if (timerBubbleCheckin?.id === checkin.id) {
+      dismissTimerBubble();
       return;
     }
-
-    // Visitor on a status pin — smooth 400 ms zoom into the
-    // neighborhood, then 450 ms later open ActivityDetailSheet.
-    // We keep this zoom ONLY for the visitor path because the
-    // ActivityDetailSheet relies on the map being focused on the
-    // pin. Own-pin taps above skip the zoom on purpose.
-    const lat = checkin.latitude ?? currentCity.lat;
-    const lng = checkin.longitude ?? currentCity.lng;
-    mapRef.current?.animateToRegion({
-      latitude: lat,
-      longitude: lng,
-      latitudeDelta: 0.008,
-      longitudeDelta: 0.008,
-    }, 400);
-    setTimeout(() => {
-      setTimerBubbleCheckin(null);
-      setPopupData(checkin);
-      setJoined(false);
-      setShowPopup(true);
-    }, 450);
-  }, [userId, currentCity.lat, currentCity.lng, timerBubbleCheckin?.id]);
+    Haptics.selectionAsync().catch(() => {});
+    setTimerBubbleCheckin(checkin);
+  }, [userId, timerBubbleCheckin?.id]);
 
   /** The marker list — MEMOIZED so it doesn't rebuild on every
    *  parent re-render. HomeScreen re-renders constantly (GPS
@@ -1194,129 +1139,271 @@ export default function HomeScreen() {
 
   /**
    * Resolve the correct city name for a checkin based on actual GPS coordinates.
-   * If the checkin lat/lng is >50km from currentCity, auto-correct to the nearest
-   * CITIES entry or fall back to Nominatim reverse geocoding.
+   *
+   * Delegates to the shared lib/cityResolver so every caller in the
+   * app resolves cities through one pipeline (previously this helper
+   * duplicated that logic inline — classic Rule Zero violation that
+   * drifted every time one side changed). Extra HomeScreen concern
+   * preserved: if the user drifted >50 km and we land on a CITIES
+   * entry, auto-correct `currentCity` so the map recenters.
    */
   const resolveCheckinCity = async (lat: number | null | undefined, lng: number | null | undefined): Promise<string> => {
     const checkinLat = lat ?? userLat ?? currentCity.lat;
     const checkinLng = lng ?? userLng ?? currentCity.lng;
     const distFromCurrent = haversineKm(checkinLat, checkinLng, currentCity.lat, currentCity.lng);
-    // If within 50km of currentCity, it's correct
+    // If within 50 km of currentCity, keep it — avoids re-resolving
+    // the same city on every publish in the common case.
     if (distFromCurrent < 50) return currentCity.name;
-    // Try to find a closer CITIES entry
+    // Drifted far enough to warrant re-resolving. Auto-correct the
+    // map's currentCity when we land on a known CITIES entry (this
+    // stays HomeScreen-specific; cityResolver doesn't mutate state).
     const nearest = findNearestCity(checkinLat, checkinLng, 50);
     if (nearest) {
       console.log(`[City Resolve] GPS is ${distFromCurrent.toFixed(0)}km from ${currentCity.name}, auto-corrected to ${nearest.name}`);
       setCurrentCity(nearest);
       return nearest.name;
     }
-    // Fall back to Nominatim reverse geocoding. fetchJsonWithTimeout
-    // returns null on timeout/network error (no throw), so we just
-    // fall through to the currentCity fallback without a stack trace
-    // in LogBox.
-    const data = await fetchJsonWithTimeout<any>(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${checkinLat}&lon=${checkinLng}&zoom=10&accept-language=en`,
-      { tag: 'nominatim.reverse', timeoutMs: 7000 },
-    );
-    const cityName = data?.address?.city || data?.address?.town || data?.address?.village || data?.address?.state || '';
-    if (cityName) {
-      console.log(`[City Resolve] GPS is ${distFromCurrent.toFixed(0)}km from ${currentCity.name}, Nominatim resolved to ${cityName}`);
-      return cityName;
-    }
-    return currentCity.name;
+    // Hand off to the shared resolver. It does the exact same nearest-
+    // CITIES-then-Nominatim pipeline; fallback is the current city name.
+    return resolveCityFromCoordinates(checkinLat, checkinLng, currentCity.name);
   };
 
   /* ── Quick Status publish handler ── */
-  const handleQuickPublish = async (data: QuickActivityData) => {
-    if (!userId || quickPublishing) return;
-    setQuickPublishing(true);
+  /* ═══ Unified publish engine ════════════════════════════════════
+   *
+   * ONE INSERT pipeline for both checkin kinds — replaces the two
+   * near-duplicate handlers we used to carry (Rule Zero: "if you're
+   * writing the same block twice, stop"). The two public handlers
+   * below (`handleQuickPublish`, `handleTimerPublish`) stay as
+   * thin wrappers: they translate their kind-specific payload
+   * shape into the shared `PublishCheckinInput` and delegate here.
+   *
+   * Kind-specific fallbacks (timer's `?? userLat ?? currentCity.lat`,
+   * status's scheduled_for, etc.) live inside each wrapper — NOT
+   * here — so this engine only sees already-normalized data.
+   *
+   * Closes the loop per logic skill:
+   *   1) Expire prior active checkins of the SAME kind (cross-kind
+   *      stays untouched — user can hold one timer AND one status).
+   *   2) Compute expires_at with the shared policy (scheduled +
+   *      flexible → end-of-day; scheduled specific → scheduled_for;
+   *      else now + duration).
+   *   3) Resolve city via GPS (not Photon's raw p.city — we learned
+   *      that the hard way, see CLAUDE.md).
+   *   4) INSERT + optimistic addOptimistic for instant UI.
+   *   5) createOrJoinStatusChat to spawn the group chat.
+   *   6) Timer-only: stash active checkin id for the FAB badge.
+   *   7) trackEvent + refetchCheckins.
+   *   8) Error → Alert, never silent. */
+  interface PublishCheckinInput {
+    kind: 'status' | 'timer';
+    /** Activity / status text. Shown as title on pin and in chat. */
+    text: string;
+    category: string;
+    emoji: string;
+    locationName: string;
+    latitude: number;
+    longitude: number;
+    ageMin: number;
+    ageMax: number;
+    /** Only used when the checkin is NOT future-scheduled — defines
+     *  the "now + X minutes" expiry for immediate posts and timers.
+     *  Ignored when scheduledFor is a future Date. */
+    durationMinutes: number;
+    /** Date object for a future start time; null for "happening now"
+     *  (timer or immediate status). */
+    scheduledFor: Date | null;
+    /** Status all-day flag — shifts expires_at to 23:59:59 of the
+     *  scheduled_for day. Timers always pass false. */
+    isFlexibleTime: boolean;
+    /** Open-join vs. approval-required. Timers always pass true. */
+    isOpen: boolean;
+    /** Status-only: whether the pin shows a precise point or a
+     *  general neighborhood. Timers always pass false. */
+    isGeneralArea: boolean;
+  }
+
+  const publishCheckin = async (input: PublishCheckinInput) => {
+    if (!userId) return;
+    const isTimer = input.kind === 'timer';
+    const alreadyPublishing = isTimer ? timerPublishing : quickPublishing;
+    if (alreadyPublishing) return;
+    const setPublishing = isTimer ? setTimerPublishing : setQuickPublishing;
+    setPublishing(true);
+
     try {
-      // Expire only active STATUS checkins (keep timers alive)
+      /* ── Geo gate (Phase 1) ─────────────────────────────
+       *
+       * The country of the pin coordinates MUST match the
+       * user's current GPS country. This is the gate that
+       * prevents someone in Israel from publishing a pin
+       * in Bangkok.
+       *
+       * Ordering: runs BEFORE the moderation gate, because
+       * a cross-country pin should never even reach content
+       * scanning — it's categorically invalid.
+       *
+       * Fail modes:
+       *   - GPS denied / unavailable → block with publishNoGps
+       *   - Geocoder failure → block with publishGeocodeFail
+       *   - Country mismatch → block with publishBody
+       *
+       * Fail-open is NOT allowed here — per spec red line,
+       * a failed geo check always blocks. Better a moment
+       * of friction than a fake pin on the map.
+       *
+       * SPEC: docs/product-decisions/2026-04-20-geo-boundaries-spec.md
+       */
+      const [viewerCountry, eventCountry] = await Promise.all([
+        resolveCurrentCountry(),
+        pinCountryFromCoords(input.latitude, input.longitude),
+      ]);
+
+      if (viewerCountry == null) {
+        Alert.alert(
+          t('geo.block.publishTitle'),
+          t('geo.block.publishNoGps'),
+        );
+        return;
+      }
+      if (eventCountry == null) {
+        Alert.alert(
+          t('geo.block.publishTitle'),
+          t('geo.block.publishGeocodeFail'),
+        );
+        return;
+      }
+      if (!isSameCountryAsViewer(viewerCountry, eventCountry)) {
+        Alert.alert(
+          t('geo.block.publishTitle'),
+          t('geo.block.publishBody', {
+            eventCountry: countryLabel(eventCountry, locale),
+            homeCountry: countryLabel(viewerCountry, locale),
+          }),
+        );
+        return;
+      }
+
+      /* ── Moderation gate ───────────────────────────────
+       *
+       * Same gate the chat uses, applied to the activity
+       * text. If flagged → polite Alert, no INSERT. If
+       * rate-limited → "paused for an hour" Alert, no
+       * INSERT. Per the launch freedom policy this only
+       * catches the Apple-1.2-required categories
+       * (slurs / threats / sexual targeting / self-harm),
+       * not casual profanity. */
+      const moderation = await gateContent({
+        userId,
+        surface: 'checkin',
+        text: input.text,
+      });
+      if (moderation.state === 'flagged') {
+        Alert.alert(
+          t('moderation.blockedTitle'),
+          t('moderation.blockedCheckinBody'),
+        );
+        return;
+      }
+      if (moderation.state === 'rate_limited') {
+        Alert.alert(
+          t('moderation.rateLimitedTitle'),
+          t('moderation.rateLimitedBody'),
+        );
+        return;
+      }
+
+      // 1) Expire prior active checkins of the same kind only.
       await supabase
         .from('app_checkins')
         .update({ is_active: false })
         .eq('user_id', userId)
         .eq('is_active', true)
-        .eq('checkin_type', 'status');
+        .eq('checkin_type', input.kind);
 
-      // expires_at policy — three cases (per product spec 2026-04-19):
-      //  A) Scheduled with SPECIFIC time → expires AT that time (event's
-      //     start = end-of-life on the map). The chat survives because
-      //     it's a separate entity, but the pin disappears.
-      //  B) Scheduled with FLEXIBLE time → expires at 23:59:59 of the
-      //     event's day (the user committed only to "that day", so the
-      //     pin is alive throughout the day).
-      //  C) Immediate status ("I'm here now") → expires at now + 60 min.
-      const scheduledFor = data.scheduledFor ?? null;
-      const isFutureScheduled = scheduledFor instanceof Date && scheduledFor.getTime() > Date.now();
+      // 2) expires_at policy — shared between status and timer.
+      const isFutureScheduled =
+        input.scheduledFor instanceof Date && input.scheduledFor.getTime() > Date.now();
       let expiresAt: string;
       if (isFutureScheduled) {
-        if (data.isFlexibleTime) {
-          // End of the event's day, local time.
-          const endOfDay = new Date(scheduledFor!);
+        if (input.isFlexibleTime) {
+          const endOfDay = new Date(input.scheduledFor!);
           endOfDay.setHours(23, 59, 59, 999);
           expiresAt = endOfDay.toISOString();
         } else {
-          // Exactly at scheduled time.
-          expiresAt = scheduledFor!.toISOString();
+          expiresAt = input.scheduledFor!.toISOString();
         }
       } else {
-        const durationMs = (data.durationMinutes || 60) * 60 * 1000;
-        expiresAt = new Date(Date.now() + durationMs).toISOString();
+        expiresAt = new Date(Date.now() + input.durationMinutes * 60 * 1000).toISOString();
       }
 
-      // Resolve correct city based on actual GPS (prevents wrong-city bug)
-      const resolvedCity = await resolveCheckinCity(data.latitude, data.longitude);
+      // 3) Resolve city from GPS, not raw Photon p.city.
+      const resolvedCity = await resolveCheckinCity(input.latitude, input.longitude);
 
-      // Insert new activity checkin — always public (user chose to post)
-      const { data: newCheckin, error: insertErr } = await supabase.from('app_checkins').insert({
-        user_id: userId,
-        city: resolvedCity,
-        checkin_type: 'status',
-        status_text: data.activityText,
-        status_emoji: data.emoji,
-        category: data.category,
-        activity_text: data.activityText,
-        location_name: data.locationName,
-        latitude: data.latitude,
-        longitude: data.longitude,
-        scheduled_for: data.scheduledFor?.toISOString() ?? null,
-        expires_at: expiresAt,
-        is_flexible_time: data.isFlexibleTime ?? false,
-        is_open: data.isOpen ?? true,
-        visibility: 'public',
-        is_active: true,
-        member_count: 1,
-        age_min: data.ageMin ?? 18,
-        age_max: data.ageMax ?? 80,
-      }).select('id').single();
+      // 4) INSERT. Always public — user explicitly chose to post.
+      //    The `country` field is set from the value the geo gate
+      //    already resolved a few lines above — one lookup, used
+      //    for both the gate AND the row write. See spec.
+      const { data: newCheckin, error: insertErr } = await supabase
+        .from('app_checkins')
+        .insert({
+          user_id: userId,
+          city: resolvedCity,
+          country: eventCountry,
+          checkin_type: input.kind,
+          status_text: input.text,
+          status_emoji: input.emoji,
+          category: input.category,
+          activity_text: input.text,
+          location_name: input.locationName,
+          latitude: input.latitude,
+          longitude: input.longitude,
+          scheduled_for: input.scheduledFor?.toISOString() ?? null,
+          expires_at: expiresAt,
+          is_flexible_time: input.isFlexibleTime,
+          is_open: input.isOpen,
+          visibility: 'public',
+          is_active: true,
+          member_count: 1,
+          age_min: input.ageMin,
+          age_max: input.ageMax,
+        })
+        .select('id')
+        .single();
 
       if (insertErr) {
-        console.error('Error creating checkin:', insertErr);
+        console.error(`Error creating ${input.kind} checkin:`, insertErr);
+        Alert.alert(
+          t('creation.error.title'),
+          insertErr.message
+            ? t('creation.error.body', { detail: insertErr.message })
+            : t('creation.error.bodyGeneric')
+        );
         return;
       }
 
-      // Optimistic: show on map INSTANTLY — no waiting for refetch
+      // 5) Optimistic UI — new pin appears on the map before the
+      //    refetch cycle completes.
       if (newCheckin?.id) {
         addOptimistic({
           id: newCheckin.id,
           user_id: userId,
           city: resolvedCity,
-          checkin_type: 'status',
-          status_text: data.activityText,
-          status_emoji: data.emoji,
-          category: data.category,
-          activity_text: data.activityText,
-          location_name: data.locationName,
-          latitude: data.latitude,
-          longitude: data.longitude,
+          checkin_type: input.kind,
+          status_text: input.text,
+          status_emoji: input.emoji,
+          category: input.category,
+          activity_text: input.text,
+          location_name: input.locationName,
+          latitude: input.latitude,
+          longitude: input.longitude,
           expires_at: expiresAt,
           is_active: true,
           visibility: 'public',
           member_count: 1,
-          is_open: data.isOpen ?? true,
-          age_min: data.ageMin ?? 18,
-          age_max: data.ageMax ?? 80,
+          is_open: input.isOpen,
+          age_min: input.ageMin,
+          age_max: input.ageMax,
           profile: {
             full_name: myName,
             username: myProfile?.username || '',
@@ -1328,133 +1415,95 @@ export default function HomeScreen() {
         } as any);
       }
 
-      // Auto-create group chat
-      await createOrJoinStatusChat(userId, userId, data.activityText, {
-        emoji: data.emoji,
-        category: data.category,
-        activityText: data.activityText,
-        locationName: data.locationName,
-        latitude: data.latitude,
-        longitude: data.longitude,
-        isGeneralArea: data.isGeneralArea ?? false,
-        scheduledFor: data.scheduledFor?.toISOString() ?? null,
-        isOpen: data.isOpen ?? true,
+      // 6) Group chat — fires system "joined the group" message
+      //    internally. Single-user at first (the creator); visitors
+      //    join via TimerBubble later.
+      await createOrJoinStatusChat(userId, userId, input.text, {
+        emoji: input.emoji,
+        category: input.category,
+        activityText: input.text,
+        locationName: input.locationName,
+        latitude: input.latitude,
+        longitude: input.longitude,
+        isGeneralArea: input.isGeneralArea,
+        scheduledFor: input.scheduledFor?.toISOString() ?? null,
+        isOpen: input.isOpen,
         checkinId: newCheckin?.id || undefined,
       });
 
-      // Close sheet + refresh (success popup now handled inside QuickStatusSheet)
-      trackEvent(userId, 'create_status', 'checkin', newCheckin?.id, { city: resolvedCity });
+      // 7) Timer-only: the FAB badge tracks the currently-running
+      //    timer so "+ publish" opens the bubble with a "replace"
+      //    banner instead of a fresh one.
+      if (isTimer && newCheckin?.id) setActiveTimerCheckin(newCheckin.id);
+
+      // 8) Track + refetch. CreationBubble owns the visual success
+      //    step; we don't surface another one here.
+      trackEvent(
+        userId,
+        isTimer ? 'create_timer' : 'create_status',
+        'checkin',
+        newCheckin?.id,
+        { city: resolvedCity },
+      );
       refetchCheckins();
-    } catch (err) {
-      console.error('Quick publish error:', err);
+    } catch (err: any) {
+      console.error(`${input.kind} publish error:`, err);
+      Alert.alert(
+        t('creation.error.title'),
+        err?.message
+          ? t('creation.error.body', { detail: err.message })
+          : t('creation.error.bodyGeneric')
+      );
     } finally {
-      setQuickPublishing(false);
+      setPublishing(false);
     }
   };
 
-  /* ── Timer publish handler ── */
+  /* ── Status publish wrapper — adapts QuickActivityData to the
+   *    shared PublishCheckinInput. Preserves the exact fallback
+   *    behavior the previous inline handler had (no GPS fallback
+   *    for lat/lng — the caller is expected to have picked coords
+   *    via pickMode / CreationBubble before this runs). */
+  const handleQuickPublish = async (data: QuickActivityData) => {
+    await publishCheckin({
+      kind: 'status',
+      text: data.activityText,
+      category: data.category,
+      emoji: data.emoji,
+      locationName: data.locationName,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      ageMin: data.ageMin ?? 18,
+      ageMax: data.ageMax ?? 100,
+      durationMinutes: data.durationMinutes || 60,
+      scheduledFor: data.scheduledFor ?? null,
+      isFlexibleTime: data.isFlexibleTime ?? false,
+      isOpen: data.isOpen ?? true,
+      isGeneralArea: data.isGeneralArea ?? false,
+    });
+  };
+
+  /* ── Timer publish wrapper — adapts TimerData to the shared
+   *    PublishCheckinInput. Applies the timer-specific fallbacks
+   *    for location_name + lat/lng at the boundary, matching the
+   *    pre-unification handler's behavior 1:1. */
   const handleTimerPublish = async (data: TimerData) => {
-    if (!userId || timerPublishing) return;
-    setTimerPublishing(true);
-    try {
-      // Expire only active TIMER checkins (keep statuses alive)
-      await supabase
-        .from('app_checkins')
-        .update({ is_active: false })
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .eq('checkin_type', 'timer');
-
-      const durationMs = data.durationMinutes * 60 * 1000;
-      const expiresAt = new Date(Date.now() + durationMs).toISOString();
-
-      // Resolve correct city based on actual GPS (prevents wrong-city bug)
-      const resolvedTimerCity = await resolveCheckinCity(data.latitude, data.longitude);
-
-      // Always public — user chose to post a timer
-      const { data: newCheckin, error: insertErr } = await supabase.from('app_checkins').insert({
-        user_id: userId,
-        city: resolvedTimerCity,
-        checkin_type: 'timer',
-        status_text: data.statusText,
-        status_emoji: data.emoji,
-        category: data.category,
-        activity_text: data.statusText,
-        location_name: data.locationName || currentCity.name,
-        latitude: data.latitude ?? userLat ?? currentCity.lat,
-        longitude: data.longitude ?? userLng ?? currentCity.lng,
-        expires_at: expiresAt,
-        is_flexible_time: false,
-        is_open: true,
-        visibility: 'public',
-        is_active: true,
-        member_count: 1,
-        age_min: data.ageMin ?? 18,
-        age_max: data.ageMax ?? 80,
-      }).select('id').single();
-
-      if (insertErr) {
-        console.error('Error creating timer checkin:', insertErr);
-        return;
-      }
-
-      // Optimistic: show on map INSTANTLY
-      if (newCheckin?.id) {
-        addOptimistic({
-          id: newCheckin.id,
-          user_id: userId,
-          city: resolvedTimerCity,
-          checkin_type: 'timer',
-          status_text: data.statusText,
-          status_emoji: data.emoji,
-          category: data.category,
-          activity_text: data.statusText,
-          location_name: data.locationName || currentCity.name,
-          latitude: data.latitude ?? userLat ?? currentCity.lat,
-          longitude: data.longitude ?? userLng ?? currentCity.lng,
-          expires_at: expiresAt,
-          is_active: true,
-          visibility: 'public',
-          member_count: 1,
-          is_open: true,
-          age_min: data.ageMin ?? 18,
-          age_max: data.ageMax ?? 80,
-          profile: {
-            full_name: myName,
-            username: myProfile?.username || '',
-            avatar_url: myProfile?.avatar_url || null,
-            job_type: myProfile?.job_type || null,
-            bio: myProfile?.bio || '',
-            interests: (myProfile as any)?.interests || [],
-          },
-        } as any);
-      }
-
-      // Auto-create group chat
-      await createOrJoinStatusChat(userId, userId, data.statusText, {
-        emoji: data.emoji,
-        category: data.category,
-        activityText: data.statusText,
-        locationName: data.locationName || currentCity.name,
-        latitude: data.latitude ?? currentCity.lat,
-        longitude: data.longitude ?? currentCity.lng,
-        isGeneralArea: false,
-        scheduledFor: null,
-        isOpen: true,
-        checkinId: newCheckin?.id || undefined,
-      });
-
-      // Track active timer
-      if (newCheckin?.id) setActiveTimerCheckin(newCheckin.id);
-
-      // DON'T close the modal — success card stays visible, user dismisses it
-      trackEvent(userId, 'create_timer', 'checkin', newCheckin?.id, { city: resolvedTimerCity });
-      refetchCheckins();
-    } catch (err) {
-      console.error('Timer publish error:', err);
-    } finally {
-      setTimerPublishing(false);
-    }
+    await publishCheckin({
+      kind: 'timer',
+      text: data.statusText,
+      category: data.category,
+      emoji: data.emoji,
+      locationName: data.locationName || currentCity.name,
+      latitude: data.latitude ?? userLat ?? currentCity.lat,
+      longitude: data.longitude ?? userLng ?? currentCity.lng,
+      ageMin: data.ageMin ?? 18,
+      ageMax: data.ageMax ?? 100,
+      durationMinutes: data.durationMinutes,
+      scheduledFor: null,
+      isFlexibleTime: false,
+      isOpen: true,
+      isGeneralArea: false,
+    });
   };
 
   /* ── Creation publish bridge ──
@@ -1814,7 +1863,7 @@ export default function HomeScreen() {
               <TouchableOpacity
                 style={[st.pickPanelCancel, { borderColor: colors.borderSoft }]}
                 activeOpacity={0.7}
-                onPress={creationPickInFlight ? cancelPickFromCreation : exitPickMode}
+                onPress={cancelPickFromCreation}
               >
                 <Text style={[st.pickPanelCancelText, { color: colors.textMuted }]}>
                   {t('pickMode.cancel')}
@@ -1829,7 +1878,7 @@ export default function HomeScreen() {
                   },
                 ]}
                 activeOpacity={0.8}
-                onPress={creationPickInFlight ? commitPickFromCreation : commitPick}
+                onPress={commitPickFromCreation}
               >
                 <Text style={st.pickPanelContinueText}>{t('pickMode.continue')}</Text>
               </TouchableOpacity>
@@ -1849,6 +1898,22 @@ export default function HomeScreen() {
         creatorName={timerBubbleCheckin?.profile?.full_name || 'Nomad'}
         creatorAvatarUrl={avatarUri((timerBubbleCheckin?.profile as any)?.avatar_url)}
         onClose={dismissTimerBubble}
+        /* Wisdom gate — fires before the actual join. Cheap
+           no-op for local taps (same city / same country);
+           shows the "are you really going there?" prompt for
+           far-away scheduled events. Previously wired only to
+           ActivityDetailSheet; now wired here too so the
+           scheduled-visitor flow still gates even though
+           both pin types share the same bubble. */
+        onBeforeJoin={(ck, doJoin) => {
+          wisdomGate(
+            (ck as any).city || currentCity.name,
+            (ck.latitude as number) || currentCity.lat,
+            (ck.longitude as number) || currentCity.lng,
+            currentCity.country,
+            doJoin,
+          );
+        }}
         onOwnerEnd={async (ck) => {
           // Expire the checkin in place — stays on map, no nav.
           // Works for both timers and scheduled statuses since
@@ -2073,28 +2138,6 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Timer bubble is now rendered inside the Marker (Waze-style) */}
-
-      {/* ── Activity Detail Sheet — shown after tapping a status pin ── */}
-      <ActivityDetailSheet
-        visible={showPopup}
-        checkin={popupData}
-        creatorName={(popupData as any)?.profile?.full_name || 'nomad'}
-        creatorAvatarUrl={avatarUri((popupData as any)?.profile?.avatar_url)}
-        onClose={() => { setShowPopup(false); }}
-        onBeforeJoin={(checkin, doJoin) => {
-          // WisdomPrompt uses a native Modal — renders on top without closing the sheet.
-          // Keep the popup open so after join it transitions to Chat/Leave buttons.
-          wisdomGate(
-            checkin.city || currentCity.name,
-            checkin.latitude || currentCity.lat,
-            checkin.longitude || currentCity.lng,
-            currentCity.country,
-            doJoin,
-          );
-        }}
-      />
-
       {/* ── FAB Column — single unified "post" button ──
            The old red-timer / green-status duo is gone. The user
            no longer has to decide "timer or status" before they
@@ -2129,28 +2172,19 @@ export default function HomeScreen() {
               }, 800);
               const nearestCity = findNearestCity(lat, lng, 50);
               if (nearestCity) { setCurrentCity(nearestCity); return; }
-              try {
-                const res = await fetch(
-                  `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&accept-language=en`,
-                  { headers: { 'User-Agent': 'NomadsPeople/1.0' } },
-                );
-                const data = await res.json();
-                const addr = data.address || {};
-                const cityName = addr.city || addr.town || addr.village || addr.state || '';
-                const country = addr.country || '';
-                if (cityName) {
-                  setCurrentCity({
-                    id: `${cityName}-${country}`.toLowerCase().replace(/\s/g, '-'),
-                    name: cityName, country, flag: '', lat, lng, active: 0,
-                  });
-                }
-              } catch (err) {
-                // Non-fatal: the city label simply stays on its
-                // previous value. The map still pans to `lat,lng`.
-                // (This direct fetch to nominatim predates the
-                // lib/locationServices wrapper and should migrate
-                // to it — tracked separately.)
-                console.warn('[HomeScreen] reverse geocode for "my location" failed:', err);
+              // No CITIES entry within 50 km — delegate to the
+              // shared reverse-geocoder. Returns empty fields on any
+              // network / parse failure, so a bad result just leaves
+              // the existing city label in place. The map still pans
+              // to `lat,lng` regardless. Previous inline fetch here
+              // was a Rule Zero violation (re-implemented extraction
+              // rules that already lived in lib/cityResolver).
+              const { cityName, country, countryCode } = await reverseGeocodeCityFull(lat, lng);
+              if (cityName) {
+                setCurrentCity({
+                  id: `${cityName}-${country}`.toLowerCase().replace(/\s/g, '-'),
+                  name: cityName, country, countryCode, flag: '', lat, lng, active: 0,
+                });
               }
             };
             if (userLat && userLng) {
@@ -2249,6 +2283,7 @@ export default function HomeScreen() {
         onClose={() => setShowNomadsList(false)}
         nomads={nomadsInCity}
         cityName={currentCity.name}
+        listCountryCode={currentCity.countryCode}
         onViewProfile={(uid, name) => {
           setShowNomadsList(false);
           setTimeout(() => nav.navigate('UserProfile', { userId: uid, name }), 200);
@@ -2285,38 +2320,15 @@ export default function HomeScreen() {
         locationUpdaterRef={creationLocationUpdater}
         hasActiveTimer={hasActiveTimer}
         hasActiveScheduled={hasActiveScheduled}
-      />
-
-      {/* ── Quick Status Sheet ──
-           Receives `initialPick` from pickMode — when set, the sheet
-           skips its own internal map page entirely and the user sees
-           only the WHAT / WHEN-WHO pages. The sheet's MapView never
-           mounts in this flow, which is the whole point. */}
-      <QuickStatusSheet
-        visible={showQuickStatus}
-        onClose={() => { setShowQuickStatus(false); setInitialPick(null); }}
-        onPublish={handleQuickPublish}
-        cityName={currentCity.name}
-        cityLat={currentCity.lat}
-        cityLng={currentCity.lng}
-        userLat={userLat}
-        userLng={userLng}
-        publishing={quickPublishing}
-        initialPick={initialPick}
-      />
-
-      {/* ── Timer Sheet ── */}
-      <TimerSheet
-        visible={showTimer}
-        onClose={() => { setShowTimer(false); setInitialPick(null); }}
-        onPublish={handleTimerPublish}
-        cityName={currentCity.name}
-        cityLat={currentCity.lat}
-        cityLng={currentCity.lng}
-        userLat={userLat}
-        userLng={userLng}
-        publishing={timerPublishing}
-        initialPick={initialPick}
+        /* Synergy: the "+" bubble's age slider starts from the
+           user's profile-level age preference. Whatever they
+           set in Settings (or during onboarding) pre-fills
+           every new event. They can still drag to override
+           per-event. Pre-refactor these were hardcoded 18/80
+           inside the bubble, which silently ignored the
+           user's own preference — a classic drift bug. */
+        defaultAgeMin={myProfile?.age_min ?? null}
+        defaultAgeMax={myProfile?.age_max ?? null}
       />
 
       {/* ── פניני חוכמה — Wisdom Prompt ── */}
@@ -2366,8 +2378,6 @@ export default function HomeScreen() {
            above the summary pills and the Publish button label
            becomes "Replace and publish". One warning, one flow,
            one language — per CLAUDE.md Rule Zero. */}
-
-      {/* Activity Success Popup — removed, now handled inside QuickStatusSheet */}
 
       {/* ── Welcome celebration overlay ── */}
       {showWelcome && (
@@ -2894,8 +2904,6 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   popBtnOn: { backgroundColor: 'rgba(5,150,105,0.1)', borderColor: 'rgba(5,150,105,0.2)' },
   popBtnTxt: { fontSize: s(7), fontWeight: FW.bold, color: c.primary },
   popBtnTxtOn: { color: c.primary },
-
-  /* Activity Success Popup styles removed — now in QuickStatusSheet */
 
   /* ═══ CANCEL TIMER POPUP ═══ */
   cancelOverlay: {

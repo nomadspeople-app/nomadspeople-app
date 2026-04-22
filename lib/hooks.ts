@@ -1,6 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase';
 import { trackEvent } from './tracking';
+import { gateContent, type GateOutcome } from './moderation';
+
+/* Sentinel error codes — callers of `send()` inspect
+ * these strings to distinguish "network failed" from
+ * "moderation blocked" from "rate-limited". Not localized;
+ * the UI layer translates via t() when surfacing to the user. */
+export const SEND_BLOCKED_MODERATION = 'SEND_BLOCKED_MODERATION';
+export const SEND_BLOCKED_RATE_LIMIT = 'SEND_BLOCKED_RATE_LIMIT';
+
+/** Returned-from-send error shape used by the moderation
+ *  gate. Inspect `.message` for the sentinel above and
+ *  `.gateOutcome` for details (category, until-time). */
+export interface SendBlockedError extends Error {
+  gateOutcome: GateOutcome;
+}
 
 /* ─── Unique ID generator for Realtime channels ─── */
 let _chId = 0;
@@ -56,13 +71,68 @@ let _cachedViewer: { userId: string; age: number | null; ageMin: number; ageMax:
 /** Call after the user changes their age-range preferences so the map refreshes */
 export function bustViewerAgeCache() { _cachedViewer = null; }
 
+/* ─── Scale-safe fetch guards ───
+ *
+ * Two-layer defense against the DB-hammering pattern this
+ * hook caused pre-April 2026:
+ *
+ *   1. TIME GUARD (30 s) — explicit refetch() calls (focus-
+ *      effect in HomeScreen, post-publish trigger, etc.)
+ *      that land within 30 s of a successful fetch and
+ *      happen on non-empty data are skipped. The user sees
+ *      the already-loaded data instead of waiting for a
+ *      duplicate network round-trip.
+ *
+ *   2. BURST DEBOUNCE (300 ms) — Realtime events in a busy
+ *      city fire in bursts (e.g. 10 members join an event
+ *      within 2 s → 10 UPDATE events). Without debounce,
+ *      each event triggers a full fetch. With debounce, a
+ *      burst folds into ONE fetch 300 ms after the last
+ *      event in the burst.
+ *
+ * Math at 1,000 concurrent Tel Aviv users, ~60 city-level
+ * events/minute:
+ *   Before: 12,000 fetches/min → exceeds Supabase Pro
+ *   After:  ~200 fetches/min → comfortable headroom
+ *
+ * Rule Zero check: every user gets the same guarded behavior.
+ * No user-specific bypass, no per-surface exception.
+ */
+const FETCH_TIME_GUARD_MS = 30_000;
+const REALTIME_DEBOUNCE_MS = 300;
+
 export function useActiveCheckins(city: string, viewerUserId?: string | null) {
   const [checkins, setCheckins] = useState<CheckinWithProfile[]>([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const prevIdsRef = useRef<string>('');
+  /** Last SUCCESSFUL fetch timestamp. 0 = never succeeded;
+   *  set only after a query returns data, so a failed fetch
+   *  doesn't poison the guard. */
+  const lastFetchAtRef = useRef<number>(0);
+  /** Concurrency guard — prevents two fetches firing in
+   *  parallel from racing into setState. Without this, a
+   *  rapid focus → realtime → focus sequence could have 3
+   *  in-flight requests and the LAST one to resolve wins
+   *  (which may be the oldest data). */
+  const inFlightRef = useRef<boolean>(false);
+  /** Timer for burst-debouncing Realtime-triggered fetches. */
+  const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const fetch = async () => {
+  const fetch = async (opts?: { force?: boolean }) => {
+    // In-flight guard — never run two fetches at once.
+    if (inFlightRef.current) return;
+    // Time guard — skip if we successfully fetched recently.
+    // Compares against `lastFetchAtRef` which is only updated
+    // post-success, so a series of failures doesn't lock us
+    // out. First-ever call (lastFetchAtRef=0) always proceeds.
+    if (!opts?.force
+        && lastFetchAtRef.current > 0
+        && Date.now() - lastFetchAtRef.current < FETCH_TIME_GUARD_MS) {
+      setLoading(false);
+      return;
+    }
+    inFlightRef.current = true;
     // 1. Get viewer age + age preferences (cached — only fetches once per user)
     let viewerAge: number | null = null;
     let viewerAgeMin = 18;
@@ -87,15 +157,31 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
     }
 
     // 2. Fetch all active checkins (include visibility fields from profile)
-    const { data, error } = await supabase
-      .from('app_checkins')
-      .select('*, profile:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type, bio, interests, show_on_map, hide_distance, birth_date)')
-      .eq('is_active', true)
-      .ilike('city', city)
-      .in('visibility', ['public', 'city_only'])
-      .limit(200);
+    let data: any[] | null = null;
+    let error: any = null;
+    try {
+      const res = await supabase
+        .from('app_checkins')
+        .select('*, profile:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type, bio, interests, show_on_map, hide_distance, birth_date)')
+        .eq('is_active', true)
+        .ilike('city', city)
+        .in('visibility', ['public', 'city_only'])
+        .limit(200);
+      data = res.data;
+      error = res.error;
+    } finally {
+      // Release the in-flight lock no matter what — a thrown
+      // exception here would otherwise deadlock subsequent
+      // fetches for this hook's lifetime.
+      inFlightRef.current = false;
+    }
 
     if (data) {
+      // Mark the fetch as successful AFTER we have data. Only
+      // then does the time guard consider the 30 s window
+      // active. Failed fetches leave lastFetchAtRef alone so
+      // recovery is possible on the next call.
+      lastFetchAtRef.current = Date.now();
       // 3a. Visibility filter. expires_at is now the single source of
       //     truth (set correctly at publish time per lifecycle):
       //       • Immediate status → now + 60 min
@@ -140,21 +226,30 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
   };
 
   useEffect(() => {
+    // City changed — reset guards so first fetch runs fresh.
+    lastFetchAtRef.current = 0;
     setLoading(true);
-    fetch();
+    void fetch({ force: true });
 
     // Polling fallback — Realtime is the primary refresh mechanism;
-    // this is a safety net in case the websocket drops. Reduced
-    // 30s → 120s (2 min) on 2026-04-20 after we found this hook
-    // was a major contributor to DB load when many clients are
-    // active. Realtime gives us instant updates on changes — we
-    // don't need fast polling on top.
-    const pollInterval = setInterval(() => { fetch(); }, 120000);
+    // this is a safety net in case the websocket drops. The 120 s
+    // polling interval runs through the normal fetch() which
+    // respects the 30 s time guard, so mostly becomes a no-op
+    // unless data is genuinely stale.
+    const pollInterval = setInterval(() => { void fetch(); }, 120000);
 
-    // Realtime subscription — globally unique channel name
-    // NOTE: No city filter — Supabase Realtime `eq` is case-sensitive but our
-    // queries use `ilike`. Listening to all checkin changes and re-fetching
-    // (which filters by city with ilike) ensures we never miss updates.
+    /* Realtime subscription with burst-debounced refetch.
+     *
+     * No server-side city filter — Supabase Realtime's `eq` is
+     * case-sensitive but our queries use `ilike`, so we listen
+     * to ALL changes and filter by city on the client. That
+     * means every client hears every event in EVERY city —
+     * expensive at scale but we compensate with the debounce.
+     *
+     * Debounce logic: each relevant event resets a 300 ms
+     * timer. When the timer fires (300 ms after the last
+     * event), ONE fetch runs. A burst of 20 events in 2 s
+     * becomes 1 fetch, not 20. */
     const channelName = `checkins-${nextChannelId()}`;
     console.log(`[Realtime] Subscribing to all checkin changes (channel: ${channelName}, viewing: "${city}")`);
     const channel = supabase
@@ -164,12 +259,17 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
         schema: 'public',
         table: 'app_checkins',
       }, (payload) => {
-        // Only refetch if the changed checkin might be relevant to current city
         const changedCity = (payload.new as any)?.city || (payload.old as any)?.city || '';
-        if (changedCity.toLowerCase() === city.toLowerCase()) {
-          console.log(`[Realtime] ✅ checkin event for ${city}:`, payload.eventType, (payload.new as any)?.id || (payload.old as any)?.id);
-          fetch(); // refetch on any change in this city
+        if (changedCity.toLowerCase() !== city.toLowerCase()) return;
+        // Debounce: reset timer on each event, fetch only after
+        // the burst subsides.
+        if (realtimeDebounceRef.current) {
+          clearTimeout(realtimeDebounceRef.current);
         }
+        realtimeDebounceRef.current = setTimeout(() => {
+          realtimeDebounceRef.current = null;
+          void fetch({ force: true }); // Realtime = real change, bypass time guard
+        }, REALTIME_DEBOUNCE_MS);
       })
       .subscribe((status, err) => {
         console.log(`[Realtime] checkins subscription status: ${status}`, err || '');
@@ -177,6 +277,10 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
 
     return () => {
       clearInterval(pollInterval);
+      if (realtimeDebounceRef.current) {
+        clearTimeout(realtimeDebounceRef.current);
+        realtimeDebounceRef.current = null;
+      }
       console.log(`[Realtime] Unsubscribing checkins channel: ${channelName}`);
       supabase.removeChannel(channel);
     };
@@ -802,6 +906,33 @@ export function useMessages(conversationId: string) {
       return { error: new Error('Session user mismatch. Sign out and sign back in.') as any };
     }
 
+    /* ── Moderation gate ──────────────────────────────────
+     *
+     * Only scans the text portion. Image-only sends pass
+     * through (we don't moderate images at v1 — see launch
+     * freedom policy). Empty text + image is allowed.
+     *
+     * The gate handles its own DB logging + rate-limit
+     * escalation. We only translate the outcome into the
+     * shape `send()` callers expect. */
+    if (content.trim()) {
+      const outcome = await gateContent({
+        userId,
+        surface: 'chat',
+        text: content,
+      });
+      if (outcome.state === 'flagged') {
+        const err = new Error(SEND_BLOCKED_MODERATION) as SendBlockedError;
+        err.gateOutcome = outcome;
+        return { error: err as any };
+      }
+      if (outcome.state === 'rate_limited') {
+        const err = new Error(SEND_BLOCKED_RATE_LIMIT) as SendBlockedError;
+        err.gateOutcome = outcome;
+        return { error: err as any };
+      }
+    }
+
     console.log('[send] attempting insert', { conversationId, userId, contentLen: content.length });
     const { error } = await supabase
       .from('app_messages')
@@ -898,18 +1029,54 @@ export function useProfile(userId: string | null) {
   const [stats, setStats] = useState({ events: 0, followers: 0, following: 0 });
   const [followerPreviews, setFollowerPreviews] = useState<FollowerPreview[]>([]);
   const [loading, setLoading] = useState(true);
+  /* Same 30 s time guard as useActiveCheckins. The big offender
+   * here is HomeScreen's useFocusEffect that calls refetch on
+   * every tab switch. Without the guard, a user bouncing between
+   * Home → Messages → Home → Profile → Home in 60 s fires 5
+   * profile fetches. With the guard: 1 fetch.
+   *
+   * Same systemic principle: every user gets the same behavior;
+   * scales linearly with user count.
+   *
+   * lastFetchAtRef is updated ONLY after a successful fetch, so
+   * a transient failure doesn't lock the user out for 30 s. */
+  const lastFetchAtRef = useRef<number>(0);
+  const inFlightRef = useRef<boolean>(false);
 
-  const fetchProfile = useCallback(async () => {
+  const fetchProfile = useCallback(async (opts?: { force?: boolean }) => {
     if (!userId) { setLoading(false); return; }
+    // In-flight guard — never two fetches at once.
+    if (inFlightRef.current) return;
+    // Time guard — skip if we successfully fetched recently.
+    if (!opts?.force
+        && lastFetchAtRef.current > 0
+        && Date.now() - lastFetchAtRef.current < FETCH_TIME_GUARD_MS) {
+      setLoading(false);
+      return;
+    }
+    inFlightRef.current = true;
 
     // Profile
-    const { data: p } = await supabase
-      .from('app_profiles')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
+    let p: any = null;
+    try {
+      const res = await supabase
+        .from('app_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+      p = res.data;
+    } finally {
+      // Always release the in-flight lock — a thrown exception
+      // here would otherwise stall the hook forever.
+      inFlightRef.current = false;
+    }
 
-    if (p) setProfile(p as unknown as AppProfile);
+    if (p) {
+      setProfile(p as unknown as AppProfile);
+      // Mark fetch as successful AFTER we have data — so the
+      // 30 s time guard only kicks in on a real success.
+      lastFetchAtRef.current = Date.now();
+    }
 
     // Stats — single DB function call instead of 3 separate queries
     const { data: statsData } = await supabase.rpc('get_profile_stats', { p_user_id: userId });
@@ -1492,15 +1659,47 @@ export async function createOrJoinStatusChat(
   try {
     const groupName = statusText || 'Activity';
 
-    // Look for an existing group conversation with this name created by the status owner
-    const { data: existingConvs } = await supabase
-      .from('app_conversations')
-      .select('id')
-      .eq('type', 'group')
-      .eq('name', groupName)
-      .eq('created_by', statusOwnerId);
-
-    const foundConvId = existingConvs?.[0]?.id ?? null;
+    /* Look for an existing group conversation for this status.
+     *
+     * Dedup key priority:
+     *   1. checkin_id (unique per status) — the correct dedup key
+     *      since it's guaranteed 1:1 with the status itself.
+     *   2. name + an app_conversation_members row for the status
+     *      owner as admin — the fallback for legacy groups created
+     *      before checkin_id was populated.
+     *
+     * The OLD dedup (.eq('created_by', statusOwnerId)) broke on
+     * April 2026 when the RLS hardening required created_by to
+     * equal auth.uid() — which meant the FIRST joiner (not the
+     * status owner) is now the DB's created_by. Switching to
+     * checkin_id-based dedup restores the product semantics AND
+     * fits the tightened RLS. */
+    let foundConvId: string | null = null;
+    if (metadata?.checkinId) {
+      const { data: byCheckin } = await supabase
+        .from('app_conversations')
+        .select('id')
+        .eq('type', 'group')
+        .eq('checkin_id', metadata.checkinId)
+        .limit(1);
+      foundConvId = byCheckin?.[0]?.id ?? null;
+    }
+    if (!foundConvId) {
+      // Legacy fallback: find groups where the status owner is an
+      // active admin member, matched by name. Works for groups
+      // created before checkin_id was set on conversations.
+      const { data: legacyMatch } = await supabase
+        .from('app_conversation_members')
+        .select('conversation_id, app_conversations!inner(id, name, type)')
+        .eq('user_id', statusOwnerId)
+        .eq('role', 'admin')
+        .eq('status', 'active');
+      const rows = (legacyMatch || []) as any[];
+      const match = rows.find(
+        (r) => r.app_conversations?.type === 'group' && r.app_conversations?.name === groupName,
+      );
+      foundConvId = match?.conversation_id ?? null;
+    }
 
     if (foundConvId) {
       // Join existing group if not already a member
@@ -1549,13 +1748,20 @@ export async function createOrJoinStatusChat(
       return { conversationId: foundConvId, memberStatus: (alreadyMember ? 'active' : (requiresApproval ? 'request' : 'active')), error: null };
     }
 
-    // No existing group — create a new one (with activity metadata)
+    /* No existing group — create a new one (with activity metadata).
+     *
+     * IMPORTANT: created_by is the INSERTER (auth.uid() = myUserId),
+     * NOT the status owner. The RLS SELECT policy
+     * conversations_group_creator_select requires this so the
+     * RETURNING clause on .select().single() can read the row back.
+     * The status owner is identified separately via admin-role
+     * membership (inserted below) and via the checkin_id link. */
     const { data: newConv, error: convError } = await supabase
       .from('app_conversations')
       .insert({
         type: 'group',
         name: groupName,
-        created_by: statusOwnerId,
+        created_by: myUserId,
         last_message_at: new Date().toISOString(),
         ...(metadata ? {
           emoji: metadata.emoji || null,

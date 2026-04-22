@@ -39,7 +39,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import Bubble from './Bubble';
 import NomadIcon from './NomadIcon';
-import DualThumbSlider from './DualThumbSlider';
+import AgeRangeControl from './AgeRangeControl';
 import { s, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { useI18n } from '../lib/i18n';
 import { detectCategories } from '../lib/categoryDetector';
@@ -135,6 +135,14 @@ interface Props {
    *  one language — no separate modals. */
   hasActiveTimer?: boolean;
   hasActiveScheduled?: boolean;
+  /** Default min age for the new event — synergy rule: pre-fills
+   *  from the user's profile.age_min so their Settings choice is
+   *  what they see here too. They can still override per-event.
+   *  When undefined we fall back to 18 (the absolute minimum). */
+  defaultAgeMin?: number | null;
+  /** Default max age for the new event. Mirrors defaultAgeMin —
+   *  pre-fills from profile.age_max, fallback to 100. */
+  defaultAgeMax?: number | null;
 }
 
 /* ─── Category emoji lookup — matches QuickStatusSheet's existing
@@ -168,6 +176,7 @@ export default function CreationBubble({
   seedLat, seedLng, seedAddress, cityName, publishing,
   onClose, onRequestLocationPick, onPublish, locationUpdaterRef,
   hasActiveTimer, hasActiveScheduled,
+  defaultAgeMin, defaultAgeMax,
 }: Props) {
   const { t } = useI18n();
   const { colors } = useTheme();
@@ -181,8 +190,17 @@ export default function CreationBubble({
   const [lat, setLat] = useState(seedLat);
   const [lng, setLng] = useState(seedLng);
   const [address, setAddress] = useState(seedAddress);
-  const [ageMin, setAgeMin] = useState(18);
-  const [ageMax, setAgeMax] = useState(80);
+  /* Synergy: the NEW event's age gate starts from the user's
+   * profile-level preference (Settings). They can still drag
+   * the slider to override for this one event. Before this
+   * refactor these were hardcoded 18 / 80 — which silently
+   * ignored whatever the user had set in Settings. */
+  const [ageMin, setAgeMin] = useState(
+    defaultAgeMin != null ? Math.max(18, Math.min(99, defaultAgeMin)) : 18
+  );
+  const [ageMax, setAgeMax] = useState(
+    defaultAgeMax != null ? Math.max(19, Math.min(100, defaultAgeMax)) : 100
+  );
   const [isOpen, setIsOpen] = useState(true);
   const [durationMinutes, setDurationMinutes] = useState(60);
 
@@ -191,6 +209,14 @@ export default function CreationBubble({
    * nothing in the WHEN step gets the fastest, most common
    * outcome (1-hour timer right here, right now). */
   const [whenChoice, setWhenChoice] = useState<WhenChoice>('now');
+  /** True once the user has deliberately tapped one of the WHEN
+   *  rows (either "now" or "later"). Used to gate the replace-
+   *  hint so it doesn't appear on fresh open — the user should
+   *  have to OWN the conflicting choice before we warn them.
+   *  Per product-owner directive 2026-04-20: "a warning at open
+   *  time feels like the app is locking you out — the user
+   *  hasn't done anything yet". */
+  const [whenTouched, setWhenTouched] = useState(false);
   /** Only used when whenChoice === 'later'. Null means the user
    *  has not picked a time yet (Continue stays disabled). */
   const [scheduledAt, setScheduledAt] = useState<Date | null>(null);
@@ -225,15 +251,24 @@ export default function CreationBubble({
     setLat(seedLat);
     setLng(seedLng);
     setAddress(seedAddress);
-    setAgeMin(18);
-    setAgeMax(80);
+    /* Re-seed from the user's profile defaults on every fresh
+     * session. If the user changed their age range in Settings,
+     * the next "+" tap picks it up. They can still drag to
+     * override for this specific event. */
+    setAgeMin(
+      defaultAgeMin != null ? Math.max(18, Math.min(99, defaultAgeMin)) : 18
+    );
+    setAgeMax(
+      defaultAgeMax != null ? Math.max(19, Math.min(100, defaultAgeMax)) : 100
+    );
     setIsOpen(true);
     setDurationMinutes(60);
     // Default WHEN choice — always "now" (timer). A conflict
-    // with an existing active timer is surfaced as a "replace"
-    // banner at the PUBLISH step; the user isn't pre-nudged
-    // toward scheduled.
+    // with an existing active timer is surfaced as an inline
+    // hint, but ONLY after the user deliberately taps a WHEN
+    // row — not on fresh open (see whenTouched state below).
     setWhenChoice('now');
+    setWhenTouched(false);
     setScheduledAt(null);
     // Auto-focus the input on step 1 — users expect the keyboard
     // the moment a creation bubble opens.
@@ -527,7 +562,11 @@ export default function CreationBubble({
               app's. */}
           {!isLater && (
             <TouchableOpacity
-              onPress={() => { Haptics.selectionAsync().catch(() => {}); setWhenChoice('now'); }}
+              onPress={() => {
+                Haptics.selectionAsync().catch(() => {});
+                setWhenChoice('now');
+                setWhenTouched(true);
+              }}
               activeOpacity={0.8}
               style={[
                 st.whenRow,
@@ -548,6 +587,7 @@ export default function CreationBubble({
             onPress={() => {
               Haptics.selectionAsync().catch(() => {});
               setWhenChoice(isLater ? 'now' : 'later');
+              setWhenTouched(true);
               if (!isLater && !scheduledAt) {
                 const seed = new Date(dayOptions[0].date);
                 seed.setHours(18, 0, 0, 0);
@@ -574,21 +614,25 @@ export default function CreationBubble({
           </TouchableOpacity>
         </View>
 
-        {/* Conflict banner — appears the moment the user selects
-            an option that clashes with something they already
-            have live. Same amber visual language as everywhere
-            else. One banner in one place; we do NOT repeat it at
-            PUBLISH. */}
-        {((whenChoice === 'now' && hasActiveTimer) ||
-          (whenChoice === 'later' && hasActiveScheduled)) && (
-          <View style={st.replaceBanner}>
-            <NomadIcon name="alert" size={s(6)} color="#B45309" strokeWidth={1.8} />
-            <Text style={st.replaceBannerText}>
-              {whenChoice === 'now'
-                ? t('creation.publish.replaceTimer')
-                : t('creation.publish.replaceScheduled')}
-            </Text>
-          </View>
+        {/* Conflict hint — quiet inline note. Rules:
+             • Only shown AFTER the user has tapped one of the
+               WHEN rows (whenTouched). No warning on fresh open
+               even if 'now' is pre-selected and user has an
+               active timer — the user hasn't chosen anything
+               yet, so don't lecture them.
+             • Neutral grey, no amber, no icon. Reads as a
+               breadcrumb ("hey, just so you know"), not an
+               alarm.
+             • Shown ONLY when the chosen kind matches an
+               already-active checkin of the same kind. */}
+        {whenTouched &&
+          ((whenChoice === 'now' && hasActiveTimer) ||
+           (whenChoice === 'later' && hasActiveScheduled)) && (
+          <Text style={st.replaceInline}>
+            {whenChoice === 'now'
+              ? t('creation.publish.replaceTimer')
+              : t('creation.publish.replaceScheduled')}
+          </Text>
         )}
 
         {/* Inline day+hour picker — only while scheduling. */}
@@ -869,28 +913,25 @@ export default function CreationBubble({
            a smaller muted weight so it reads "age range · 18–80"
            at a glance without eating space. marginTop 2 pulls
            the slider right up under the chips. */}
-      <View style={st.ageRangeHeader}>
-        <Text style={[st.stepLabel, st.ageRangeLabel]}>
-          {t('creation.who.ageRange')}
-        </Text>
-        <Text style={st.ageRangeValue}>
-          {ageMin}–{ageMax}
-        </Text>
-      </View>
-      {/* Slider lives inside a soft grey frame so it reads as a
-           controlled field, not a loose UI element floating in
-           the bubble. Labels shrunk to 11 for a minimal tone —
-           the slider is a secondary detail, not a heading. */}
-      <View style={st.ageSliderFrame}>
-        <DualThumbSlider
-          min={18} max={80}
-          valueMin={ageMin} valueMax={ageMax}
-          onChangeMin={setAgeMin} onChangeMax={setAgeMax}
-          activeColor="#1A1A1A"
-          thumbColor="#1A1A1A"
-          labelFontSize={11}
-        />
-      </View>
+      {/* Age range — uses the unified AgeRangeControl shared
+           with Settings + Onboarding. The slider pre-fills from
+           profile.age_min/max (passed in as defaults by
+           HomeScreen) so the user's one choice in Settings
+           cascades to every new event. They can still drag to
+           override for this specific event — that's the whole
+           point of the per-event control. onCommit lifts the
+           value up after a 400 ms idle so we publish the final
+           min/max even if the user never leaves the WHO step. */}
+      <AgeRangeControl
+        initialMin={ageMin}
+        initialMax={ageMax}
+        onCommit={(min, max) => {
+          setAgeMin(min);
+          setAgeMax(max);
+        }}
+        label={t('creation.who.ageRange')}
+        framed
+      />
 
       <View style={st.rowCtaWrap}>
         <TouchableOpacity
@@ -936,6 +977,20 @@ export default function CreationBubble({
           <SummaryPill icon="users" text={audienceSummary} colors={colors} />
           <SummaryPill icon="users" text={`${ageMin}–${ageMax}`} colors={colors} />
         </View>
+
+        {/* Last-chance replace hint — calm inline copy under
+             the summary pills. Same wording as the WHEN step so
+             the user gets a consistent "yes, this will replace
+             X" story, just quieter and right before the publish
+             button. */}
+        {((isNow && hasActiveTimer) ||
+          (!isNow && hasActiveScheduled)) && (
+          <Text style={st.replaceInline}>
+            {isNow
+              ? t('creation.publish.replaceTimer')
+              : t('creation.publish.replaceScheduled')}
+          </Text>
+        )}
 
         <View style={st.rowCtaWrap}>
           <TouchableOpacity
@@ -1175,28 +1230,19 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     justifyContent: 'center',
   },
 
-  /* PUBLISH step — conflict banner. Shown only when the user's
-     answer will replace an existing active event of the same
-     kind. Amber/warning tone so it reads as "heads up" not
-     "error" — user can still publish, it's their choice. */
-  replaceBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    backgroundColor: '#FEF3C7',
-    borderWidth: 0.5,
-    borderColor: '#FCD34D',
-    marginBottom: 10,
-  },
-  replaceBannerText: {
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 17,
-    fontWeight: '600',
-    color: '#78350F',
+  /* Inline "will replace your current X" hint. Rendered as a
+     single line of calm grey text, NOT as an alarming banner.
+     Lives below the WHEN rows (after user taps one) and again
+     below the PUBLISH summary pills as a last reminder. The
+     user can still proceed — we're informing, not blocking. */
+  replaceInline: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '500',
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 4,
   },
 
   /* Success step — the in-bubble "your post is live" moment.
@@ -1382,45 +1428,11 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     fontWeight: '600',
   },
 
-  /* Age range header — label and "18–80" number on one line, the
-     number smaller + muted so it reads as an annotation, not a
-     second heading. marginTop 2 pulls the slider up snug under
-     the duration chip row. */
-  ageRangeHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 2,
-    marginBottom: 4,
-  },
-  ageRangeLabel: {
-    // Inherits from stepLabel but drops its margin since the
-    // parent row handles vertical spacing.
-    marginBottom: 0,
-  },
-  ageRangeValue: {
-    // Smaller + dark tone per product owner — the "18-80" pair
-    // reads as a compact annotation next to the label, not as a
-    // second heading.
-    fontSize: 10,
-    lineHeight: 13,
-    fontWeight: '700',
-    color: '#111827',
-    letterSpacing: 0.2,
-  },
-
-  /* Grey-bordered frame around the age slider. Keeps the
-     control visually contained; the slider reads as a quiet
-     field, not a loose interactive element. */
-  ageSliderFrame: {
-    borderWidth: 0.5,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    backgroundColor: '#FAFAFA',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-  },
+  /* Age range — the header / frame styles that used to live
+     here moved into <AgeRangeControl/> so Settings, Onboarding
+     and this bubble all share the same frame. Kept the comment
+     as a breadcrumb so anyone hunting "ageRangeLabel" in git
+     blame lands on the refactor. */
 
   /* Summary (step PUBLISH) */
   publishTitle: {

@@ -18,15 +18,48 @@ import { fetchJsonWithTimeout } from './fetchWithTimeout';
 // which returns the actual city name.
 const CITY_SEARCH_RADIUS_KM = 15;
 
-/** Reverse geocode using Nominatim — returns city name or empty string.
- *  Never throws. On timeout / network error, returns '' and the caller
- *  falls back to its default. */
-export async function reverseGeocodeCity(lat: number, lng: number): Promise<string> {
+/** Rich reverse-geocode result — what callers need when they're
+ *  building a full City object (HomeScreen's "my location" crosshair
+ *  flow). Keeps every caller on one Nominatim roundtrip + one set
+ *  of extraction rules instead of inlining them per screen. */
+export interface ReverseGeocodeCityFull {
+  /** e.g. 'Tel Aviv'. '' on any failure. */
+  cityName: string;
+  /** Full country name, e.g. 'Israel'. '' when not returned. */
+  country: string;
+  /** ISO 3166-1 alpha-2 country code, uppercased. undefined
+   *  when Nominatim doesn't return `country_code` (rare). */
+  countryCode: string | undefined;
+}
+
+/** The ONE Nominatim reverse-geocode call in cityResolver — returns
+ *  the full triplet. Never throws. On timeout / network error,
+ *  returns empty fields. Other functions in this module are thin
+ *  wrappers that project out the field they need — there is NEVER
+ *  a second place in this file (or the codebase) that calls
+ *  Nominatim with zoom=10. */
+export async function reverseGeocodeCityFull(
+  lat: number,
+  lng: number,
+): Promise<ReverseGeocodeCityFull> {
   const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&accept-language=en`;
   const data = await fetchJsonWithTimeout<any>(url, { tag: 'nominatim.reverse', timeoutMs: 8000 });
-  if (!data) return '';
+  if (!data) return { cityName: '', country: '', countryCode: undefined };
   const addr = data.address || {};
-  return addr.city || addr.town || addr.village || addr.state || '';
+  const cityName: string = addr.city || addr.town || addr.village || addr.state || '';
+  const country: string = addr.country || '';
+  const rawCC: string | undefined = addr.country_code;
+  const countryCode = rawCC ? rawCC.toUpperCase() : undefined;
+  return { cityName, country, countryCode };
+}
+
+/** City-name-only convenience wrapper. Kept for callers that don't
+ *  need the country + code. Delegates to reverseGeocodeCityFull so
+ *  there is exactly one Nominatim URL + extraction pipeline in the
+ *  module. */
+export async function reverseGeocodeCity(lat: number, lng: number): Promise<string> {
+  const { cityName } = await reverseGeocodeCityFull(lat, lng);
+  return cityName;
 }
 
 /**

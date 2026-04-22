@@ -13,7 +13,11 @@ import type { RouteProp } from '@react-navigation/native';
 import NomadIcon from '../components/NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList, AppMessage } from '../lib/types';
-import { useMessages, markConversationRead, acceptDMRequest, declineDMRequest, blockUser, leaveGroupChat, deleteMessage, reportMessage } from '../lib/hooks';
+import {
+  useMessages, markConversationRead, acceptDMRequest, declineDMRequest,
+  blockUser, leaveGroupChat, deleteMessage, reportMessage,
+  SEND_BLOCKED_MODERATION, SEND_BLOCKED_RATE_LIMIT,
+} from '../lib/hooks';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18n';
 import { AuthContext, UnreadContext } from '../App';
@@ -134,11 +138,27 @@ export default function ChatScreen() {
       // text so the user doesn't lose what they typed.
       console.warn('[ChatScreen] send failed:', error);
       setInputText(text);
-      const msg = error.message || 'Could not send message. Check your connection and try again.';
-      if (Platform.OS === 'web') {
-        window.alert(msg);
+
+      /* Moderation gate outcomes are signalled via sentinel
+       * error messages — translate them to localized alerts
+       * so Hebrew / Russian users see their own language. */
+      let alertTitle: string;
+      let alertBody: string;
+      if (error.message === SEND_BLOCKED_MODERATION) {
+        alertTitle = t('moderation.blockedTitle');
+        alertBody = t('moderation.blockedBody');
+      } else if (error.message === SEND_BLOCKED_RATE_LIMIT) {
+        alertTitle = t('moderation.rateLimitedTitle');
+        alertBody = t('moderation.rateLimitedBody');
       } else {
-        Alert.alert('Message not sent', msg);
+        alertTitle = 'Message not sent';
+        alertBody = error.message || 'Could not send message. Check your connection and try again.';
+      }
+
+      if (Platform.OS === 'web') {
+        window.alert(`${alertTitle}\n${alertBody}`);
+      } else {
+        Alert.alert(alertTitle, alertBody);
       }
       return;
     }

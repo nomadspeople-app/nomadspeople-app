@@ -19,7 +19,8 @@ import { useAuthContext } from '../App';
 import { supabase } from '../lib/supabase';
 import { useI18n, LOCALE_META, SUPPORTED_LOCALES, type Locale } from '../lib/i18n';
 import type { RootStackParamList } from '../lib/types';
-import DualThumbSlider from '../components/DualThumbSlider';
+import AgeRangeControl from '../components/AgeRangeControl';
+import DNAEditorModal from '../components/DNAEditorModal';
 import { setUserNotificationPrefs, getUserNotificationPrefs } from '../lib/notifications';
 import * as Haptics from 'expo-haptics';
 
@@ -44,48 +45,11 @@ const LANGUAGES = [
 ];
 
 /* ─── DNA data (same as Onboarding) ─── */
-const NOMAD_TYPES = [
-  { emoji: '💻', label: 'Digital Nomad' },
-  { emoji: '🏠', label: 'Remote Worker' },
-  { emoji: '🚀', label: 'Startup Founder' },
-  { emoji: '✍️', label: 'Freelancer' },
-  { emoji: '🌍', label: 'Expat' },
-  { emoji: '🎒', label: 'Traveler' },
-];
-
-const INTERESTS = [
-  { cat: 'work & productivity', items: [
-    { emoji: '💻', label: 'Co-working' }, { emoji: '☕', label: 'Cafe Work' },
-    { emoji: '📡', label: 'Fast WiFi' }, { emoji: '🤝', label: 'Networking' },
-  ]},
-  { cat: 'social & nightlife', items: [
-    { emoji: '🍻', label: 'Nightlife' }, { emoji: '🎉', label: 'Events' },
-    { emoji: '🍽️', label: 'Food & Drinks' }, { emoji: '💬', label: 'Meetups' },
-  ]},
-  { cat: 'outdoor & active', items: [
-    { emoji: '🏄', label: 'Surfing' }, { emoji: '🥾', label: 'Hiking' },
-    { emoji: '🚴', label: 'Cycling' }, { emoji: '🧘', label: 'Yoga' },
-  ]},
-  { cat: 'lifestyle', items: [
-    { emoji: '📸', label: 'Photography' }, { emoji: '🎵', label: 'Music' },
-    { emoji: '📚', label: 'Reading' }, { emoji: '🌱', label: 'Wellness' },
-  ]},
-];
-
-const LOOKING_FOR = [
-  { emoji: '👋', label: 'Friends' },
-  { emoji: '🧳', label: 'Travel Buddies' },
-  { emoji: '💼', label: 'Work Partners' },
-  { emoji: '❤️', label: 'Dating' },
-  { emoji: '🏠', label: 'Roommates' },
-];
-
-/* All selectable items for "featured tags" — flat list from interests + looking_for + nomad types */
-const ALL_TAG_OPTIONS: { emoji: string; label: string }[] = [
-  ...NOMAD_TYPES,
-  ...INTERESTS.flatMap(g => g.items),
-  ...LOOKING_FOR,
-];
+/* DNA constants (NOMAD_TYPES / INTERESTS / LOOKING_FOR /
+ * ALL_TAG_OPTIONS) moved into components/DNAEditorModal.tsx
+ * as part of the 2026-04-20 scroll-jump fix. SettingsScreen no
+ * longer needs to know about them — it just hands state down to
+ * the modal. */
 
 /* ═══════════════════════════════════════════
    MAIN SETTINGS SCREEN
@@ -110,8 +74,11 @@ export default function SettingsScreen() {
   const [showOnMap, setShowOnMap] = useState(true);
   const [snoozeMode, setSnoozeMode] = useState(false);
   const [hideDistance, setHideDistance] = useState(false);
-  const [ageMin, setAgeMin] = useState(18);
-  const [ageMax, setAgeMax] = useState(100);
+  /* Age range is owned by AgeRangeControl — no local mirror
+   * state here. Reading profile.age_min / age_max directly keeps
+   * SettingsScreen out of the drag loop (the root cause of the
+   * "jumpy slider" complaint was this screen re-rendering on
+   * every PanResponder tick). */
   const [notifyProfileView, setNotifyProfileView] = useState(true);
   const [notifyChat, setNotifyChat] = useState(true);
   const [notifyActivityJoined, setNotifyActivityJoined] = useState(true);
@@ -252,157 +219,13 @@ export default function SettingsScreen() {
     );
   }
 
-  /* ─── Chip component for DNA editor ─── */
-  function Chip({
-    emoji, label, selected, onPress,
-  }: {
-    emoji: string; label: string; selected: boolean; onPress: () => void;
-  }) {
-    return (
-      <TouchableOpacity
-        style={[styles.chip, selected && styles.chipSelected]}
-        onPress={onPress}
-        activeOpacity={0.6}
-      >
-        <Text style={styles.chipEmoji}>{emoji}</Text>
-        <Text style={[styles.chipLabel, selected && styles.chipLabelSelected]}>{label}</Text>
-      </TouchableOpacity>
-    );
-  }
-
-  /* ─── DNA Editor Modal ─── */
-  function DNAEditorModal({
-    visible, onClose,
-    nomadType, setNomadType,
-    interests, setInterests,
-    lookingFor, setLookingFor,
-    featuredTags, setFeaturedTags,
-    onSave,
-  }: {
-    visible: boolean; onClose: () => void;
-    nomadType: string; setNomadType: (v: string) => void;
-    interests: string[]; setInterests: (v: string[]) => void;
-    lookingFor: string[]; setLookingFor: (v: string[]) => void;
-    featuredTags: string[]; setFeaturedTags: (v: string[]) => void;
-    onSave: () => void;
-  }) {
-    const dnaInsets = useSafeAreaInsets();
-
-    const toggleInterest = (label: string) => {
-      setInterests(
-        interests.includes(label)
-          ? interests.filter(i => i !== label)
-          : interests.length < 10 ? [...interests, label] : interests
-      );
-    };
-
-    const toggleLooking = (label: string) => {
-      setLookingFor(
-        lookingFor.includes(label)
-          ? lookingFor.filter(i => i !== label)
-          : [...lookingFor, label]
-      );
-    };
-
-    const toggleFeatured = (label: string) => {
-      setFeaturedTags(
-        featuredTags.includes(label)
-          ? featuredTags.filter(t => t !== label)
-          : featuredTags.length < 4 ? [...featuredTags, label] : featuredTags
-      );
-    };
-
-    const allSelected = [...interests, ...lookingFor, nomadType].filter(Boolean);
-
-    return (
-      <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-        <View style={[styles.dnaRoot, { paddingTop: dnaInsets.top }]}>
-          <View style={styles.dnaHeader}>
-            <TouchableOpacity onPress={onClose}>
-              <NomadIcon name="close" size={s(10)} color={colors.dark} strokeWidth={1.8} />
-            </TouchableOpacity>
-            <Text style={styles.dnaTitle}>Edit Your DNA</Text>
-            <TouchableOpacity onPress={onSave}>
-              <Text style={styles.dnaSaveBtn}>Save</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={styles.dnaScroll} showsVerticalScrollIndicator={false}>
-            <Text style={styles.dnaSection}>I am a...</Text>
-            <View style={styles.chipWrap}>
-              {NOMAD_TYPES.map((t) => (
-                <Chip
-                  key={t.label}
-                  emoji={t.emoji}
-                  label={t.label}
-                  selected={nomadType === t.label}
-                  onPress={() => setNomadType(nomadType === t.label ? '' : t.label)}
-                />
-              ))}
-            </View>
-
-            <Text style={styles.dnaSection}>Interests <Text style={styles.dnaSectionSub}>({interests.length}/10)</Text></Text>
-            {INTERESTS.map((group) => (
-              <View key={group.cat}>
-                <Text style={styles.dnaCatLabel}>{group.cat}</Text>
-                <View style={styles.chipWrap}>
-                  {group.items.map((item) => (
-                    <Chip
-                      key={item.label}
-                      emoji={item.emoji}
-                      label={item.label}
-                      selected={interests.includes(item.label)}
-                      onPress={() => toggleInterest(item.label)}
-                    />
-                  ))}
-                </View>
-              </View>
-            ))}
-
-            <Text style={styles.dnaSection}>Looking for</Text>
-            <View style={styles.chipWrap}>
-              {LOOKING_FOR.map((item) => (
-                <Chip
-                  key={item.label}
-                  emoji={item.emoji}
-                  label={item.label}
-                  selected={lookingFor.includes(item.label)}
-                  onPress={() => toggleLooking(item.label)}
-                />
-              ))}
-            </View>
-
-            <Text style={styles.dnaSection}>
-              Featured on Profile <Text style={styles.dnaSectionSub}>({featuredTags.length}/4)</Text>
-            </Text>
-            <Text style={styles.dnaFeaturedHint}>
-              Choose up to 4 items to display on your profile so people know what you're about
-            </Text>
-            <View style={styles.chipWrap}>
-              {allSelected.map((label) => {
-                const found = ALL_TAG_OPTIONS.find(o => o.label === label);
-                if (!found) return null;
-                return (
-                  <Chip
-                    key={found.label}
-                    emoji={found.emoji}
-                    label={found.label}
-                    selected={featuredTags.includes(found.label)}
-                    onPress={() => toggleFeatured(found.label)}
-                  />
-                );
-              })}
-              {allSelected.length === 0 && (
-                <Text style={styles.dnaEmptyHint}>Select interests & looking for above first</Text>
-              )}
-            </View>
-
-            <View style={{ height: dnaInsets.bottom + s(20) }} />
-          </ScrollView>
-        </View>
-      </Modal>
-    );
-  }
+  /* Chip + DNAEditorModal extracted to
+   * components/DNAEditorModal.tsx (2026-04-20). They used to be
+   * defined nested inside this component body, which caused
+   * React to re-create their identities on every SettingsScreen
+   * re-render — leading to the ScrollView snapping back to the
+   * top on every chip tap. Now they live at module scope where
+   * the identity is stable. */
 
   // Sync from DB
   useEffect(() => {
@@ -419,8 +242,8 @@ export default function SettingsScreen() {
     // separate `snooze_mode` DB field is no longer read anywhere.
     setSnoozeMode(profile.show_on_map === false);
     setHideDistance((profile as any).hide_distance ?? false);
-    setAgeMin(profile.age_min ?? 18);
-    setAgeMax(profile.age_max ?? 100);
+    /* age_min / age_max are read straight from `profile` where
+     * the slider renders — no mirror state to sync here. */
     setNotifyProfileView(profile.notify_profile_view ?? true);
     setNotifyChat((profile as any).notify_chat ?? true);
     setNotifyActivityJoined((profile as any).notify_activity_joined ?? true);
@@ -570,22 +393,19 @@ export default function SettingsScreen() {
     }
   };
 
-  /* handleAgeChange — debounced save.
-   *
-   * DualThumbSlider fires onChangeMin/Max on every PanResponder
-   * move (many times per second). Calling Supabase update on
-   * every tick made the slider feel stuck/jumpy because each
-   * drag triggered a DB write on the render path. We now update
-   * local state immediately for smooth motion, and only fire
-   * the save 400 ms after the user stops dragging. */
-  const ageSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleAgeChange = (min: number, max: number) => {
-    setAgeMin(min);
-    setAgeMax(max);
-    if (ageSaveTimer.current) clearTimeout(ageSaveTimer.current);
-    ageSaveTimer.current = setTimeout(() => {
-      save({ age_min: min, age_max: max });
-    }, 400);
+  /* handleAgeCommit — called by AgeRangeControl 400 ms after the
+   * user stops dragging. AgeRangeControl has already busted the
+   * viewer age cache so the map will pick up the new preference
+   * on next refetch; we just persist and surface errors. */
+  const handleAgeCommit = async (min: number, max: number) => {
+    if (!userId) return;
+    const { error } = await update(userId, { age_min: min, age_max: max });
+    if (error) {
+      Alert.alert(
+        t('common.error') || 'Error',
+        t('settings.ageSaveError') || 'Could not save your age range. Please try again.'
+      );
+    }
   };
 
   const handleToggleProfileView = (val: boolean) => {
@@ -967,25 +787,29 @@ export default function SettingsScreen() {
               />
             }
           />
-          {/* Age Range */}
+          {/* Age Range —
+               Uses the unified AgeRangeControl so Settings,
+               Onboarding and CreationBubble all render the same
+               slider, and so dragging doesn't re-render this
+               huge screen on every tick (which was the root
+               cause of the "jumpy slider" complaint). */}
           <View style={styles.row}>
             <View style={[styles.rowIcon, { backgroundColor: colors.pill }]}>
               <NomadIcon name="users" size={s(7)} color={colors.dark} strokeWidth={1.6} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.rowLabel, { color: colors.dark }]}>Creator age range</Text>
-              <View style={{ marginTop: s(4), marginBottom: s(2) }}>
-                <DualThumbSlider
-                  min={18}
-                  max={100}
-                  valueMin={ageMin}
-                  valueMax={ageMax}
-                  onChangeMin={(v) => handleAgeChange(v, ageMax)}
-                  onChangeMax={(v) => handleAgeChange(ageMin, v)}
-                  step={1}
-                  activeColor="#1A1A1A"
-                  thumbColor="#1A1A1A"
-                  labelFontSize={13}
+              <Text style={[styles.rowLabel, { color: colors.dark }]}>
+                {t('settings.ageRange')}
+              </Text>
+              <Text style={[styles.rowSublabel, { color: colors.textMuted }]}>
+                {t('settings.ageRangeSub')}
+              </Text>
+              <View style={{ marginTop: s(6), marginBottom: s(2) }}>
+                <AgeRangeControl
+                  initialMin={profile?.age_min ?? 18}
+                  initialMax={profile?.age_max ?? 100}
+                  onCommit={handleAgeCommit}
+                  framed
                 />
               </View>
             </View>
@@ -1453,45 +1277,7 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   langLabel: { fontSize: s(7.5), fontWeight: FW.medium, color: c.dark },
   langNative: { fontSize: s(5.5), color: c.textMuted, marginTop: s(0.5) },
 
-  /* ─── DNA Editor ─── */
-  dnaRoot: { flex: 1, backgroundColor: c.bg },
-  dnaHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: s(10), paddingVertical: s(6),
-    backgroundColor: c.card, borderBottomWidth: 0.5, borderBottomColor: c.borderSoft,
-  },
-  dnaTitle: { fontSize: s(9), fontWeight: FW.bold, color: c.dark },
-  dnaSaveBtn: { fontSize: s(7.5), fontWeight: FW.bold, color: c.primary },
-  dnaScroll: { flex: 1, padding: s(10) },
-  dnaSection: {
-    fontSize: s(8), fontWeight: FW.bold, color: c.dark,
-    marginTop: s(10), marginBottom: s(4),
-  },
-  dnaSectionSub: { fontSize: s(6), fontWeight: FW.medium, color: c.textMuted },
-  dnaCatLabel: {
-    fontSize: s(5.5), fontWeight: FW.bold, color: c.textMuted,
-    textTransform: 'uppercase', letterSpacing: 0.5,
-    marginTop: s(5), marginBottom: s(3),
-  },
-  dnaFeaturedHint: {
-    fontSize: s(6), color: c.textMuted, marginBottom: s(5), lineHeight: s(9),
-  },
-  dnaEmptyHint: {
-    fontSize: s(6), color: c.textFaint, fontStyle: 'italic', padding: s(4),
-  },
-
-  /* Chips */
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: s(3) },
-  chip: {
-    flexDirection: 'row', alignItems: 'center', gap: s(2),
-    paddingVertical: s(3.5), paddingHorizontal: s(6),
-    borderRadius: s(10), backgroundColor: c.card,
-    borderWidth: 1.5, borderColor: c.borderSoft,
-  },
-  chipSelected: {
-    borderColor: c.primary, backgroundColor: c.dangerSurface,
-  },
-  chipEmoji: { fontSize: s(7) },
-  chipLabel: { fontSize: s(6), fontWeight: FW.medium, color: c.dark },
-  chipLabelSelected: { color: c.primary, fontWeight: FW.bold },
+  /* DNA Editor + Chip styles moved into
+   * components/DNAEditorModal.tsx alongside the components
+   * that use them (2026-04-20 scroll-jump fix). */
 });

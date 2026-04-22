@@ -7,9 +7,15 @@ import NomadIcon from './NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { useI18n } from '../lib/i18n';
 import type { NomadInCity } from '../lib/hooks';
+import { useViewerCountry, isSameCountryAsViewer } from '../lib/geo';
 
 const { height: SH } = Dimensions.get('window');
 const SHEET_H = SH * 0.72;
+
+/** Gate 2 of the geo-boundaries spec: foreign viewers see the first
+ *  CLEAR_ROW_LIMIT rows normally, rest are blurred and non-interactive.
+ *  See docs/product-decisions/2026-04-20-geo-boundaries-spec.md. */
+const CLEAR_ROW_LIMIT = 8;
 
 interface Props {
   visible: boolean;
@@ -17,13 +23,37 @@ interface Props {
   nomads: NomadInCity[];
   cityName: string;
   onViewProfile: (userId: string, name: string) => void;
+  /** ISO 3166-1 alpha-2 country code of the city this list represents.
+   *  When the viewer's GPS country differs, rows past CLEAR_ROW_LIMIT
+   *  are rendered in a blurred, non-interactive state. */
+  listCountryCode?: string;
 }
 
-export default function NomadsListSheet({ visible, onClose, nomads, cityName, onViewProfile }: Props) {
+export default function NomadsListSheet({
+  visible,
+  onClose,
+  nomads,
+  cityName,
+  onViewProfile,
+  listCountryCode,
+}: Props) {
   const { t } = useI18n();
   const { colors } = useTheme();
   const st = useMemo(() => makeStyles(colors), [colors]);
   const translateY = useRef(new Animated.Value(SHEET_H)).current;
+
+  /* ── Geo gate: is the viewer foreign to this list's country? ──
+     useViewerCountry returns null until GPS + reverse-geocode finish.
+     isSameCountryAsViewer fail-opens on null — so while we're warming
+     up (and also for users who denied location), every row renders
+     clear. The refined foreign treatment kicks in once the hook
+     resolves. */
+  const viewerCountry = useViewerCountry();
+  const isForeignViewer = !isSameCountryAsViewer(
+    viewerCountry,
+    listCountryCode ?? null,
+  );
+  const showForeignHint = isForeignViewer && nomads.length > CLEAR_ROW_LIMIT;
 
   useEffect(() => {
     if (visible) {
@@ -48,8 +78,44 @@ export default function NomadsListSheet({ visible, onClose, nomads, cityName, on
   const getInitials = (name?: string | null) =>
     name ? name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() : '??';
 
-  const renderNomad = ({ item }: { item: NomadInCity }) => {
+  const renderNomad = ({ item, index }: { item: NomadInCity; index: number }) => {
     const name = item.display_name || item.full_name || item.username || 'Nomad';
+    const isBlurred = isForeignViewer && index >= CLEAR_ROW_LIMIT;
+
+    /* ── Blurred row — foreign viewer, past the clear threshold. ──
+       Renders as a non-interactive <View>. We deliberately keep the
+       online dot so the density signal survives; only identity is
+       masked. No onPress, no forward arrow — tapping does nothing. */
+    if (isBlurred) {
+      return (
+        <View style={st.nomadRow}>
+          <View style={st.avWrap}>
+            {item.avatar_url ? (
+              <Image
+                source={{ uri: item.avatar_url }}
+                style={[st.avImg, st.avBlurred]}
+                blurRadius={12}
+              />
+            ) : (
+              <View style={[st.avFallback, st.avBlurred]}>
+                <Text style={st.avTxt}>{getInitials(item.full_name)}</Text>
+              </View>
+            )}
+            <View style={st.onlineDot} />
+          </View>
+
+          <View style={st.infoCol}>
+            <Text style={[st.nomadName, st.nomadBlurredText]} numberOfLines={1}>
+              {t('geo.nomad.blurredName')}
+            </Text>
+            <Text style={[st.nomadJob, st.nomadBlurredText]} numberOfLines={1}>
+              {t('geo.nomad.blurredJob')}
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
     return (
       <TouchableOpacity
         style={st.nomadRow}
@@ -120,6 +186,16 @@ export default function NomadsListSheet({ visible, onClose, nomads, cityName, on
             showsVerticalScrollIndicator={false}
             contentContainerStyle={st.listContent}
             ItemSeparatorComponent={() => <View style={st.separator} />}
+            ListHeaderComponent={
+              showForeignHint ? (
+                <View style={st.foreignHintWrap}>
+                  <NomadIcon name="globe" size={s(5.5)} color={colors.textMuted} strokeWidth={1.6} />
+                  <Text style={st.foreignHintText} numberOfLines={3}>
+                    {t('geo.nomad.listForeignHint')}
+                  </Text>
+                </View>
+              ) : null
+            }
             ListEmptyComponent={
               <View style={st.emptyWrap}>
                 <NomadIcon name="users" size={s(14)} color={colors.textMuted} strokeWidth={1.8} />
@@ -197,4 +273,32 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   /* Empty */
   emptyWrap: { alignItems: 'center', paddingTop: s(20), gap: s(5) },
   emptyText: { fontSize: s(6), color: c.textMuted },
+
+  /* Foreign viewer hint — shown above the list when viewer's country
+     differs from the list's country and the list exceeds the clear
+     threshold. Quiet, non-alarming, explains the blur. */
+  foreignHintWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: s(4),
+    paddingVertical: s(5),
+    paddingHorizontal: s(7),
+    marginBottom: s(4),
+    backgroundColor: c.pill,
+    borderRadius: s(8),
+  },
+  foreignHintText: {
+    flex: 1,
+    fontSize: s(5),
+    color: c.textSec,
+    lineHeight: s(7),
+  },
+
+  /* Blurred row styling — applied to avatar/fallback + name/job text
+     for rows past CLEAR_ROW_LIMIT when the viewer is foreign. */
+  avBlurred: { opacity: 0.55 },
+  nomadBlurredText: {
+    color: c.textMuted,
+    letterSpacing: s(1),
+  },
 });

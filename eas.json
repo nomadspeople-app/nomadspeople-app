@@ -9,16 +9,19 @@
       "distribution": "internal",
       "ios": {
         "simulator": true
-      }
+      },
+      "channel": "development"
     },
     "preview": {
       "distribution": "internal",
+      "channel": "staging",
       "ios": {
         "simulator": false
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "channel": "production"
     }
   },
   "submit": {

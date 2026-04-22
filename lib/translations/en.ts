@@ -68,8 +68,11 @@ export const en: Record<string, string> = {
   'creation.publish': 'publish',
   'creation.publishing': 'publishing…',
   'creation.publish.replace': 'replace and publish',
-  'creation.publish.replaceTimer': 'you have an active timer. publishing will end it and start a new one.',
-  'creation.publish.replaceScheduled': 'you have a scheduled event. publishing will replace it.',
+  /* Short inline copy — reads as a breadcrumb next to the
+   * chosen WHEN row and under the PUBLISH summary. NOT an
+   * alarming banner; the user is still free to proceed. */
+  'creation.publish.replaceTimer': 'will replace your current timer',
+  'creation.publish.replaceScheduled': 'will replace your current scheduled event',
   'creation.success.timer': 'your timer is live',
   'creation.success.timerSub': 'people nearby can see it now',
   'creation.success.scheduled': 'your event is scheduled',
@@ -100,6 +103,72 @@ export const en: Record<string, string> = {
   'creation.who.openAll': 'anyone',
   'creation.who.private': 'approval needed',
   'creation.who.ageRange': 'age range',
+  /* Event WHEN — rendered under the title on TimerBubble (map pin tap)
+   * and GroupInfoScreen. Keep the wording short — bubble/card surfaces
+   * are narrow. {{dur}} is a language-neutral short form like "23m"
+   * / "1h 5m" / "2d", interpolated at the call site.
+   * See lib/eventTime.ts for the full state machine. */
+  'event.when.endsIn': 'ends in {{dur}}',
+  'event.when.startsIn': 'starts in {{dur}}',
+  'event.when.liveNow': 'live now',
+  'event.when.ended': 'ended',
+  'event.when.today': 'today',
+  'event.when.tomorrow': 'tomorrow',
+  'event.when.allDay': 'all day',
+  'event.when.sep': ' · ',
+  'event.when.label': 'when',
+  /* Publish-failed alert — surfaced when the INSERT into
+   * app_checkins rejects (RLS / network / validation). Before
+   * this the failure was silent and users thought the post
+   * worked but nothing appeared on the map. {{detail}} is the
+   * Supabase error message, interpolated at the call site. */
+  /* TimerBubble labels — the quick-peek bubble shown on map pin
+   * tap and on PeopleScreen card tap. Keep short: the bubble is
+   * narrow and the buttons are single-purpose. */
+  'event.cta.join': 'join',
+  'event.cta.chat': 'chat',
+  'event.cta.leave': 'leave',
+  'event.cta.endNow': 'end now',
+  'event.going': '{{count}} going',
+  'event.you': 'you',
+  /* Defensive fallbacks for legacy/corrupt rows where
+   * profile.full_name is null or activity_text/status_text
+   * are both empty. Happy-path data always has these, but
+   * rendering `'Nomad'` or `'Timer'` as English literals
+   * would break the i18n mandate for Hebrew/Russian users
+   * on edge cases. */
+  'event.fallback.creator': 'nomad',
+  'event.fallback.activity': 'activity',
+  /* Moderation alerts — shown when scanText blocks a chat
+   * message or a checkin publish. Tone: polite + short. The
+   * user can still proceed by editing their text. */
+  'moderation.blockedTitle': 'couldn\'t send',
+  'moderation.blockedBody': 'your message looks like it might violate community guidelines. please rephrase.',
+  'moderation.blockedCheckinBody': 'your activity text looks like it might violate community guidelines. please rephrase.',
+  'moderation.rateLimitedTitle': 'paused briefly',
+  'moderation.rateLimitedBody': 'you\'ve been limited from sending for an hour. you can still browse — try again later.',
+  /* Geo boundary alerts — publish gate + join gate.
+   * See docs/product-decisions/2026-04-20-geo-boundaries-spec.md. */
+  'geo.block.publishTitle': 'can\'t publish here',
+  'geo.block.publishBody': 'this pin is in {{eventCountry}} but you\'re in {{homeCountry}}. you can only post events where you are.',
+  'geo.block.publishNoGps': 'we need your location to post. please enable location in Settings.',
+  'geo.block.publishGeocodeFail': 'couldn\'t verify your location. try again in a moment.',
+  'geo.block.joinDisabledLabel': 'far from home',
+  'geo.block.joinDisabledSub': 'travel to {{country}} to join',
+  'geo.nomad.blurredName': '· · ·',
+  'geo.nomad.blurredJob': '· · ·',
+  'geo.nomad.listForeignHint': 'you\'re visiting from abroad — meet these nomads in person to see who they are.',
+  'event.error.joinFailedTitle': 'could not join',
+  'event.error.joinFailedGeneric': 'please try again',
+  'event.confirm.leaveTitle': 'leave this event?',
+  'event.confirm.leaveBody': 'you won\'t get messages from this group anymore.',
+  'event.confirm.leaveAction': 'leave',
+  'event.confirm.endTitle': 'end this now?',
+  'event.confirm.endBody': 'people will no longer see it on the map or be able to join.',
+  'event.confirm.endAction': 'end',
+  'creation.error.title': 'couldn\'t publish',
+  'creation.error.body': 'we couldn\'t save your post — {{detail}}',
+  'creation.error.bodyGeneric': 'we couldn\'t save your post. please check your connection and try again.',
 
   /* ── People Screen ── */
   'people.title': 'people',
@@ -215,6 +284,10 @@ export const en: Record<string, string> = {
   'settings.editInterests': 'edit interests & type',
   'settings.featuredTags': 'featured tags',
   'settings.privacy': 'privacy',
+  'settings.ageRange': 'age range',
+  'settings.ageRangeSub': 'who you want to see and who can see you',
+  'settings.ageSaveError': 'Could not save your age range. Please try again.',
+  'common.error': 'Error',
   'settings.showOnMap': 'show me on the map',
   'settings.showOnMapSub': 'other nomads can see you nearby',
   'settings.appearance': 'appearance',

@@ -24,10 +24,19 @@ import { haversineKm, formatDistance } from '../lib/distance';
 import { useActiveCheckins, useFlightGroups, type FlightGroup } from '../lib/hooks';
 import { AuthContext } from '../App';
 import { supabase } from '../lib/supabase';
+import { wakeUpVisibility } from '../lib/visibility';
 import { trackEvent } from '../lib/tracking';
 import { useI18n } from '../lib/i18n';
 import { detectCategories } from '../lib/categoryDetector';
-import ActivityDetailSheet from '../components/ActivityDetailSheet';
+/* Same bubble everywhere — tapping an activity card on this
+ * screen opens the identical TimerBubble shell used on the
+ * map (HomeScreen). Before April 2026 this screen used its
+ * own ActivityDetailSheet, which was the one remaining
+ * divergent surface in the product: different shell, different
+ * animation, different visual weight than the map bubble.
+ * Now they share one component, one anchor style, one
+ * language. */
+import TimerBubble from '../components/TimerBubble';
 import FlightDetailSheet from '../components/FlightDetailSheet';
 import type { AppCheckin } from '../lib/types';
 
@@ -257,11 +266,12 @@ export default function PeopleScreen() {
       Animated.timing(cloudRightX, { toValue: screenW, duration: 500, delay: 100, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
       Animated.timing(overlayOpacity, { toValue: 0, duration: 600, delay: 150, useNativeDriver: true }),
     ]).start(async () => {
-      // Wake up — write only show_on_map (the one truth). The
-      // legacy `snooze_mode` field is not touched; readers pivoted
-      // to show_on_map in Stage 9.
-      await supabase.from('app_profiles').update({ show_on_map: true }).eq('user_id', userId);
-      await supabase.from('app_checkins').update({ visibility: 'public' }).eq('user_id', userId).eq('is_active', true);
+      // Wake up — delegate to the shared lib/visibility helper so
+      // HomeScreen's wake-up and this one share one mutation path.
+      // See docs/architecture: the two writes (show_on_map=true,
+      // checkin.visibility=public) must travel together or the user
+      // ends up half-visible.
+      await wakeUpVisibility(userId);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       fetchMyProfile();
     });
@@ -603,8 +613,8 @@ export default function PeopleScreen() {
         )}
       </View>
 
-      {/* ── Activity Detail Sheet ── */}
-      <ActivityDetailSheet
+      {/* ── Unified activity bubble (same shell as the map) ── */}
+      <TimerBubble
         visible={!!selectedCheckin}
         checkin={selectedCheckin}
         creatorName={selectedCreatorName}

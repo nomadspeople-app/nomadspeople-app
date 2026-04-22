@@ -15,7 +15,7 @@ import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList } from '../lib/types';
 import { postEventSystemMessage, eventSystemMsg } from '../lib/eventSystemMessages';
 import { resolveCityFromCoordinates } from '../lib/cityResolver';
-import { fetchJsonWithTimeout } from '../lib/fetchWithTimeout';
+import { searchAddress, type GeoResult } from '../lib/locationServices';
 import { useProfile, useFollow, usePhotoPosts, usePhotoLike, usePhotoComments, createOrJoinStatusChat, createOrFindDM, calcAge, getZodiac, blockUser, approvePendingMember, denyPendingMember, type FollowerPreview } from '../lib/hooks';
 import { AuthContext, useAuthContext } from '../App';
 import type { PhotoPost } from '../lib/hooks';
@@ -461,7 +461,13 @@ export default function ProfileScreen() {
   const [editMinute, setEditMinute] = useState(0);
   const [editDay, setEditDay] = useState(0);
   const [locationQuery, setLocationQuery] = useState('');
-  const [locationResults, setLocationResults] = useState<{ name: string; sub: string; lat: number; lng: number; city: string | null }[]>([]);
+  // GeoResult is the shared output shape from lib/locationServices —
+  // every screen that does address search speaks the same language.
+  // Previously this screen carried its own {name,sub,lat,lng,city}
+  // tuple and ran its own Photon fetch; that was a Rule Zero
+  // violation against the shared helper. Now we consume formatPhoton's
+  // output directly.
+  const [locationResults, setLocationResults] = useState<GeoResult[]>([]);
   const locationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Build next 7 days for date picker
@@ -1696,63 +1702,60 @@ export default function ProfileScreen() {
                         if (locationTimer.current) clearTimeout(locationTimer.current);
                         if (text.length < 2) { setLocationResults([]); return; }
                         locationTimer.current = setTimeout(async () => {
-                          // fetchJsonWithTimeout returns null on any failure
-                          // (timeout, network, parse) — user gets an empty
-                          // dropdown instead of a LogBox error.
-                          const json = await fetchJsonWithTimeout<any>(
-                            `https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&limit=5`,
-                            { tag: 'photon.location', timeoutMs: 7000 },
-                          );
-                          const results = (json?.features || []).map((f: any) => {
-                            const p = f.properties || {};
-                            const coords = f.geometry?.coordinates || [0, 0];
-                            return {
-                              name: p.name || p.street || text,
-                              sub: [p.city, p.state, p.country].filter(Boolean).join(', '),
-                              lat: coords[1],
-                              lng: coords[0],
-                              // Capture the city (or fall back to state/name) so the
-                              // event's city field gets rewritten on save and the
-                              // event shows on the NEW city's map, not the old one.
-                              city: p.city || p.state || p.name || null,
-                            };
-                          });
+                          // searchAddress is the shared lib/locationServices
+                          // helper — same Photon endpoint, same formatter,
+                          // same de-duped main/sub lines as every other
+                          // place-picker in the app. Returns [] on any
+                          // failure so the dropdown just stays empty
+                          // instead of showing a red banner.
+                          const biasLat = stagedChanges.latitude ?? editCheckin?.latitude ?? 0;
+                          const biasLng = stagedChanges.longitude ?? editCheckin?.longitude ?? 0;
+                          const results = await searchAddress(text, biasLat, biasLng);
                           setLocationResults(results);
                         }, 400);
                       }}
                       autoFocus
                     />
                   </View>
-                  {locationResults.map((r, i) => (
-                    <TouchableOpacity
-                      key={i}
-                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: s(4), paddingHorizontal: s(2), borderBottomWidth: 0.5, borderBottomColor: colors.borderSoft }}
-                      onPress={async () => {
-                        if (!editCheckin) return;
-                        // Photon's p.city is unreliable in Israel (returns
-                        // the DISTRICT, not the city — e.g. Bat Yam → "מחוז
-                        // תל אביב"). Source-of-truth is the city resolver:
-                        // check the CITIES DB, fall back to Nominatim.
-                        const resolvedCity = await resolveCityFromCoordinates(r.lat, r.lng, r.city || r.name);
-                        setStagedChanges({
-                          ...stagedChanges,
-                          location_name: `${r.name}, ${r.sub}`,
-                          latitude: r.lat,
-                          longitude: r.lng,
-                          city: resolvedCity,
-                        });
-                        setShowLocationSearch(false);
-                        setLocationQuery('');
-                        setLocationResults([]);
-                      }}
-                    >
-                      <NomadIcon name="pin" size={s(5)} color={colors.textMuted} strokeWidth={1.4} />
-                      <View style={{ marginLeft: s(3), flex: 1 }}>
-                        <Text style={{ fontSize: s(5.5), fontWeight: FW.medium, color: colors.dark }}>{r.name}</Text>
-                        <Text style={{ fontSize: s(4.5), color: colors.textMuted }}>{r.sub}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
+                  {locationResults.map((r, i) => {
+                    // GeoResult stores coords as strings ("35.1234") —
+                    // parse once per row so the click handler keeps
+                    // numeric latitude/longitude for Supabase writes.
+                    const latNum = parseFloat(r.lat);
+                    const lngNum = parseFloat(r.lon);
+                    return (
+                      <TouchableOpacity
+                        key={i}
+                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: s(4), paddingHorizontal: s(2), borderBottomWidth: 0.5, borderBottomColor: colors.borderSoft }}
+                        onPress={async () => {
+                          if (!editCheckin) return;
+                          // Photon's p.city is unreliable in Israel (returns
+                          // the DISTRICT, not the city — e.g. Bat Yam → "מחוז
+                          // תל אביב"). Source of truth is resolveCityFromCoordinates:
+                          // CITIES DB lookup first, Nominatim fallback.
+                          const resolvedCity = await resolveCityFromCoordinates(latNum, lngNum, r.mainLine);
+                          setStagedChanges({
+                            ...stagedChanges,
+                            location_name: r.subLine ? `${r.mainLine}, ${r.subLine}` : r.mainLine,
+                            latitude: latNum,
+                            longitude: lngNum,
+                            city: resolvedCity,
+                          });
+                          setShowLocationSearch(false);
+                          setLocationQuery('');
+                          setLocationResults([]);
+                        }}
+                      >
+                        <NomadIcon name="pin" size={s(5)} color={colors.textMuted} strokeWidth={1.4} />
+                        <View style={{ marginLeft: s(3), flex: 1 }}>
+                          <Text style={{ fontSize: s(5.5), fontWeight: FW.medium, color: colors.dark }}>{r.mainLine}</Text>
+                          {r.subLine ? (
+                            <Text style={{ fontSize: s(4.5), color: colors.textMuted }}>{r.subLine}</Text>
+                          ) : null}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               )}
 

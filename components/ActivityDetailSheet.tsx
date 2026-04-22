@@ -13,6 +13,9 @@ import {
 import NomadIcon from './NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { createOrJoinStatusChat, leaveGroupChat } from '../lib/hooks';
+import { useI18n } from '../lib/i18n';
+import { useViewerCountry, canJoinEvent } from '../lib/geo';
+import { countryLabel } from '../lib/countryNames';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../lib/types';
@@ -84,10 +87,27 @@ interface Props {
 
 export default function ActivityDetailSheet({ visible, checkin, creatorName, creatorAvatarUrl, onClose, onBeforeJoin }: Props) {
   const { colors } = useTheme();
+  const { t, locale } = useI18n();
   const st = useMemo(() => makeStyles(colors), [colors]);
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { userId } = useContext(AuthContext);
   const translateY = useRef(new Animated.Value(SH)).current;
+
+  /* Gate 3 of the geo-boundaries spec — same rule TimerBubble
+     enforces. Viewer's GPS country vs the event's country. If the
+     viewer is far from home, the Join button is replaced by a
+     disabled label. `useViewerCountry` fail-opens on null so local
+     UX isn't held hostage by GPS warming up. */
+  const viewerCountry = useViewerCountry();
+  const canJoin = checkin
+    ? canJoinEvent(viewerCountry, { country: checkin.country })
+    : true;
+  const eventCountryLabel = countryLabel(
+    checkin?.country ?? null,
+    locale,
+    '',
+  );
+
   const [joined, setJoined] = useState(false);
   const [joining, setJoining] = useState(false);
   const [requestPending, setRequestPending] = useState(false);  // private-event request awaiting owner approval
@@ -524,6 +544,23 @@ export default function ActivityDetailSheet({ visible, checkin, creatorName, cre
                 request sent — waiting for approval
               </Text>
             </View>
+          ) : !joined && !canJoin ? (
+            // Gate 3 — viewer is far from home. Disabled "far from
+            // home" label matching TimerBubble's behavior. No onPress,
+            // so a foreign viewer cannot trigger a join.
+            <View style={st.geoBlockedBar}>
+              <NomadIcon name="globe" size={16} strokeWidth={1.8} color="#6B7280" />
+              <View style={{ alignItems: 'center' }}>
+                <Text style={st.geoBlockedText}>
+                  {t('geo.block.joinDisabledLabel')}
+                </Text>
+                {eventCountryLabel ? (
+                  <Text style={st.geoBlockedSubText}>
+                    {t('geo.block.joinDisabledSub', { country: eventCountryLabel })}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
           ) : !joined ? (
             <TouchableOpacity
               style={st.joinBtn}
@@ -799,5 +836,32 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     fontSize: s(6),
     fontWeight: FW.semi,
     color: c.textMuted,
+  },
+  /* Gate 3 "far from home" bar — matches the expiredBar footprint
+     so the sheet's height doesn't jump between states. Globe icon +
+     stacked label/sub-label, quiet gray palette, non-interactive. */
+  geoBlockedBar: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: s(7),
+    paddingVertical: s(5),
+    paddingHorizontal: s(20),
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: s(3),
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  geoBlockedText: {
+    fontSize: s(6),
+    fontWeight: FW.bold,
+    color: '#6B7280',
+  },
+  geoBlockedSubText: {
+    fontSize: s(4.5),
+    fontWeight: FW.medium,
+    color: '#9CA3AF',
+    marginTop: s(0.5),
   },
 });

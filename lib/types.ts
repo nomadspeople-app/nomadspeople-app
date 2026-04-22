@@ -72,6 +72,13 @@ export interface AppCheckin {
   user_id: string;
   city: string;
   neighborhood: string | null;
+  /** ISO 3166-1 alpha-2 country code (uppercase) where this checkin
+   *  was posted. Set at publish time by HomeScreen.publishCheckin via
+   *  pinCountryFromCoords. Consumed by all three geo gates (publish,
+   *  list blur, join button). Null for legacy pre-gate rows — callers
+   *  fail-open on null per the geo spec (docs/product-decisions/
+   *  2026-04-20-geo-boundaries-spec.md). */
+  country: string | null;
   checkin_type: 'status' | 'timer';
   status_text: string | null;
   status_emoji: string | null;

@@ -199,10 +199,16 @@ export async function reverseGeocode(lat: number, lng: number): Promise<string> 
 /* ══════════════════════════════════════════════════════════════════
  * IP-based geolocation — coarse, spoof-resistant
  *
- * We call the primary provider first (ipapi.co), then fall back to
- * ip-api.com if the primary returns nothing or times out. Used in
- * two places: (a) the spoof-detection drift check against GPS,
- * (b) the final fallback when GPS is unavailable entirely.
+ * ipapi.co is the sole provider. The former ip-api.com fallback was
+ * dropped in the April 2026 pre-launch audit because it only serves
+ * plain HTTP on the free tier — iOS App Transport Security blocks
+ * that by default, and adding an ATS exception is a pre-launch red
+ * flag on Apple review. Callers already handle null gracefully
+ * (falls through to the current city or to a soft spoof-warning),
+ * so dropping the fallback is safe.
+ *
+ * Used in two places: (a) the spoof-detection drift check against
+ * GPS, (b) the final fallback when GPS is unavailable entirely.
  * ════════════════════════════════════════════════════════════════ */
 
 export async function getIpLocation(): Promise<{ lat: number; lng: number } | null> {
@@ -213,11 +219,6 @@ export async function getIpLocation(): Promise<{ lat: number; lng: number } | nu
   if (primary?.latitude && primary?.longitude) {
     return { lat: primary.latitude, lng: primary.longitude };
   }
-  const backup = await fetchJsonWithTimeout<any>(
-    'http://ip-api.com/json/?fields=lat,lon',
-    { tag: 'ip-api.com', timeoutMs: 6000 },
-  );
-  if (backup?.lat && backup?.lon) return { lat: backup.lat, lng: backup.lon };
   return null;
 }
 

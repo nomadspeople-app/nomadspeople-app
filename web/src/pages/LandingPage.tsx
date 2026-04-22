@@ -208,7 +208,7 @@ export default function LandingPage() {
             <a href="/privacy" style={styles.footerLink}>Privacy</a>
             <a href="/terms" style={styles.footerLink}>Terms</a>
             <a href="/delete-account" style={styles.footerLink}>Delete Account</a>
-            <a href="mailto:nomadspeople1@gmail.com" style={styles.footerLink}>Contact</a>
+            <a href="/support" style={styles.footerLink}>Support</a>
           </div>
           <span style={styles.footerCopy}>&copy; {new Date().getFullYear()} NomadsPeople</span>
         </div>

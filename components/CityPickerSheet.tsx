@@ -12,7 +12,19 @@ const SHEET_H = SH * 0.65;
 export interface City {
   id: string;
   name: string;
+  /** Full country name, for display ('Israel', 'Thailand'). */
   country: string;
+  /** ISO 3166-1 alpha-2 country code, uppercase ('IL', 'TH').
+   *  Used by the geo gates to match against a viewer's current
+   *  GPS country and decide the foreign-browsing treatment.
+   *
+   *  Optional only to accommodate rare runtime cases where a search
+   *  provider didn't return the code (disputed territories, open
+   *  ocean, etc). Every entry in the static CITIES list MUST have it,
+   *  and the search / GPS resolve paths MUST attempt to populate it.
+   *  A missing code is fail-open by design (isSameCountryAsViewer
+   *  treats null/undefined as same-country). */
+  countryCode?: string;
   flag: string;
   lat: number;
   lng: number;
@@ -20,16 +32,16 @@ export interface City {
 }
 
 export const CITIES: City[] = [
-  { id: 'tlv',  name: 'Tel Aviv',     country: 'Israel',    flag: '🇮🇱', lat: 32.0853,  lng: 34.7818,   active: 24  },
-  { id: 'bkk',  name: 'Bangkok',      country: 'Thailand',  flag: '🇹🇭', lat: 13.7563,  lng: 100.5018,  active: 312 },
-  { id: 'lis',  name: 'Lisbon',       country: 'Portugal',  flag: '🇵🇹', lat: 38.7169,  lng: -9.1395,   active: 187 },
-  { id: 'mex',  name: 'Mexico City',  country: 'Mexico',    flag: '🇲🇽', lat: 19.4326,  lng: -99.1332,  active: 245 },
-  { id: 'cnx',  name: 'Chiang Mai',   country: 'Thailand',  flag: '🇹🇭', lat: 18.7883,  lng: 98.9853,   active: 156 },
-  { id: 'ber',  name: 'Berlin',       country: 'Germany',   flag: '🇩🇪', lat: 52.5200,  lng: 13.4050,   active: 198 },
-  { id: 'bcn',  name: 'Barcelona',    country: 'Spain',     flag: '🇪🇸', lat: 41.3851,  lng: 2.1734,    active: 173 },
-  { id: 'bal',  name: 'Bali',         country: 'Indonesia', flag: '🇮🇩', lat: -8.3405,  lng: 115.0920,  active: 289 },
-  { id: 'tyo',  name: 'Tokyo',        country: 'Japan',     flag: '🇯🇵', lat: 35.6762,  lng: 139.6503,  active: 134 },
-  { id: 'nyc',  name: 'New York',     country: 'USA',       flag: '🇺🇸', lat: 40.7128,  lng: -74.0060,  active: 267 },
+  { id: 'tlv',  name: 'Tel Aviv',     country: 'Israel',    countryCode: 'IL', flag: '🇮🇱', lat: 32.0853,  lng: 34.7818,   active: 24  },
+  { id: 'bkk',  name: 'Bangkok',      country: 'Thailand',  countryCode: 'TH', flag: '🇹🇭', lat: 13.7563,  lng: 100.5018,  active: 312 },
+  { id: 'lis',  name: 'Lisbon',       country: 'Portugal',  countryCode: 'PT', flag: '🇵🇹', lat: 38.7169,  lng: -9.1395,   active: 187 },
+  { id: 'mex',  name: 'Mexico City',  country: 'Mexico',    countryCode: 'MX', flag: '🇲🇽', lat: 19.4326,  lng: -99.1332,  active: 245 },
+  { id: 'cnx',  name: 'Chiang Mai',   country: 'Thailand',  countryCode: 'TH', flag: '🇹🇭', lat: 18.7883,  lng: 98.9853,   active: 156 },
+  { id: 'ber',  name: 'Berlin',       country: 'Germany',   countryCode: 'DE', flag: '🇩🇪', lat: 52.5200,  lng: 13.4050,   active: 198 },
+  { id: 'bcn',  name: 'Barcelona',    country: 'Spain',     countryCode: 'ES', flag: '🇪🇸', lat: 41.3851,  lng: 2.1734,    active: 173 },
+  { id: 'bal',  name: 'Bali',         country: 'Indonesia', countryCode: 'ID', flag: '🇮🇩', lat: -8.3405,  lng: 115.0920,  active: 289 },
+  { id: 'tyo',  name: 'Tokyo',        country: 'Japan',     countryCode: 'JP', flag: '🇯🇵', lat: 35.6762,  lng: 139.6503,  active: 134 },
+  { id: 'nyc',  name: 'New York',     country: 'USA',       countryCode: 'US', flag: '🇺🇸', lat: 40.7128,  lng: -74.0060,  active: 267 },
 ];
 
 interface Props {

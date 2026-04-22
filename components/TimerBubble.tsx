@@ -37,6 +37,10 @@ import NomadIcon from './NomadIcon';
 import { s, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { supabase } from '../lib/supabase';
 import { createOrJoinStatusChat, leaveGroupChat } from '../lib/hooks';
+import { useI18n } from '../lib/i18n';
+import { useEventTime } from '../lib/eventTime';
+import { useViewerCountry, canJoinEvent } from '../lib/geo';
+import { countryLabel } from '../lib/countryNames';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -52,37 +56,20 @@ interface Props {
    *  fall back to the legacy "manage" navigation (which we
    *  keep only so old callers don't break). */
   onOwnerEnd?: (checkin: AppCheckin) => void;
+  /** Optional pre-join gate — HomeScreen's `wisdomGate` uses
+   *  it to ask "are you actually going to Tokyo?" before a
+   *  visitor joins a far-away scheduled event. If provided,
+   *  we call it with the checkin + a `doJoin` callback that
+   *  runs the normal createOrJoinStatusChat flow. If absent
+   *  we join immediately — same behavior as before the
+   *  scheduled-pin unification. */
+  onBeforeJoin?: (checkin: AppCheckin, doJoin: () => void) => void;
 }
 
 interface MemberLite {
   user_id: string;
   avatar_url: string | null;
   full_name: string | null;
-}
-
-/** Live countdown in minutes/hours. Updates every 30s — we don't need
- *  second-precision and slower interval = less battery. */
-function useCountdown(exp: string | null) {
-  const [t, setT] = useState('');
-  useEffect(() => {
-    if (!exp) { setT(''); return; }
-    const tick = () => {
-      const d = Math.max(0, new Date(exp).getTime() - Date.now());
-      if (d <= 0) { setT('ended'); return; }
-      const mins = Math.floor(d / 60000);
-      if (mins < 60) {
-        setT(`${Math.max(1, mins)}m`);
-      } else {
-        const h = Math.floor(mins / 60);
-        const m = mins % 60;
-        setT(`${h}h${m > 0 ? `${m}m` : ''}`);
-      }
-    };
-    tick();
-    const iv = setInterval(tick, 30000);
-    return () => clearInterval(iv);
-  }, [exp]);
-  return t;
 }
 
 /** Load members of the timer's conversation (if it exists). Excludes
@@ -177,14 +164,92 @@ function useJoinedMembers(
 }
 
 export default function TimerBubble({
-  visible, checkin, creatorName, creatorAvatarUrl, onClose, onOwnerEnd,
+  visible, checkin, creatorName, creatorAvatarUrl, onClose, onOwnerEnd, onBeforeJoin,
 }: Props) {
   const { userId } = useContext(AuthContext);
   const nav = useNavigation<Nav>();
   const { colors } = useTheme();
+  const { t, locale } = useI18n();
 
-  const countdown = useCountdown(checkin?.expires_at ?? null);
-  const firstName = (creatorName || 'Nomad').split(' ')[0] || 'Nomad';
+  /* ── Gate 3 of the geo-boundaries spec ──
+     Viewer's GPS country vs the event's `country` column. When the
+     viewer is far from home (canJoinEvent === false), the Join button
+     is replaced by a disabled "far from home" label — no tap, no
+     network call, no accidental foreign joins.
+     `useViewerCountry` fail-opens on null (GPS warming up, permission
+     denied) so the local UX is never blocked by transient state.
+     The publish gate (Gate 1) is the strict one — see
+     HomeScreen.publishCheckin. */
+  const viewerCountry = useViewerCountry();
+  const canJoin = canJoinEvent(
+    viewerCountry,
+    checkin ? { country: checkin.country } : null,
+  );
+  const eventCountryLabel = countryLabel(
+    checkin?.country ?? null,
+    locale,
+    '',
+  );
+
+  /* Unified WHEN display — replaces the old inline `useCountdown`
+   * which only handled timers. Now the same bubble can render:
+   *   • timer         → "ends in 23m" (live tick)
+   *   • starts-soon   → "starts in 3h"
+   *   • starts-on     → "tomorrow · 18:00" / "mon 21 apr · 18:00"
+   *   • live-now      → "live now · ends in 2h"
+   *   • ended         → "ended"
+   * …so a visitor tapping a scheduled pin sees the SAME bubble
+   * shell + exact time info instead of being routed to a
+   * separate ActivityDetailSheet. Matches the product-owner's
+   * "same bubble, same idea" directive (2026-04-20).
+   */
+  const checkinType: 'timer' | 'status' =
+    ((checkin as any)?.checkin_type as 'timer' | 'status') || 'timer';
+  const whenState = useEventTime({
+    type: checkinType,
+    scheduledFor: checkin?.scheduled_for ?? null,
+    expiresAt: checkin?.expires_at ?? null,
+    isFlexible: (checkin as any)?.is_flexible_time ?? false,
+  });
+  const whenText = (() => {
+    switch (whenState.kind) {
+      case 'timer-live':
+        return t('event.when.endsIn', { dur: whenState.durationShort || '' });
+      case 'timer-ended':
+      case 'ended':
+        return t('event.when.ended');
+      case 'starts-soon':
+        return t('event.when.startsIn', { dur: whenState.durationShort || '' });
+      case 'live-now':
+        return `${t('event.when.liveNow')}${t('event.when.sep')}${t('event.when.endsIn', { dur: whenState.durationShort || '' })}`;
+      case 'starts-on': {
+        const dayPart = whenState.dayKey === 'today'
+          ? t('event.when.today')
+          : whenState.dayKey === 'tomorrow'
+            ? t('event.when.tomorrow')
+            : (whenState.dayLabel || '');
+        /* A specific time beats "all day" every time — if
+           the creator picked an hour in the WHEN step, show
+           it. "all day" is the fallback only when the event
+           has no hour AND is marked flexible (future UX: an
+           explicit all-day toggle). */
+        const timePart = whenState.timeShort
+          ? whenState.timeShort
+          : whenState.flexible
+            ? t('event.when.allDay')
+            : '';
+        return timePart ? `${dayPart}${t('event.when.sep')}${timePart}` : dayPart;
+      }
+      default:
+        return '';
+    }
+  })();
+  const whenIsLive = whenState.kind === 'timer-live'
+    || whenState.kind === 'live-now'
+    || whenState.kind === 'starts-soon';
+
+  const creatorFallback = t('event.fallback.creator');
+  const firstName = (creatorName || creatorFallback).split(' ')[0] || creatorFallback;
   const initials = (creatorName || '?')
     .split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '?';
   const actText = checkin?.activity_text || checkin?.status_text || '';
@@ -219,22 +284,42 @@ export default function TimerBubble({
 
   /* ── Join (visitor, not yet member) ──────────────────────────────
      Closed loop per logic skill:
-       1. createOrJoinStatusChat inserts membership row + posts
+       1. (Optional) onBeforeJoin lets the parent run a pre-join
+          gate — HomeScreen uses this to trigger the "are you
+          really going to Tokyo?" wisdom prompt before a visitor
+          joins a far-away scheduled event. If absent we join
+          immediately.
+       2. createOrJoinStatusChat inserts membership row + posts
           "joined the group" system message + increments count.
-       2. Haptic impact.
-       3. Optimistic: add me to the members row immediately.
-       4. Refresh the members query to pick up the real server state. */
-  const handleJoin = async () => {
+       3. Haptic impact.
+       4. Optimistic: add me to the members row immediately.
+       5. Refresh the members query to pick up the real server state. */
+  const handleJoin = () => {
+    if (!checkin || !userId || joining) return;
+    if (onBeforeJoin) {
+      onBeforeJoin(checkin, () => { void doJoin(); });
+      return;
+    }
+    void doJoin();
+  };
+
+  const doJoin = async () => {
     if (!checkin || !userId || joining) return;
     setJoining(true);
     setOptimisticallyJoined(true); // immediate UI response
     setCountDelta(1);               // "X going" bumps +1 instantly
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     try {
+      // Shared fallback so the chat title + metadata always
+       // agree. Without it the conversation's name and its
+       // activityText could drift — e.g. if someone refactored
+       // one literal and forgot the other.
+      const activityFallback = t('event.fallback.activity');
+      const chatName = checkin.activity_text || checkin.status_text || activityFallback;
       const { conversationId: cid, memberStatus, error } = await createOrJoinStatusChat(
         userId,
         checkin.user_id,
-        checkin.activity_text || checkin.status_text || 'Timer',
+        chatName,
         // Pass metadata so the new conversation gets linked to this
         // exact checkin via checkin_id. Without this, useJoinedMembers
         // can't find the conv on the next render and the chat/leave
@@ -243,7 +328,7 @@ export default function TimerBubble({
         // link.) Timers are always public per spec.
         {
           checkinId: checkin.id,
-          activityText: checkin.activity_text || checkin.status_text || 'Timer',
+          activityText: chatName,
           emoji: checkin.status_emoji || null,
           category: (checkin as any).category || null,
           locationName: checkin.location_name || null,
@@ -256,7 +341,10 @@ export default function TimerBubble({
         // Roll back optimistic state — server rejected.
         setOptimisticallyJoined(false);
         setCountDelta(0);
-        Alert.alert('could not join', (error as any)?.message || 'please try again');
+        Alert.alert(
+          t('event.error.joinFailedTitle'),
+          (error as any)?.message || t('event.error.joinFailedGeneric')
+        );
         setJoining(false);
         return;
       }
@@ -272,7 +360,10 @@ export default function TimerBubble({
     } catch (e: any) {
       setOptimisticallyJoined(false);
       setCountDelta(0);
-      Alert.alert('could not join', e?.message || 'please try again');
+      Alert.alert(
+        t('event.error.joinFailedTitle'),
+        e?.message || t('event.error.joinFailedGeneric')
+      );
     } finally {
       setJoining(false);
     }
@@ -293,12 +384,12 @@ export default function TimerBubble({
   const handleLeave = () => {
     if (!checkin || !userId || !conversationId) return;
     Alert.alert(
-      'leave this timer?',
-      'you won\'t get messages from this group anymore.',
+      t('event.confirm.leaveTitle'),
+      t('event.confirm.leaveBody'),
       [
-        { text: 'cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'leave',
+          text: t('event.confirm.leaveAction'),
           style: 'destructive',
           onPress: async () => {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
@@ -332,12 +423,12 @@ export default function TimerBubble({
       return;
     }
     Alert.alert(
-      'End this now?',
-      'People will no longer see it on the map or be able to join.',
+      t('event.confirm.endTitle'),
+      t('event.confirm.endBody'),
       [
-        { text: 'cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'end',
+          text: t('event.confirm.endAction'),
           style: 'destructive',
           onPress: () => {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
@@ -369,7 +460,7 @@ export default function TimerBubble({
   // returned my row yet. Skip if I'm already in the list (e.g., refetch
   // landed) so I don't appear twice.
   if (optimisticallyJoined && userId && !allParticipants.some(p => p.user_id === userId)) {
-    allParticipants.push({ user_id: userId, avatar_url: null, full_name: 'you' });
+    allParticipants.push({ user_id: userId, avatar_url: null, full_name: t('event.you') });
   }
   // Pure Facepile per user spec: up to 3 overlapping avatars, then a
   // +N gray circle if there are more. NO usernames anywhere — visual
@@ -403,11 +494,17 @@ export default function TimerBubble({
         {actText ? ` ${actText}` : ''}
       </Text>
 
-      {/* Subtitle — countdown only. The creator name is already
-          in the title above. */}
-      {!!countdown && (
-        <Text style={st.subtitle} numberOfLines={1}>
-          {countdown === 'ended' ? 'ended' : `ends in ${countdown}`}
+      {/* Subtitle — unified WHEN display (timer countdown OR
+          scheduled date/time). Live states render in brand
+          coral so the eye lands on "ends in 23m" the moment
+          the bubble opens; future scheduled events render in
+          calm muted grey. One signal, one surface. */}
+      {!!whenText && (
+        <Text
+          style={[st.subtitle, whenIsLive && st.subtitleLive]}
+          numberOfLines={1}
+        >
+          {whenText}
         </Text>
       )}
 
@@ -433,7 +530,7 @@ export default function TimerBubble({
         </View>
         {/* Small action text — keeps the "going" meaning without
             naming anyone. Pure count next to the stack. */}
-        <Text style={st.goingCount}>{goingCount} going</Text>
+        <Text style={st.goingCount}>{t('event.going', { count: goingCount })}</Text>
       </View>
 
       {/* CTA area — fixed total height across all states so the bubble
@@ -451,7 +548,7 @@ export default function TimerBubble({
             style={[st.cta, st.ctaEnd]}
           >
             <NomadIcon name="close" size={s(6)} color="#DC2626" strokeWidth={2} />
-            <Text style={[st.ctaText, st.ctaEndText]}>end now</Text>
+            <Text style={[st.ctaText, st.ctaEndText]}>{t('event.cta.endNow')}</Text>
           </TouchableOpacity>
         ) : iAmMember ? (
           /* Joined visitor: chat (blue, wide) + leave (red, narrow)
@@ -464,15 +561,33 @@ export default function TimerBubble({
               style={[st.cta, st.ctaChat, { flex: 2.2 }]}
             >
               <NomadIcon name="chat" size={s(6)} color="#fff" strokeWidth={1.8} />
-              <Text style={st.ctaText}>chat</Text>
+              <Text style={st.ctaText}>{t('event.cta.chat')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={handleLeave}
               style={[st.cta, st.ctaLeave, { flex: 1 }]}
             >
-              <Text style={st.ctaText}>leave</Text>
+              <Text style={st.ctaText}>{t('event.cta.leave')}</Text>
             </TouchableOpacity>
+          </View>
+        ) : !canJoin ? (
+          /* Visitor, but far from home (Gate 3). Disabled "far from
+             home" label instead of a Join button. No onPress — a
+             foreign viewer should NEVER be able to trigger a join
+             request. The subtitle tells them where to travel to. */
+          <View style={[st.cta, st.ctaDisabledForeign]}>
+            <NomadIcon name="globe" size={s(6)} color="#9CA3AF" strokeWidth={1.8} />
+            <View style={{ alignItems: 'center' }}>
+              <Text style={[st.ctaText, st.ctaDisabledText]}>
+                {t('geo.block.joinDisabledLabel')}
+              </Text>
+              {eventCountryLabel ? (
+                <Text style={st.ctaDisabledSubText}>
+                  {t('geo.block.joinDisabledSub', { country: eventCountryLabel })}
+                </Text>
+              ) : null}
+            </View>
           </View>
         ) : (
           /* Visitor not yet joined: full-width JOIN */
@@ -487,7 +602,7 @@ export default function TimerBubble({
             ) : (
               <>
                 <NomadIcon name="plus" size={s(6)} color="#fff" strokeWidth={2} />
-                <Text style={st.ctaText}>join</Text>
+                <Text style={st.ctaText}>{t('event.cta.join')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -547,6 +662,14 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     marginBottom: 14,
+  },
+  /* Live variant — brand coral + heavier weight. Applied when
+     the event is currently running (timer-live / live-now) or
+     starting in <24h (starts-soon). Signals presence / urgency
+     without adding a second UI element. */
+  subtitleLive: {
+    color: '#E8614D',
+    fontWeight: '700',
   },
 
   /* Member row — fixed min-height so the bubble doesn't grow
@@ -673,6 +796,27 @@ const styles = (c: ThemeColors) => StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.3,
+    textTransform: 'lowercase',
+  },
+  /* Disabled-foreign state — the viewer is outside the event's
+     country. Same footprint as a Join button so the bubble height
+     doesn't jump, but quiet colors, no shadow, and a tiny sub-label
+     explaining why it's disabled. Non-interactive (rendered as a
+     View, no onPress). */
+  ctaDisabledForeign: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  ctaDisabledText: {
+    color: '#6B7280',
+  },
+  ctaDisabledSubText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#9CA3AF',
+    marginTop: 1,
+    letterSpacing: 0.2,
     textTransform: 'lowercase',
   },
 });

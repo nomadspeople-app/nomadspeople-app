@@ -10,7 +10,7 @@ import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { supabase } from '../lib/supabase';
 import { COUNTRIES, POPULAR_CITIES } from '../lib/countries';
 import { useI18n, type Locale, SUPPORTED_LOCALES } from '../lib/i18n';
-import DualThumbSlider from '../components/DualThumbSlider';
+import AgeRangeControl from '../components/AgeRangeControl';
 
 const APP_ICON = require('../assets/icon.png');
 
@@ -586,14 +586,21 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
             <Text style={st.question}>age range preference</Text>
             <Text style={st.subtitle}>set the age range of people you'd like to connect with</Text>
             <View style={{ marginTop: s(10) }}>
-              <DualThumbSlider
-                min={18}
-                max={100}
-                valueMin={ageRangeMin}
-                valueMax={ageRangeMax}
-                onChangeMin={setAgeRangeMin}
-                onChangeMax={setAgeRangeMax}
-                step={1}
+              {/* Uses the SAME AgeRangeControl as Settings &
+                   CreationBubble — one slider across the app.
+                   The commit flows back up to parent state so
+                   submitOnboarding() below sends the final
+                   min/max to app_profiles.age_min / age_max.
+                   This value then seeds every future event the
+                   user creates via the "+" FAB. */}
+              <AgeRangeControl
+                initialMin={ageRangeMin}
+                initialMax={ageRangeMax}
+                onCommit={(min, max) => {
+                  setAgeRangeMin(min);
+                  setAgeRangeMax(max);
+                }}
+                framed
               />
             </View>
             <Text style={st.ageHint}>
