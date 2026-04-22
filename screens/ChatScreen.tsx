@@ -20,6 +20,7 @@ import {
 } from '../lib/hooks';
 import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18n';
+import { renderChatContent } from '../lib/chatText';
 import { AuthContext, UnreadContext } from '../App';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -493,7 +494,12 @@ export default function ChatScreen() {
                     onLongPress={() => openContextMenu(msg as MsgWithSender)}
                     delayLongPress={300}
                   >
-                    <Text style={[st.bubbleText, isMe && st.bubbleTextMe]}>{msg.content}</Text>
+                    <Text style={[st.bubbleText, isMe && st.bubbleTextMe]}>
+                      {renderChatContent(msg.content, {
+                        baseStyle: [st.bubbleText, isMe && st.bubbleTextMe],
+                        linkStyle: { textDecorationLine: 'underline' },
+                      })}
+                    </Text>
                     {translating === msg.id && (
                       <Text style={{ fontSize: s(4.5), color: isMe ? 'rgba(255,255,255,0.6)' : colors.textMuted, marginTop: s(1.5), fontStyle: 'italic' }}>translating...</Text>
                     )}
