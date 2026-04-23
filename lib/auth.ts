@@ -48,25 +48,31 @@ const authExtra: AuthConfig =
  *  hidden, the app does not crash, and the user goes through the
  *  email form like before.
  * ────────────────────────────────────────────────────────────── */
-function safeRequire(modulePath: string): any | null {
+// Probe native modules at load time. Metro requires string-literal
+// require() calls (it can't statically resolve `require(variable)`),
+// so we duplicate the try/catch per module instead of writing a
+// generic helper. Each block returns either the module object or
+// null; null gates the corresponding feature flag below to false,
+// which keeps the auth buttons hidden in builds that don't have the
+// native binary linked (Expo Go, stale dev builds).
+
+let appleAuthModule: any = null;
+if (Platform.OS === 'ios') {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require(modulePath);
-    // Some packages exist as a shim in JS but throw on first native
-    // call. We do a light "does the expected export exist" check
-    // when the module loads — full verification happens at first
-    // use (handled inside signInWith*).
-    return mod ?? null;
+    appleAuthModule = require('expo-apple-authentication');
   } catch {
-    return null;
+    appleAuthModule = null;
   }
 }
 
-const appleAuthModule = Platform.OS === 'ios'
-  ? safeRequire('expo-apple-authentication')
-  : null;
-
-const googleSigninModule = safeRequire('@react-native-google-signin/google-signin');
+let googleSigninModule: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  googleSigninModule = require('@react-native-google-signin/google-signin');
+} catch {
+  googleSigninModule = null;
+}
 
 export const isAppleSignInEnabled: boolean =
   Platform.OS === 'ios'
