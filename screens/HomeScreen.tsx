@@ -415,7 +415,16 @@ export default function HomeScreen() {
   const { colors, isDark } = useTheme();
   const st = useMemo(() => makeStyles(colors), [colors]);
   const mapRef = useRef<MapView>(null);
-  const [activeVibe, setActiveVibe] = useState(0);
+  // Active category filter for the vibe bar.
+  //   null = "All" (no filter, every checkin shown)
+  //   non-null = the catKey of the chosen vibe (e.g. 'food'),
+  //              filters the map + clusters to only those checkins.
+  // Stored as a string (not an index into VIBES) on purpose: the
+  // visible vibe list is dynamically pruned to ONLY show categories
+  // that have at least one live checkin, so any index-based state
+  // would point at the wrong row the moment a category appeared or
+  // disappeared. A string is stable across that.
+  const [activeCatKey, setActiveCatKey] = useState<string | null>(null);
   const [joined, setJoined] = useState(false);
   const [visibleNomadCount, setVisibleNomadCount] = useState<number | null>(null);
   const [visibleNomadIds, setVisibleNomadIds] = useState<Set<string>>(new Set());
@@ -884,12 +893,41 @@ export default function HomeScreen() {
   // Hot checkins — for pulse animation on pins with active conversations
   const hotCheckins = useHotCheckins(currentCity.name);
 
+  /* ── Visible vibe chips ──
+   * Only show vibe chips for categories that ACTUALLY have at least
+   * one live checkin in the current city. 'All' is always there as
+   * the default. The intent: an empty "Nightlife" chip with zero
+   * pins behind it is a dead end the user taps and feels nothing
+   * happened — pruning to live categories makes the bar a real
+   * filter, not a menu of possibilities. */
+  const activeCategoryKeys = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of checkins) {
+      if (c.category) set.add(c.category);
+    }
+    return set;
+  }, [checkins]);
+
+  const visibleVibes = useMemo(
+    () => VIBES.filter(v => !v.catKey || activeCategoryKeys.has(v.catKey)),
+    [activeCategoryKeys],
+  );
+
+  /* If the user has Food selected and the last food checkin
+   * expires (or the user moves to a city with no food yet), the
+   * Food chip vanishes — and we'd be stuck filtering on a vibe the
+   * user can't see anymore. Fall back to All so the map repopulates. */
+  useEffect(() => {
+    if (activeCatKey && !activeCategoryKeys.has(activeCatKey)) {
+      setActiveCatKey(null);
+    }
+  }, [activeCatKey, activeCategoryKeys]);
+
   /* ── Filter checkins by active vibe for clustering ── */
   const filteredCheckins = useMemo(() => {
-    if (activeVibe === 0) return checkins;
-    const vibeKey = VIBES[activeVibe]?.catKey;
-    return vibeKey ? checkins.filter(c => c.category === vibeKey) : checkins;
-  }, [checkins, activeVibe]);
+    if (!activeCatKey) return checkins;
+    return checkins.filter(c => c.category === activeCatKey);
+  }, [checkins, activeCatKey]);
 
   /* ── Own active checkins — derived, fed into CreationBubble
    *    so it can show the "replace" banner on the PUBLISH step.
@@ -2092,21 +2130,27 @@ export default function HomeScreen() {
         style={[st.vibeBar, { top: vibeTop }]}
         contentContainerStyle={{ paddingHorizontal: s(10), gap: s(3.5), alignItems: 'center' }}
       >
-        {VIBES.map((v, i) => (
-          <TouchableOpacity
-            key={v.label}
-            style={[st.chip, activeVibe === i && st.chipOn]}
-            onPress={() => setActiveVibe(i)}
-            activeOpacity={0.7}
-          >
-            {v.icon && (
-              <View style={{ marginRight: s(0.5) }}>
-                <NomadIcon name={v.icon} size={s(6.5)} strokeWidth={1.8} color={activeVibe === i ? 'white' : (v.color || colors.textSec)} />
-              </View>
-            )}
-            <Text style={[st.chipTxt, activeVibe === i && st.chipTxtOn]}>{v.label}</Text>
-          </TouchableOpacity>
-        ))}
+        {visibleVibes.map((v) => {
+          // 'All' chip's catKey is undefined; it represents the
+          // "no filter" state, which we model as activeCatKey === null.
+          const chipKey = v.catKey ?? null;
+          const isActive = chipKey === activeCatKey;
+          return (
+            <TouchableOpacity
+              key={v.label}
+              style={[st.chip, isActive && st.chipOn]}
+              onPress={() => setActiveCatKey(chipKey)}
+              activeOpacity={0.7}
+            >
+              {v.icon && (
+                <View style={{ marginRight: s(0.5) }}>
+                  <NomadIcon name={v.icon} size={s(6.5)} strokeWidth={1.8} color={isActive ? 'white' : (v.color || colors.textSec)} />
+                </View>
+              )}
+              <Text style={[st.chipTxt, isActive && st.chipTxtOn]}>{v.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
       {/* ── NOMADS BUBBLE — floats above map ── */}
