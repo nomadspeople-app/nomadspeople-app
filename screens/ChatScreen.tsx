@@ -77,13 +77,20 @@ export default function ChatScreen() {
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [translating, setTranslating] = useState<string | null>(null); // message id being translated
 
-  // Image attach state:
-  //   uploadingImage — flips true while the picked photo is being
-  //     uploaded to Supabase Storage; the camera button swaps to a
-  //     spinner and taps are ignored so we can't queue duplicate
-  //     uploads.
-  //   expandedImage — when the user taps an image message we open
-  //     a full-screen modal with that URI. Null = modal closed.
+  // Image attach state — three distinct UI moments:
+  //   pendingImage  — the user picked a photo from the library but
+  //     hasn't confirmed sending yet. Shown as a thumbnail above the
+  //     input (WhatsApp / Telegram pattern) with X to cancel and the
+  //     normal Send button to confirm. Holds the LOCAL uri only.
+  //   uploadingImage — flips true ONLY while the confirmed photo is
+  //     being PUT into Supabase Storage. Camera + Send buttons go
+  //     into a disabled state with a small spinner overlay so the
+  //     user can't queue duplicate uploads or change selection mid-
+  //     send.
+  //   expandedImage — when the user taps an image bubble we show a
+  //     centered viewer (NOT full-screen black). Holds the public
+  //     URL of the message being viewed; null = viewer closed.
+  const [pendingImage, setPendingImage] = useState<{ uri: string } | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
@@ -177,15 +184,17 @@ export default function ChatScreen() {
     setReplyTo(null);
   };
 
+  /** STEP 1 of the image-attach flow: open the picker and stage the
+   *  picked photo as a preview ABOVE the input. Nothing is uploaded
+   *  yet — that happens only when the user taps Send (or the Send
+   *  arrow that replaces the camera icon while a preview is staged).
+   *  This matches the WhatsApp / Telegram / iMessage pattern users
+   *  already expect: choose, see what you're about to send, then
+   *  decide. The Cancel X clears the preview without sending. */
   const handlePickPhoto = async () => {
     try {
       if (!userId) return;
 
-      // Ask for permission explicitly first so we can surface a
-      // clean message if the user previously declined in OS settings.
-      // expo-image-picker's launchImageLibraryAsync throws an opaque
-      // error in that case; requesting up-front turns it into a
-      // friendly Alert.
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== 'granted') {
         Alert.alert(
@@ -195,13 +204,10 @@ export default function ChatScreen() {
         return;
       }
 
-      // mediaTypes as an array of string literals — Expo SDK 54+
-      // deprecated the MediaTypeOptions enum in favour of this
-      // form. allowsEditing intentionally OFF: the default iOS
-      // editor forces a 1:1 crop that chopped most of the photo
-      // out — users want to send the WHOLE image they took, not a
-      // square cut. If we ever want in-app cropping we'll ship a
-      // proper aspect-preserving cropper, not the OS one.
+      // allowsEditing OFF on purpose — the OS crop UI was chopping
+      // 50%+ of the photo. We send the FULL image the user saw in
+      // their library; if they want to crop, they crop in their
+      // native Photos app first.
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         quality: 0.7,
@@ -209,55 +215,49 @@ export default function ChatScreen() {
       });
 
       if (result.canceled || !result.assets?.[0]?.uri) return;
-      const asset = result.assets[0];
-
-      setUploadingImage(true);
-      try {
-        // File path layout: chat/{conversationId}/{userId}-{timestamp}.{ext}
-        //
-        // Including userId in the filename makes abuse cleanup
-        // trivial ("delete every chat image from user X") and
-        // lines up with the shape of the future RLS policy we'll
-        // add to storage.objects.
-        //
-        // post-images is a public bucket with path-based isolation.
-        // When we move to a dedicated chat-images bucket with signed
-        // URLs, this is the single call site to update.
-        //
-        // We route through lib/imagePicker.uploadImage() instead of
-        // calling supabase.storage.from().upload() directly because
-        // the SDK's {uri,type,name} object path JSON-serializes on
-        // RN instead of reading the file (341-byte text/plain
-        // uploads — exactly what we saw in DB row 7edb46fa on
-        // 2026-04-22). uploadImage() uses FormData + raw fetch
-        // against the Storage REST endpoint, which is the only
-        // approach that actually streams the bytes.
-        const uriParts = asset.uri.split('.');
-        const ext = (uriParts[uriParts.length - 1] || 'jpg').toLowerCase();
-        const fileName = `chat/${conversationId}/${userId}-${Date.now()}.${ext}`;
-
-        const publicUrl = await uploadImage(
-          asset.uri,
-          'post-images',
-          userId,
-          fileName,
-        );
-        if (!publicUrl) {
-          // uploadImage surfaces its own Alert on failure, so we
-          // just stop here without a duplicate alert.
-          return;
-        }
-
-        await handleSend(publicUrl);
-      } finally {
-        setUploadingImage(false);
-      }
+      // Just stage it. Upload waits for the Send tap.
+      setPendingImage({ uri: result.assets[0].uri });
     } catch (err: any) {
       console.warn('[ChatScreen] pick photo failed:', err);
       Alert.alert(
         'Could not attach photo',
         err?.message ?? 'Try again in a moment.',
       );
+    }
+  };
+
+  /** STEP 2 of the image-attach flow: actually send the staged
+   *  preview. Routes the local URI through lib/imagePicker.uploadImage
+   *  (FormData + raw fetch — the only path that doesn't JSON-stringify
+   *  on RN) and then through send() like any other message.
+   *  The pendingImage is cleared on success so the preview disappears
+   *  and the chat scrolls to the new bubble. On failure we keep the
+   *  preview staged so the user can retry without re-picking. */
+  const handleSendPendingImage = async () => {
+    if (!pendingImage || !userId || uploadingImage) return;
+    setUploadingImage(true);
+    try {
+      const uriParts = pendingImage.uri.split('.');
+      const ext = (uriParts[uriParts.length - 1] || 'jpg').toLowerCase();
+      // chat/{conversationId}/{userId}-{timestamp}.{ext} — userId in
+      // the filename makes per-user moderation cleanup trivial and
+      // matches the shape of the future storage.objects RLS policy.
+      const fileName = `chat/${conversationId}/${userId}-${Date.now()}.${ext}`;
+
+      const publicUrl = await uploadImage(
+        pendingImage.uri,
+        'post-images',
+        userId,
+        fileName,
+      );
+      // uploadImage surfaces its own Alert on failure; if it returned
+      // null we keep pendingImage so the user can retry.
+      if (!publicUrl) return;
+
+      await handleSend(publicUrl);
+      setPendingImage(null);
+    } finally {
+      setUploadingImage(false);
     }
   };
 
@@ -605,34 +605,82 @@ export default function ChatScreen() {
           <Text style={st.lockedText}>this chat was closed by the creator</Text>
         </View>
       ) : (
-        <View style={[st.inputArea, { paddingBottom: Math.max(insets.bottom, s(4)) }]}>
-          <TextInput
-            style={st.inputBox}
-            placeholder={t('chat.placeholder')}
-            placeholderTextColor="#999"
-            value={inputText}
-            onChangeText={setInputText}
-          />
-          <TouchableOpacity
-            style={[st.cameraBtn, uploadingImage && { opacity: 0.5 }]}
-            activeOpacity={0.7}
-            onPress={handlePickPhoto}
-            disabled={uploadingImage}
-          >
-            {uploadingImage
-              ? <ActivityIndicator size="small" color={colors.primary} />
-              : <NomadIcon name="camera" size={s(7)} color={colors.primary} strokeWidth={1.8} />}
-          </TouchableOpacity>
-          {inputText.trim() ? (
-            // Wrap in arrow fn — TouchableOpacity passes the press event
-            // as the first arg, which handleSend treats as `imageUrl`.
-            // That's how messages like חחח and לללל ended up with
-            // image_url = '{"dispatchConfig":null,...}' and later crashed
-            // the iOS Image layout with 'URI parsing error'.
-            <TouchableOpacity style={st.sendBtn} activeOpacity={0.7} onPress={() => handleSend()}>
-              <NomadIcon name="send" size={s(6.5)} color="#FFFFFF" strokeWidth={1.8} />
+        <View style={{ paddingBottom: Math.max(insets.bottom, s(4)) }}>
+          {/* Pending image preview — sits ABOVE the input row.
+              Pattern matches WhatsApp/Telegram/iMessage: pick a
+              photo, see what you're about to send, hit Send (or X
+              to back out). The thumbnail uses the LOCAL uri so it
+              shows instantly with no upload latency; the upload
+              starts only when the user confirms. */}
+          {pendingImage && (
+            <View style={st.pendingPreviewWrap}>
+              <View style={st.pendingPreviewCard}>
+                <Image source={{ uri: pendingImage.uri }} style={st.pendingPreviewImg} />
+                {uploadingImage && (
+                  <View style={st.pendingPreviewLoading}>
+                    <ActivityIndicator size="small" color="#fff" />
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={st.pendingPreviewCancel}
+                  onPress={() => !uploadingImage && setPendingImage(null)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  disabled={uploadingImage}
+                >
+                  <NomadIcon name="close" size={s(5)} color="#fff" strokeWidth={2} />
+                </TouchableOpacity>
+              </View>
+              <Text style={[st.pendingPreviewHint, { color: colors.textMuted }]}>
+                {uploadingImage ? 'Sending…' : 'Tap send to share'}
+              </Text>
+            </View>
+          )}
+
+          <View style={st.inputArea}>
+            <TextInput
+              style={st.inputBox}
+              placeholder={t('chat.placeholder')}
+              placeholderTextColor="#999"
+              value={inputText}
+              onChangeText={setInputText}
+              editable={!uploadingImage}
+            />
+            <TouchableOpacity
+              style={[st.cameraBtn, (uploadingImage || pendingImage) && { opacity: 0.4 }]}
+              activeOpacity={0.7}
+              onPress={handlePickPhoto}
+              disabled={uploadingImage || !!pendingImage}
+            >
+              <NomadIcon name="camera" size={s(7)} color={colors.primary} strokeWidth={1.8} />
             </TouchableOpacity>
-          ) : null}
+            {/* Send is shown when ANY of:
+                  - the user typed text
+                  - they have a pending image staged
+                Press routing:
+                  - pending image present → handleSendPendingImage()
+                    (uploads, then sends a normal message with the
+                    public URL — same path as before, just deferred
+                    until confirm)
+                  - text only → handleSend()
+                The arrow-fn wrapper around handleSend stays — without
+                it, the press event gets passed as the `imageUrl`
+                argument and breaks Image rendering downstream. */}
+            {(inputText.trim() || pendingImage) ? (
+              <TouchableOpacity
+                style={[st.sendBtn, uploadingImage && { opacity: 0.5 }]}
+                activeOpacity={0.7}
+                onPress={() => {
+                  if (pendingImage) handleSendPendingImage();
+                  else handleSend();
+                }}
+                disabled={uploadingImage}
+              >
+                {uploadingImage
+                  ? <ActivityIndicator size="small" color="#FFFFFF" />
+                  : <NomadIcon name="send" size={s(6.5)} color="#FFFFFF" strokeWidth={1.8} />}
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
       )}
 
@@ -720,35 +768,50 @@ export default function ChatScreen() {
         </View>
       </Modal>
 
-      {/* Fullscreen image viewer — opens when the user taps an image
-          message bubble. Deliberately minimal: pinch-to-zoom is
-          deferred to a later PR; today's scope is 'let me see the
-          photo at full size and tap-to-dismiss'. Black background so
-          photos with their own border blend in, and a single absolutely
-          positioned close button in the top-left so RTL users see it
-          where their eye expects. */}
+      {/* Image viewer — opens when the user taps an image message
+          bubble. NOT a black 100%-fullscreen takeover — that felt
+          like the photo had escaped the app. Instead a centered card
+          on a dimmed backdrop so the user keeps a sense of "I'm
+          still inside nomadspeople, this is just a closer look".
+          Tap-anywhere-outside to dismiss + an explicit close pill in
+          the corner so users always have a visible exit. */}
       <Modal
         visible={!!expandedImage}
         transparent
         animationType="fade"
         onRequestClose={() => setExpandedImage(null)}
       >
-        <View style={st.fullscreenRoot}>
+        <TouchableOpacity
+          activeOpacity={1}
+          style={st.viewerBackdrop}
+          onPress={() => setExpandedImage(null)}
+        >
+          {/* Inner card — Pressable ignores the parent backdrop tap
+              so accidentally tapping the photo itself does NOT close
+              the viewer. */}
           <TouchableOpacity
-            style={st.fullscreenClose}
-            onPress={() => setExpandedImage(null)}
-            hitSlop={{ top: 18, bottom: 18, left: 18, right: 18 }}
+            activeOpacity={1}
+            style={[st.viewerCard, { backgroundColor: colors.bg, borderColor: colors.borderSoft }]}
+            onPress={() => { /* swallow tap on the card */ }}
           >
-            <NomadIcon name="close" size={s(8)} color="#fff" strokeWidth={2.2} />
+            <View style={st.viewerHeader}>
+              <TouchableOpacity
+                style={[st.viewerCloseBtn, { backgroundColor: colors.pill }]}
+                onPress={() => setExpandedImage(null)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <NomadIcon name="close" size={s(6)} color={colors.dark} strokeWidth={1.8} />
+              </TouchableOpacity>
+            </View>
+            {expandedImage && (
+              <Image
+                source={{ uri: expandedImage }}
+                style={st.viewerImg}
+                resizeMode="contain"
+              />
+            )}
           </TouchableOpacity>
-          {expandedImage && (
-            <Image
-              source={{ uri: expandedImage }}
-              style={st.fullscreenImg}
-              resizeMode="contain"
-            />
-          )}
-        </View>
+        </TouchableOpacity>
       </Modal>
     </KeyboardAvoidingView>
   );
@@ -855,28 +918,88 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center',
   },
 
-  /* Fullscreen image viewer (modal). */
-  fullscreenRoot: {
-    flex: 1,
-    backgroundColor: '#000',
-    alignItems: 'center',
-    justifyContent: 'center',
+  /* Pending image preview — chip above the input row showing the
+     photo the user picked but hasn't sent yet. */
+  pendingPreviewWrap: {
+    paddingHorizontal: s(8),
+    paddingTop: s(6),
+    paddingBottom: s(2),
+    alignItems: 'flex-start',
   },
-  fullscreenImg: {
+  pendingPreviewCard: {
+    width: s(60),
+    height: s(60),
+    borderRadius: s(8),
+    overflow: 'hidden',
+    backgroundColor: c.surface,
+    borderWidth: 1,
+    borderColor: c.borderSoft,
+    position: 'relative',
+  },
+  pendingPreviewImg: {
     width: '100%',
     height: '100%',
   },
-  fullscreenClose: {
-    position: 'absolute',
-    top: s(12),
-    left: s(6),
-    zIndex: 10,
-    width: s(18),
-    height: s(18),
-    borderRadius: s(9),
-    backgroundColor: 'rgba(0,0,0,0.5)',
+  pendingPreviewLoading: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  pendingPreviewCancel: {
+    position: 'absolute',
+    top: s(2),
+    right: s(2),
+    width: s(8),
+    height: s(8),
+    borderRadius: s(4),
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pendingPreviewHint: {
+    fontSize: s(4.5),
+    marginTop: s(2),
+  },
+
+  /* Centered image viewer (modal) — replaces the old fullscreen
+     black takeover. Card sits inside a dimmed backdrop so the
+     viewer feels like part of the app, not an OS-level photo app
+     handoff. */
+  viewerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: s(6),
+    paddingVertical: s(15),
+  },
+  viewerCard: {
+    width: '100%',
+    maxWidth: s(180),
+    borderRadius: s(10),
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingBottom: s(4),
+  },
+  viewerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: s(4),
+    paddingTop: s(4),
+    paddingBottom: s(2),
+  },
+  viewerCloseBtn: {
+    width: s(13),
+    height: s(13),
+    borderRadius: s(6.5),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerImg: {
+    width: '100%',
+    height: s(180),
   },
 
   /* Input */
