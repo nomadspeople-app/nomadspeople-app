@@ -22,6 +22,7 @@ import { supabase } from '../lib/supabase';
 import { useI18n } from '../lib/i18n';
 import { renderChatContent } from '../lib/chatText';
 import { uploadImage } from '../lib/imagePicker';
+import { haversineKm } from '../lib/distance';
 import { AuthContext, UnreadContext } from '../App';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -34,6 +35,28 @@ const initials = (name?: string | null) => name ? name.split(' ').map(w => w[0])
 const formatTime = (d: string) => {
   const date = new Date(d);
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+/** True when two Date objects fall on the same calendar day in
+ *  the LOCAL timezone (the user's). We deliberately don't compare
+ *  ISO dates — that would slip across day boundaries near
+ *  midnight UTC. */
+const isSameLocalDay = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+const isToday = (d: Date) => isSameLocalDay(d, new Date());
+
+/** DD/MM/YYYY for past days. Locale-agnostic on purpose — every
+ *  region the app ships in (he/en/ru) reads it the same way and
+ *  it sidesteps the localized-month-name tax. The "Today" label
+ *  is t()-driven separately. */
+const formatChatDate = (iso: string): string => {
+  const d = new Date(iso);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
 };
 
 const isSystemMsg = (content: string) =>
@@ -94,6 +117,17 @@ export default function ChatScreen() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
+  // Far-away safety banner — only shown in 1:1 DMs (not groups)
+  // when the other user's last known location is more than 100 km
+  // away from the viewer's. Pattern is the standard safety nudge
+  // every dating / nomad-meet app shows when a long-distance match
+  // is initiated: "verify identity, meet in public". The X
+  // dismisses it for the rest of this chat session — we keep that
+  // state local (not persisted) so the next time the user opens the
+  // chat they see it again, in case the situation changed.
+  const [farAwayKm, setFarAwayKm] = useState<number | null>(null);
+  const [farAwayDismissed, setFarAwayDismissed] = useState(false);
+
   useEffect(() => {
     (async () => {
       const [{ data: convData }, { data: memberData }] = await Promise.all([
@@ -119,6 +153,53 @@ export default function ChatScreen() {
       }
     })();
   }, [conversationId]);
+
+  // Compute distance between viewer and the other party in a 1:1
+  // chat. Reads last_location_latitude/longitude from app_profiles
+  // for both users and feeds them through haversineKm. We only show
+  // the safety banner if BOTH are known AND distance > 100 km — a
+  // tighter threshold would fire on intra-city moves; a looser one
+  // would defeat the safety nudge for cross-city travel which is
+  // exactly the situation that warrants it.
+  // Skipped for groups (not a meaningful comparison) and for chats
+  // where the other party hasn't shared a location.
+  useEffect(() => {
+    if (isGroup) { setFarAwayKm(null); return; }
+    if (!userId || !otherUserId) return;
+    let cancelled = false;
+    (async () => {
+      const [{ data: me }, { data: other }] = await Promise.all([
+        supabase
+          .from('app_profiles')
+          .select('last_location_latitude, last_location_longitude')
+          .eq('user_id', userId)
+          .maybeSingle(),
+        supabase
+          .from('app_profiles')
+          .select('last_location_latitude, last_location_longitude')
+          .eq('user_id', otherUserId)
+          .maybeSingle(),
+      ]);
+      if (cancelled) return;
+      const myLat = me?.last_location_latitude;
+      const myLng = me?.last_location_longitude;
+      const otherLat = other?.last_location_latitude;
+      const otherLng = other?.last_location_longitude;
+      if (
+        typeof myLat === 'number' && typeof myLng === 'number' &&
+        typeof otherLat === 'number' && typeof otherLng === 'number'
+      ) {
+        const km = haversineKm(myLat, myLng, otherLat, otherLng);
+        // Round before threshold check so 100.4 reads as 100 km
+        // and we don't display "100 km away — be careful" for
+        // someone next door.
+        const rounded = Math.round(km);
+        if (rounded > 100) setFarAwayKm(rounded);
+        else setFarAwayKm(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isGroup, userId, otherUserId]);
 
   const toggleMute = async () => {
     if (!userId) return;
@@ -455,6 +536,29 @@ export default function ChatScreen() {
         </View>
       )}
 
+      {/* ─── Far-away safety banner ───
+           Yellow dismissible bar shown at the very top of the
+           chat (under the header, above the messages) when the
+           other party is more than 100 km away. Matches the
+           safety pattern every dating / nomad-meet app uses for
+           long-distance first contact. The X dismisses for the
+           rest of this session only — re-opening the chat shows
+           it again. */}
+      {farAwayKm !== null && !farAwayDismissed && (
+        <View style={st.farAwayBanner}>
+          <NomadIcon name="alert" size={s(6)} color="#92400E" strokeWidth={1.8} />
+          <Text style={st.farAwayBannerText}>
+            {t('chat.farAway.warning', { km: farAwayKm.toLocaleString() })}
+          </Text>
+          <TouchableOpacity
+            onPress={() => setFarAwayDismissed(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <NomadIcon name="close" size={s(5.5)} color="#92400E" strokeWidth={2} />
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* ─── Messages ─── */}
       <ScrollView ref={scrollRef} style={st.msgs} contentContainerStyle={st.msgsInner} showsVerticalScrollIndicator={false}>
         {loading ? (
@@ -470,6 +574,18 @@ export default function ChatScreen() {
           const senderCol = colorFor(msg.sender_id);
           const isSys = isSystemMsg(msg.content);
 
+          // Date divider — show ONCE at the start of every new
+          // calendar day. Compares this message's local day to
+          // the previous message's local day (or always shows on
+          // the very first message). Renders as a small dark pill
+          // centred between bubbles: 'Today' for today, DD/MM/YYYY
+          // for older days. The pill is intentionally NOT clickable
+          // — it's a visual chronology marker, nothing more.
+          const prevForDate = i > 0 ? visibleMessages[i - 1] as MsgWithSender : null;
+          const thisDate = new Date(msg.sent_at);
+          const showDateDivider = !prevForDate
+            || !isSameLocalDay(new Date(prevForDate.sent_at), thisDate);
+
           const prevMsg = i > 0 ? visibleMessages[i - 1] as MsgWithSender : null;
           const nextMsg = i < visibleMessages.length - 1 ? visibleMessages[i + 1] as MsgWithSender : null;
           const sameSenderPrev = prevMsg && prevMsg.sender_id === msg.sender_id && !isSystemMsg(prevMsg.content) && !isSys;
@@ -479,16 +595,32 @@ export default function ChatScreen() {
           // Reply preview
           const repliedMsg = msg.reply_to_id ? msgMap.get(msg.reply_to_id) : null;
 
+          // Renderable date pill — extracted so we can put it in
+          // front of either the system message branch or the
+          // bubble branch without duplicating the JSX.
+          const dateDivider = showDateDivider ? (
+            <View key={`date-${msg.id}`} style={st.dateDivider}>
+              <Text style={st.dateDividerText}>
+                {isToday(thisDate) ? t('chat.today') : formatChatDate(msg.sent_at)}
+              </Text>
+            </View>
+          ) : null;
+
           if (isSys) {
             return (
-              <View key={msg.id} style={st.sysRow}>
-                <Text style={st.sysText}>{msg.content}</Text>
+              <View key={msg.id}>
+                {dateDivider}
+                <View style={st.sysRow}>
+                  <Text style={st.sysText}>{msg.content}</Text>
+                </View>
               </View>
             );
           }
 
           return (
-            <View key={msg.id} style={[st.msgRow, isMe && st.msgRowMe, sameSenderPrev && { marginTop: s(0.5) }]}>
+            <View key={msg.id}>
+            {dateDivider}
+            <View style={[st.msgRow, isMe && st.msgRowMe, sameSenderPrev && { marginTop: s(0.5) }]}>
               {/* Avatar slot */}
               {!isMe && (
                 <View style={st.avSlot}>
@@ -584,6 +716,7 @@ export default function ChatScreen() {
                   <Text style={[st.msgTime, isMe && st.msgTimeMe]}>{formatTime(msg.sent_at)}</Text>
                 )}
               </View>
+            </View>
             </View>
           );
         })}
@@ -947,6 +1080,46 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   imgHolder: {
     width: s(80), height: s(55), borderRadius: s(10),
     backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center',
+  },
+
+  /* Far-away safety banner — yellow alert pinned at the top of a
+     1:1 chat when the other party is more than 100 km away.
+     Cream/yellow background tracks the standard "be careful but
+     not blocked" colour every social app uses for safety nudges. */
+  farAwayBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: s(4),
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: s(6),
+    paddingVertical: s(5),
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#F59E0B',
+  },
+  farAwayBannerText: {
+    flex: 1,
+    fontSize: s(5.2),
+    color: '#78350F',
+    lineHeight: s(7),
+    fontWeight: FW.regular,
+  },
+
+  /* Date divider — small dark pill centred between message
+     groups, marks the start of a new calendar day. Once per day
+     only; the pill itself is non-interactive. */
+  dateDivider: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: s(5),
+    paddingVertical: s(1.5),
+    borderRadius: s(4),
+    marginVertical: s(4),
+  },
+  dateDividerText: {
+    color: '#fff',
+    fontSize: s(4.2),
+    fontWeight: FW.medium,
+    letterSpacing: 0.3,
   },
 
   /* Preview-modal action row — Cancel + Send buttons under the

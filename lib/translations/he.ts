@@ -180,6 +180,8 @@ export const he: Record<string, string> = {
   'chat.attachSoon': 'שיתוף קבצים בקרוב',
   'chat.cameraTitle': 'מצלמה',
   'chat.cameraSoon': 'שיתוף תמונות בקרוב',
+  'chat.today': 'היום',
+  'chat.farAway.warning': 'משתמש זה במרחק {{km}} ק״מ ממך. ודא את זהותו והיפגש במקומות ציבוריים אם אתם נפגשים פנים אל פנים.',
 
   /* ── Post Feed ── */
   'feed.title': 'פיד',

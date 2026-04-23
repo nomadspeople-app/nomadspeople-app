@@ -207,6 +207,11 @@ export const en: Record<string, string> = {
   'chat.attachSoon': 'file sharing coming soon',
   'chat.cameraTitle': 'camera',
   'chat.cameraSoon': 'photo sharing coming soon',
+  /* Date dividers between consecutive days inside a conversation. */
+  'chat.today': 'Today',
+  /* Yellow safety banner shown at the top of a 1:1 chat when the
+   * other user is far away. {{km}} is interpolated by t(). */
+  'chat.farAway.warning': 'This user is {{km}} km away. Verify their identity and meet in public places if connecting in person.',
 
   /* ── Post Feed ── */
   'feed.title': 'feed',

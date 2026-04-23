@@ -180,6 +180,8 @@ export const ru: Record<string, string> = {
   'chat.attachSoon': 'отправка файлов скоро',
   'chat.cameraTitle': 'камера',
   'chat.cameraSoon': 'отправка фото скоро',
+  'chat.today': 'Сегодня',
+  'chat.farAway.warning': 'Этот пользователь находится в {{km}} км от вас. Подтвердите его личность и встречайтесь в общественных местах при личной встрече.',
 
   /* ── Post Feed ── */
   'feed.title': 'лента',
