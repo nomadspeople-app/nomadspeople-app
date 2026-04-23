@@ -529,7 +529,16 @@ export default function ChatScreen() {
 
                 {typeof msg.image_url === 'string' && /^https?:\/\//i.test(msg.image_url) && (
                   <TouchableOpacity
-                    style={st.imgHolder}
+                    // alignSelf is set explicitly per-message rather than
+                    // relying on bubbleColMe's alignItems: 'flex-end'.
+                    // Background: alignItems is direction-aware in
+                    // React Native — under RTL (Hebrew/Arabic), flex-end
+                    // resolves to the LEFT edge, which made the user's
+                    // own photo appear on the wrong side. alignSelf with
+                    // an explicit value plus the same row-reverse on
+                    // msgRowMe guarantees the photo always sits on the
+                    // sender's column, regardless of locale direction.
+                    style={[st.imgHolder, { alignSelf: isMe ? 'flex-end' : 'flex-start' }]}
                     activeOpacity={0.8}
                     onPress={() => setExpandedImage(msg.image_url as string)}
                     onLongPress={() => openContextMenu(msg as MsgWithSender)}
@@ -605,82 +614,30 @@ export default function ChatScreen() {
           <Text style={st.lockedText}>this chat was closed by the creator</Text>
         </View>
       ) : (
-        <View style={{ paddingBottom: Math.max(insets.bottom, s(4)) }}>
-          {/* Pending image preview — sits ABOVE the input row.
-              Pattern matches WhatsApp/Telegram/iMessage: pick a
-              photo, see what you're about to send, hit Send (or X
-              to back out). The thumbnail uses the LOCAL uri so it
-              shows instantly with no upload latency; the upload
-              starts only when the user confirms. */}
-          {pendingImage && (
-            <View style={st.pendingPreviewWrap}>
-              <View style={st.pendingPreviewCard}>
-                <Image source={{ uri: pendingImage.uri }} style={st.pendingPreviewImg} />
-                {uploadingImage && (
-                  <View style={st.pendingPreviewLoading}>
-                    <ActivityIndicator size="small" color="#fff" />
-                  </View>
-                )}
-                <TouchableOpacity
-                  style={st.pendingPreviewCancel}
-                  onPress={() => !uploadingImage && setPendingImage(null)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  disabled={uploadingImage}
-                >
-                  <NomadIcon name="close" size={s(5)} color="#fff" strokeWidth={2} />
-                </TouchableOpacity>
-              </View>
-              <Text style={[st.pendingPreviewHint, { color: colors.textMuted }]}>
-                {uploadingImage ? 'Sending…' : 'Tap send to share'}
-              </Text>
-            </View>
-          )}
-
-          <View style={st.inputArea}>
-            <TextInput
-              style={st.inputBox}
-              placeholder={t('chat.placeholder')}
-              placeholderTextColor="#999"
-              value={inputText}
-              onChangeText={setInputText}
-              editable={!uploadingImage}
-            />
-            <TouchableOpacity
-              style={[st.cameraBtn, (uploadingImage || pendingImage) && { opacity: 0.4 }]}
-              activeOpacity={0.7}
-              onPress={handlePickPhoto}
-              disabled={uploadingImage || !!pendingImage}
-            >
-              <NomadIcon name="camera" size={s(7)} color={colors.primary} strokeWidth={1.8} />
+        <View style={[st.inputArea, { paddingBottom: Math.max(insets.bottom, s(4)) }]}>
+          <TextInput
+            style={st.inputBox}
+            placeholder={t('chat.placeholder')}
+            placeholderTextColor="#999"
+            value={inputText}
+            onChangeText={setInputText}
+          />
+          <TouchableOpacity
+            style={st.cameraBtn}
+            activeOpacity={0.7}
+            onPress={handlePickPhoto}
+          >
+            <NomadIcon name="camera" size={s(7)} color={colors.primary} strokeWidth={1.8} />
+          </TouchableOpacity>
+          {inputText.trim() ? (
+            // Arrow fn wrap — TouchableOpacity passes the press event
+            // as the first arg, which handleSend would treat as
+            // `imageUrl`. We saw garbage like image_url='{"dispatchConfig":...}'
+            // before this wrap was added.
+            <TouchableOpacity style={st.sendBtn} activeOpacity={0.7} onPress={() => handleSend()}>
+              <NomadIcon name="send" size={s(6.5)} color="#FFFFFF" strokeWidth={1.8} />
             </TouchableOpacity>
-            {/* Send is shown when ANY of:
-                  - the user typed text
-                  - they have a pending image staged
-                Press routing:
-                  - pending image present → handleSendPendingImage()
-                    (uploads, then sends a normal message with the
-                    public URL — same path as before, just deferred
-                    until confirm)
-                  - text only → handleSend()
-                The arrow-fn wrapper around handleSend stays — without
-                it, the press event gets passed as the `imageUrl`
-                argument and breaks Image rendering downstream. */}
-            {(inputText.trim() || pendingImage) ? (
-              <TouchableOpacity
-                style={[st.sendBtn, uploadingImage && { opacity: 0.5 }]}
-                activeOpacity={0.7}
-                onPress={() => {
-                  if (pendingImage) handleSendPendingImage();
-                  else handleSend();
-                }}
-                disabled={uploadingImage}
-              >
-                {uploadingImage
-                  ? <ActivityIndicator size="small" color="#FFFFFF" />
-                  : <NomadIcon name="send" size={s(6.5)} color="#FFFFFF" strokeWidth={1.8} />}
-              </TouchableOpacity>
-            ) : null}
-          </View>
+          ) : null}
         </View>
       )}
 
@@ -766,6 +723,80 @@ export default function ChatScreen() {
             </TouchableOpacity>
           </View>
         </View>
+      </Modal>
+
+      {/* Pending-image preview modal — opens right after the OS
+          photo picker returns. Shows the chosen photo at a real
+          size (not a tiny thumbnail) so the user can decide if
+          this is the photo they meant to share, then commit with
+          Send or back out with Cancel. Same pattern as WhatsApp's
+          attachment confirm sheet.
+          - Backdrop dim + tappable background = Cancel.
+          - Card uses theme bg + same close pill style as the rest
+            of the app so it doesn't feel like an OS sheet.
+          - Send button is the brand-orange primary; Cancel is a
+            neutral pill. While the upload is in flight (uploadingImage
+            true) both buttons go disabled and Send shows a spinner. */}
+      <Modal
+        visible={!!pendingImage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !uploadingImage && setPendingImage(null)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          style={st.viewerBackdrop}
+          onPress={() => !uploadingImage && setPendingImage(null)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[st.viewerCard, { backgroundColor: colors.bg, borderColor: colors.borderSoft }]}
+            onPress={() => { /* swallow taps on the card */ }}
+          >
+            <View style={st.viewerHeader}>
+              <TouchableOpacity
+                style={[st.viewerCloseBtn, { backgroundColor: colors.pill, opacity: uploadingImage ? 0.4 : 1 }]}
+                onPress={() => setPendingImage(null)}
+                disabled={uploadingImage}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <NomadIcon name="close" size={s(6)} color={colors.dark} strokeWidth={1.8} />
+              </TouchableOpacity>
+            </View>
+            {pendingImage && (
+              <Image
+                source={{ uri: pendingImage.uri }}
+                style={st.viewerImg}
+                resizeMode="contain"
+              />
+            )}
+            <View style={st.previewActions}>
+              <TouchableOpacity
+                style={[st.previewCancelBtn, { backgroundColor: colors.pill, opacity: uploadingImage ? 0.4 : 1 }]}
+                onPress={() => setPendingImage(null)}
+                disabled={uploadingImage}
+                activeOpacity={0.7}
+              >
+                <Text style={[st.previewCancelTxt, { color: colors.dark }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[st.previewSendBtn, { backgroundColor: colors.primary, opacity: uploadingImage ? 0.7 : 1 }]}
+                onPress={handleSendPendingImage}
+                disabled={uploadingImage}
+                activeOpacity={0.85}
+              >
+                {uploadingImage ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <NomadIcon name="send" size={s(5.5)} color="#fff" strokeWidth={2} />
+                    <Text style={st.previewSendTxt}>Send</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       {/* Image viewer — opens when the user taps an image message
@@ -918,48 +949,40 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     backgroundColor: c.surface, alignItems: 'center', justifyContent: 'center',
   },
 
-  /* Pending image preview — chip above the input row showing the
-     photo the user picked but hasn't sent yet. */
-  pendingPreviewWrap: {
-    paddingHorizontal: s(8),
-    paddingTop: s(6),
+  /* Preview-modal action row — Cancel + Send buttons under the
+     staged photo. Sits inside the same viewer card as the image
+     viewer (we reuse viewerCard / viewerImg / viewerHeader styles). */
+  previewActions: {
+    flexDirection: 'row',
+    gap: s(4),
+    paddingHorizontal: s(5),
+    paddingTop: s(4),
     paddingBottom: s(2),
-    alignItems: 'flex-start',
   },
-  pendingPreviewCard: {
-    width: s(60),
-    height: s(60),
-    borderRadius: s(8),
-    overflow: 'hidden',
-    backgroundColor: c.surface,
-    borderWidth: 1,
-    borderColor: c.borderSoft,
-    position: 'relative',
-  },
-  pendingPreviewImg: {
-    width: '100%',
-    height: '100%',
-  },
-  pendingPreviewLoading: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+  previewCancelBtn: {
+    flex: 1,
+    height: s(15),
+    borderRadius: s(7.5),
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pendingPreviewCancel: {
-    position: 'absolute',
-    top: s(2),
-    right: s(2),
-    width: s(8),
-    height: s(8),
-    borderRadius: s(4),
-    backgroundColor: 'rgba(0,0,0,0.65)',
+  previewCancelTxt: {
+    fontSize: s(6),
+    fontWeight: FW.semi,
+  },
+  previewSendBtn: {
+    flex: 2,
+    height: s(15),
+    borderRadius: s(7.5),
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: s(2),
   },
-  pendingPreviewHint: {
-    fontSize: s(4.5),
-    marginTop: s(2),
+  previewSendTxt: {
+    color: '#fff',
+    fontSize: s(6),
+    fontWeight: FW.bold,
   },
 
   /* Centered image viewer (modal) — replaces the old fullscreen
