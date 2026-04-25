@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#E8614D"
+      "backgroundColor": "#FC6B69"
     },
     "ios": {
       "supportsTablet": true,
@@ -45,7 +45,7 @@
         "expo-notifications",
         {
           "icon": "./assets/icon.png",
-          "color": "#E8614D",
+          "color": "#FC6B69",
           "defaultChannel": "default",
           "sounds": []
         }
@@ -73,7 +73,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#E8614D"
+        "backgroundColor": "#FC6B69"
       },
       "package": "com.nomadspeople.app",
       "edgeToEdgeEnabled": true,
@@ -82,7 +82,8 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "com.google.android.gms.permission.AD_ID"
       ],
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "versionCode": 11
     },
     "web": {
       "favicon": "./assets/favicon.png"
