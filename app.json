@@ -76,6 +76,11 @@
         "backgroundColor": "#FC6B69"
       },
       "package": "com.nomadspeople.app",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCP1Nw0W0N5pnHcHSoYMU_2YAIyWR2E19E"
+        }
+      },
       "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -83,7 +88,7 @@
         "com.google.android.gms.permission.AD_ID"
       ],
       "predictiveBackGestureEnabled": false,
-      "versionCode": 11
+      "versionCode": 12
     },
     "web": {
       "favicon": "./assets/favicon.png"
