@@ -258,9 +258,34 @@ export default function SettingsScreen() {
     setVisibility((profile as any).visibility ?? 'public');
   }, [profile]);
 
-  // Save helper
-  const save = (fields: Record<string, any>) => {
-    if (userId) update(userId, fields);
+  /**
+   * Save helper for every setting on this screen.
+   *
+   * Async + visible failure path. Pre-2026-04-26 this was sync
+   * fire-and-forget — every toggle / field looked saved on screen
+   * but if the upsert failed (offline, RLS regression, expired
+   * session, bad payload) the user got no feedback and the change
+   * silently reverted on the next refetch. Tester report:
+   *   "כל שמירה שאני עושה אינה עובדת או נשמרת כלל".
+   *
+   * Now: awaits the network call, pops a clear Alert on failure
+   * (so the user knows to retry), and returns the success boolean
+   * so callers that maintain optimistic local state can revert it
+   * if needed. Existing fire-and-forget callers still work — they
+   * just won't see the Alert acknowledged, which is fine for
+   * toggles where the UI state already mirrors the intent.
+   */
+  const save = async (fields: Record<string, any>): Promise<boolean> => {
+    if (!userId) return false;
+    const { error } = await update(userId, fields);
+    if (error) {
+      Alert.alert(
+        'Could not save',
+        error.message || 'Please check your connection and try again.',
+      );
+      return false;
+    }
+    return true;
   };
 
   // Sync all notification prefs to the in-memory foreground handler.

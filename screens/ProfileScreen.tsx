@@ -346,33 +346,70 @@ export default function ProfileScreen() {
     }
   }, [profileUserId, myUserId, isOwner]);
 
-  /* ─── Avatar upload ─── */
+  /* ─── Avatar upload ─────────────────────────────────────────
+   *
+   * Closed-loop save per `logic` skill:
+   *   1) Pick + upload to storage (helper handles its own errors)
+   *   2) UPSERT the avatar_url on app_profiles. UPSERT (not UPDATE)
+   *      because if the profile row is missing for any reason the
+   *      .update().eq() variant silently no-ops and the avatar
+   *      "looks" saved on screen but the DB still has the old URL.
+   *   3) Surface any DB error via Alert. Pre-fix: silent failure.
+   *   4) refetch() on success so the new avatar paints immediately.
+   *
+   * NOTE: bustAvatar() (the cache-bust documented in CLAUDE.md
+   * "Avatar Cache System") is NOT yet wired into ProfileScreen —
+   * the rest of the app reads `avatar_url` directly. Adding a
+   * proper AvatarContext + bustAvatar() call here is a follow-up
+   * that needs touching every avatar consumer; not scoped to
+   * this hotfix.
+   */
   const [avatarUploading, setAvatarUploading] = useState(false);
   const handleAvatarPress = async () => {
     if (!isOwner || !myUserId) return;
     setAvatarUploading(true);
     try {
       const url = await pickAndUploadAvatar(myUserId);
-      if (url) {
-        await supabase
-          .from('app_profiles')
-          .update({ avatar_url: url })
-          .eq('user_id', myUserId);
-        refetch();
+      if (!url) return; // pick was cancelled or upload failed (alert already shown)
+      const { error } = await supabase
+        .from('app_profiles')
+        .upsert({ user_id: myUserId, avatar_url: url }, { onConflict: 'user_id' });
+      if (error) {
+        console.error('[ProfileScreen] avatar save failed:', error.message);
+        Alert.alert('Could not save avatar', error.message || 'Please try again.');
+        return;
       }
+      refetch();
     } finally {
       setAvatarUploading(false);
     }
   };
 
-  /* ─── Inline bio save ─── */
+  /* ─── Inline bio save ─────────────────────────────────────────
+   *
+   * Same closed-loop pattern as handleAvatarPress. Pre-fix this
+   * was the literal bug "הסיו לא נשמר": UPDATE silently no-op'd
+   * if the row was missing or RLS blocked it, and the editor
+   * closed regardless so the user thought it saved.
+   *
+   * Now: only closes the editor on a confirmed successful UPSERT.
+   * On failure the editor stays open so the user can retry without
+   * losing what they typed.
+   */
   const handleBioSave = async () => {
     if (!myUserId) return;
     const trimmed = bioText.trim();
-    await supabase
+    const { error } = await supabase
       .from('app_profiles')
-      .update({ bio: trimmed || null })
-      .eq('user_id', myUserId);
+      .upsert(
+        { user_id: myUserId, bio: trimmed || null },
+        { onConflict: 'user_id' },
+      );
+    if (error) {
+      console.error('[ProfileScreen] bio save failed:', error.message);
+      Alert.alert('Could not save bio', error.message || 'Please try again.');
+      return;
+    }
     setEditingBio(false);
     refetch();
   };
@@ -675,10 +712,21 @@ export default function ProfileScreen() {
     if (!profileUserId) return;
     const current = (profile as any)?.visited_places || [];
     const updated = [...current, place];
-    await supabase
+    // UPSERT + error surface — same closed-loop pattern as the
+    // bio / avatar saves above. Pre-fix the user could "add a
+    // place" and it would vanish on the next refetch because the
+    // .update().eq() silently no-op'd.
+    const { error } = await supabase
       .from('app_profiles')
-      .update({ visited_places: updated })
-      .eq('user_id', profileUserId);
+      .upsert(
+        { user_id: profileUserId, visited_places: updated },
+        { onConflict: 'user_id' },
+      );
+    if (error) {
+      console.error('[ProfileScreen] visited_places save failed:', error.message);
+      Alert.alert('Could not save place', error.message || 'Please try again.');
+      return;
+    }
     refetch();
   };
 

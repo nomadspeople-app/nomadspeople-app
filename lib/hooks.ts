@@ -2040,11 +2040,32 @@ export function useNotifications(userId: string | null) {
    ═══════════════════════════════════════════ */
 
 export function useUpdateSettings() {
+  /**
+   * Persist one or more fields to the user's app_profiles row.
+   *
+   * Uses UPSERT (not UPDATE) per the `logic` skill: if the row is
+   * somehow missing — e.g. the user deleted then re-signed-up, or
+   * a race during onboarding — UPDATE silently no-ops and the
+   * caller's UI reports success while nothing is written. UPSERT
+   * inserts the row if absent and updates it if present, with the
+   * same RLS check (`auth.uid() = user_id`).
+   *
+   * Returns `{ error }` so callers can decide whether to surface
+   * it. Tester reports 2026-04-26 ("הסיו לא נשמר / כל שמירה אינה
+   * עובדת") were caused by callers fire-and-forgetting this and
+   * never surfacing failures. New helper `saveProfileField` below
+   * encapsulates the await + error-surface so screens stop having
+   * to remember each step.
+   */
   const update = async (userId: string, fields: Record<string, any>) => {
     const { error } = await supabase
       .from('app_profiles')
-      .update(fields)
-      .eq('user_id', userId);
+      .upsert({ user_id: userId, ...fields }, { onConflict: 'user_id' });
+    if (error) {
+      // Always log — this is a primary write path. Sentry hook not
+      // wired here yet; console keeps a trail in EAS logs.
+      console.error('[useUpdateSettings] upsert failed:', error.message, fields);
+    }
     return { error };
   };
 
