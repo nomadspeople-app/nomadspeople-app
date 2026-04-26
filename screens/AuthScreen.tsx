@@ -78,6 +78,10 @@ export default function AuthScreen({ onSuccess }: Props) {
   const [agreedPrivacy, setAgreedPrivacy] = useState(false);
   const [marketingOptIn, setMarketingOptIn] = useState(false);
 
+  /* Toggle between dotted password (default) and plain text. We do NOT
+     persist this — every time the screen opens, password is masked. */
+  const [showPassword, setShowPassword] = useState(false);
+
   const handleSubmit = async () => {
     setError('');
     if (!email.trim() || !password.trim()) {
@@ -325,15 +329,36 @@ export default function AuthScreen({ onSuccess }: Props) {
             autoComplete="email"
           />
 
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor={colors.textFaint}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-          />
+          {/* Password field with eye toggle. The eye sits inside the
+              same border as the input so it reads as one unit. Tapping
+              the eye flips secureTextEntry. */}
+          <View style={styles.passwordWrap}>
+            <TextInput
+              style={styles.passwordInput}
+              placeholder="Password"
+              placeholderTextColor={colors.textFaint}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              autoCapitalize="none"
+            />
+            <TouchableOpacity
+              style={styles.eyeBtn}
+              onPress={() => setShowPassword(v => !v)}
+              accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+              accessibilityRole="button"
+              activeOpacity={0.6}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <NomadIcon
+                name={showPassword ? 'eye-off' : 'eye'}
+                size={s(7)}
+                color={colors.textMuted}
+                strokeWidth={1.8}
+              />
+            </TouchableOpacity>
+          </View>
 
           {/* ─── Consent checkboxes (signup only) ───
                GDPR Article 7 requires explicit, verifiable consent.
@@ -579,9 +604,45 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     borderColor: c.borderSoft,
   },
   error: {
-    fontSize: s(5.5),
+    fontSize: s(6),
     color: c.danger,
     textAlign: 'center',
+    fontWeight: FW.semi,
+    backgroundColor: c.surface,
+    borderRadius: s(4),
+    paddingVertical: s(3),
+    paddingHorizontal: s(4),
+    borderWidth: 0.5,
+    borderColor: c.danger,
+    marginVertical: s(2),
+  },
+
+  /* ── Password input + eye toggle ──
+     We replicate the .input visual (height, border, radius, bg) on
+     the WRAPPER so the eye icon sits inside the same field. The
+     inner TextInput then has no border of its own. */
+  passwordWrap: {
+    height: s(22),
+    borderRadius: s(6),
+    paddingLeft: s(7),
+    paddingRight: s(3),
+    backgroundColor: c.surface,
+    borderWidth: 0.5,
+    borderColor: c.borderSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  passwordInput: {
+    flex: 1,
+    fontSize: s(6.5),
+    fontWeight: FW.regular,
+    color: c.dark,
+    paddingVertical: 0,
+  },
+  eyeBtn: {
+    padding: s(3),
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   /* ── Consent group ── */

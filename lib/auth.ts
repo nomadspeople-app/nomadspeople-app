@@ -226,8 +226,37 @@ export async function signInWithGoogle(): Promise<{ error: string | null }> {
     ) {
       return { error: null };
     }
-    return { error: e?.message ?? 'Google sign-in failed.' };
+    return { error: friendlyGoogleError(e) };
   }
+}
+
+/* Map raw Google Sign-In errors to short, user-readable messages.
+ * Without this, the SDK leaks "DEVELOPER_ERROR — follow troubleshooting
+ * instructions at https://react-native-google-signin..." which looks
+ * broken to a non-technical tester. We also keep the original message
+ * in console.warn so we can still debug. */
+function friendlyGoogleError(e: any): string {
+  const code = e?.code;
+  const raw = String(e?.message ?? e ?? '').toLowerCase();
+  // eslint-disable-next-line no-console
+  console.warn('[GoogleSignIn] error:', { code, message: e?.message });
+
+  // DEVELOPER_ERROR — wrong SHA-1 / package name in Google Cloud OAuth
+  // client. Common right after a fresh AAB upload before Google Cloud
+  // propagates. Don't scare the user — point them at the email path.
+  if (code === 'DEVELOPER_ERROR' || code === 10 || raw.includes('developer_error')) {
+    return 'Google Sign-In is being set up. Please sign up with email for now — it works the same.';
+  }
+  // PLAY_SERVICES_NOT_AVAILABLE — old Android, no GMS.
+  if (code === 'PLAY_SERVICES_NOT_AVAILABLE' || raw.includes('play services')) {
+    return 'Google Play Services not available on this device. Please sign up with email instead.';
+  }
+  // Network / timeout
+  if (raw.includes('network') || raw.includes('timeout') || raw.includes('failed to fetch')) {
+    return 'No connection. Check your internet and try again.';
+  }
+  // Anything else — short, safe default.
+  return 'Google Sign-In failed. Please try again or use email.';
 }
 
 export function useAuth() {
