@@ -15,7 +15,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { haversineKm, formatDistance } from '../lib/distance';
 import type { RootStackParamList } from '../lib/types';
-import { useActiveCheckins, useHotCheckins, useNomadsInCity, useFollow, useProfile, createOrJoinStatusChat, wisdomCheck, trackWisdomSignal, type CheckinWithProfile, type NomadInCity, type WisdomIntent } from '../lib/hooks';
+import { useActiveCheckins, useHotCheckins, useNomadsInCity, useFollow, useProfile, useNotifications, createOrJoinStatusChat, wisdomCheck, trackWisdomSignal, type CheckinWithProfile, type NomadInCity, type WisdomIntent } from '../lib/hooks';
 import { AuthContext } from '../App';
 import { useAvatar } from '../lib/AvatarContext';
 import { useI18n } from '../lib/i18n';
@@ -944,6 +944,21 @@ export default function HomeScreen() {
     const gpsInterval = setInterval(refreshGPS, 30_000);
     return () => clearInterval(gpsInterval);
   }, [refreshGPS]);
+
+  /* ── Notifications hook ──
+   *
+   * Drives the unread badge on the bottom-right bell. Pre-fix the
+   * bell was a static icon with no count — testers had unread
+   * notifications in app_notifications but no signal to open the
+   * sheet. Tester report 2026-04-26: "האייקון פעמון - לא מראה
+   * נוטיפיקיישן".
+   *
+   * `useNotifications` polls every 120s and exposes refetch +
+   * markAllRead. We refetch when the screen regains focus and
+   * after the sheet closes (mark-all-read inside the sheet).
+   */
+  const { unreadCount: notifUnread, refetch: refetchNotifs, markAllRead: markNotifsRead } = useNotifications(userId);
+  useFocusEffect(useCallback(() => { refetchNotifs(); }, [refetchNotifs]));
 
   /* ── Recent cities: load on mount AND auto-record the current city so
           the dropdown always has at least one item (even first-timers who
@@ -2346,9 +2361,25 @@ export default function HomeScreen() {
           accessibilityRole="button"
           style={st.fabLocationBtn}
           activeOpacity={0.8}
-          onPress={() => setShowNotifs(true)}
+          onPress={() => {
+            setShowNotifs(true);
+            // Mark all read when the sheet opens — same UX pattern
+            // as Messages: opening the surface clears the badge.
+            // The sheet still shows them as a list (just no longer
+            // tinted "unread"), and the bell goes back to neutral.
+            if (notifUnread > 0) markNotifsRead();
+          }}
         >
           <NomadIcon name="bell" size={s(10)} color="#555" strokeWidth={1.8} />
+          {/* Unread badge — red pill with count, capped at 9+ so we
+              don't blow the bell out of layout for power users. */}
+          {notifUnread > 0 && (
+            <View style={st.bellBadge}>
+              <Text style={st.bellBadgeText}>
+                {notifUnread > 9 ? '9+' : String(notifUnread)}
+              </Text>
+            </View>
+          )}
         </TouchableOpacity>
 
         {/* My Location — white square (top) */}
@@ -3037,6 +3068,27 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1.5, borderColor: c.borderSoft,
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2,
+  },
+  /* Unread badge for the notifications bell — sits in the top-right
+   * corner of the fabLocationBtn. Brand-coral fill on white border so
+   * it reads as a count even at small size. minWidth so single digits
+   * stay round, two digits ('9+') auto-stretch. */
+  bellBadge: {
+    position: 'absolute',
+    top: -s(2), right: -s(2),
+    minWidth: s(10), height: s(10),
+    paddingHorizontal: s(2),
+    borderRadius: s(5),
+    backgroundColor: c.primary,
+    borderWidth: 1.5, borderColor: '#FFF',
+    alignItems: 'center', justifyContent: 'center',
+    elevation: 3,
+  },
+  bellBadgeText: {
+    color: '#FFF',
+    fontSize: s(5),
+    fontWeight: FW.bold as any,
+    lineHeight: s(6),
   },
   /* fabBubbleGreen / fabBubbleRed retired (April 2026): the
      unified Plus moved to the bottom tab bar (App.tsx CreateFab)
