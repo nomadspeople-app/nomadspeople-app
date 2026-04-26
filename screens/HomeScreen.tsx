@@ -1160,9 +1160,22 @@ export default function HomeScreen() {
       }, 450);
       // Wait for camera then open bubble — matches the locked Map
       // Pin Tap Flow in CLAUDE.md (zoom 400ms → wait 450ms → popup).
-      setTimeout(() => {
-        if (!cancelled) setTimerBubbleCheckin(target);
-      }, 470);
+      //
+      // IMPORTANT — do NOT gate this setTimeout on `cancelled`. The
+      // first version did, and `cancelled` flips to true the moment
+      // we clear `focusCheckinId` from route.params (which changes
+      // the useEffect deps and runs the cleanup). The map animation
+      // ran fine because it fires synchronously, but the bubble
+      // never opened — tester report 2026-04-26: "שלח אותי לבועה
+      // אבל לא פתח לי את הבאבל". The `cancelled` flag still guards
+      // the async DB fetch above, where it MATTERS (avoids setting
+      // a bubble for a checkin the user already navigated away
+      // from). Once we have the target in hand and have committed
+      // to opening the bubble, the user wants it open — period.
+      setTimeout(() => setTimerBubbleCheckin(target), 470);
+      // Clear the params LAST, after we've handed the bubble work
+      // off to setTimeout. Order doesn't change behavior with the
+      // setTimeout-no-guard fix above, but keeps the intent obvious.
       nav.setParams({ focusCheckinId: undefined, focusNonce: undefined } as any);
     })();
     return () => { cancelled = true; };
