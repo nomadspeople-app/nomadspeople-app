@@ -476,19 +476,34 @@ export default function ChatScreen() {
               const buttons: any[] = [{ text: muteLabel, onPress: toggleMute }];
               if (isGroup) {
                 buttons.push({ text: 'group info', onPress: () => nav.navigate('GroupInfo', { conversationId }) });
-                buttons.push({
-                  text: 'leave group', style: 'destructive' as const,
-                  onPress: () => {
-                    Alert.alert('leave group?', 'you will lose access to this chat and all its messages.', [
-                      { text: 'cancel', style: 'cancel' },
-                      { text: 'leave', style: 'destructive', onPress: async () => {
-                        if (!userId) return;
-                        const { success } = await leaveGroupChat(userId, conversationId);
-                        if (success) nav.goBack();
-                      }},
-                    ]);
-                  },
-                });
+                // ── Creator vs participant split (logic skill) ──
+                //   The creator OWNS the group. There is no "leave"
+                //   for them — that would orphan the bubble on the
+                //   map and leave members without an admin. Their
+                //   destructive path is "end event", which lives
+                //   in GroupInfo and properly archives the pin +
+                //   posts the system message. Members get the
+                //   "leave group" path as before.
+                if (userId && createdBy === userId) {
+                  buttons.push({
+                    text: 'end event', style: 'destructive' as const,
+                    onPress: () => nav.navigate('GroupInfo', { conversationId }),
+                  });
+                } else {
+                  buttons.push({
+                    text: 'leave group', style: 'destructive' as const,
+                    onPress: () => {
+                      Alert.alert('leave group?', 'you will lose access to this chat and all its messages.', [
+                        { text: 'cancel', style: 'cancel' },
+                        { text: 'leave', style: 'destructive', onPress: async () => {
+                          if (!userId) return;
+                          const { success } = await leaveGroupChat(userId, conversationId);
+                          if (success) nav.goBack();
+                        }},
+                      ]);
+                    },
+                  });
+                }
               }
               if (!isGroup && otherUserId && userId) {
                 buttons.push({

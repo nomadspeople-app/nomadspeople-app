@@ -307,24 +307,55 @@ export default function GroupInfoScreen() {
   };
 
   const handleEndEvent = () => {
-    Alert.alert('End Event', 'This will mark the event as ended. No one new can join.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'End',
-        style: 'destructive',
-        onPress: async () => {
-          // Lock the conversation
-          await supabase.from('app_conversations').update({ is_open: false, is_locked: true }).eq('id', conversationId);
-          // Deactivate linked checkin
-          if (group?.created_by) {
-            await supabase.from('app_checkins').update({ is_active: false, expires_at: new Date().toISOString() })
-              .eq('user_id', group.created_by).eq('is_active', true);
-          }
-          nav.goBack();
-          nav.goBack();
+    Alert.alert(
+      'End Event',
+      'This ends the event for everyone — the pin disappears from the map. The chat stays so members can still talk.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'End',
+          style: 'destructive',
+          onPress: async () => {
+            if (!userId) return;
+            // ── Closed-loop end-event flow per `logic` skill ──
+            //   1) Post the visible system message FIRST so members
+            //      see "❌ Event cancelled" in the chat. We post
+            //      while the conversation is still unlocked because
+            //      RLS on app_messages requires sender_id =
+            //      auth.uid() AND the user to be a member of an
+            //      open conversation. Posting after the lock
+            //      flips would silently drop the message.
+            //   2) Deactivate the linked checkin so the pin
+            //      disappears from the map for everyone.
+            //   3) Lock the conversation so no one new can join,
+            //      but existing members keep their chat history
+            //      (per CLAUDE.md timer spec: "the chat must
+            //      SURVIVE expiry").
+            const linkedCheckinId = (group as any)?.checkin_id as string | undefined;
+            if (linkedCheckinId) {
+              await postEventSystemMessage(
+                linkedCheckinId,
+                userId,
+                eventSystemMsg.cancelled(),
+              );
+            }
+            if (group?.created_by) {
+              await supabase
+                .from('app_checkins')
+                .update({ is_active: false, expires_at: new Date().toISOString() })
+                .eq('user_id', group.created_by)
+                .eq('is_active', true);
+            }
+            await supabase
+              .from('app_conversations')
+              .update({ is_open: false, is_locked: true })
+              .eq('id', conversationId);
+            nav.goBack();
+            nav.goBack();
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   const handleRemoveMember = (memberId: string, memberName: string) => {
@@ -621,48 +652,63 @@ export default function GroupInfoScreen() {
             next to the group name. The old bottom placement was why
             the keyboard covered the edit input. */}
 
-        {/* ─── Leave Chat ─── */}
-        <TouchableOpacity
-          style={st.leaveBtn}
-          activeOpacity={0.7}
-          onPress={() => setShowLeaveConfirm(true)}
-        >
-          <NomadIcon name="logout" size={s(6)} color="white" strokeWidth={1.4} />
-          <Text style={st.leaveBtnText}>Leave Chat</Text>
-        </TouchableOpacity>
+        {/* ─── Leave Chat ───
+             SHOWN ONLY TO MEMBERS, NEVER TO THE CREATOR.
+             A creator pressing "Leave" was the bug reported on
+             2026-04-26: the bubble stayed alive on the map but
+             without an owner, members got abandoned chats, and
+             nobody became admin. The creator's destructive path
+             is "End Event" at the top of the screen, which
+             properly archives the pin + posts a system message.
+             Per the `logic` skill: never render a button whose
+             closed loop the system can't honour. */}
+        {!iAmCreator && (
+          <TouchableOpacity
+            style={st.leaveBtn}
+            activeOpacity={0.7}
+            onPress={() => setShowLeaveConfirm(true)}
+          >
+            <NomadIcon name="logout" size={s(6)} color="white" strokeWidth={1.4} />
+            <Text style={st.leaveBtnText}>Leave Chat</Text>
+          </TouchableOpacity>
+        )}
 
         <View style={{ height: s(20) + insets.bottom }} />
       </ScrollView>
 
       {/* ─── Leave Confirmation Modal ─── */}
-      <Modal visible={showLeaveConfirm} transparent animationType="fade">
-        <TouchableOpacity
-          style={st.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowLeaveConfirm(false)}
-        >
-          <View style={st.modalBox}>
-            <Text style={st.modalTitle}>Leave Chat</Text>
-            <Text style={st.modalMsg}>Are you sure you want to leave this activity?</Text>
-            <View style={st.modalBtns}>
-              <TouchableOpacity
-                style={st.modalCancelBtn}
-                activeOpacity={0.7}
-                onPress={() => setShowLeaveConfirm(false)}
-              >
-                <Text style={st.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={st.modalLeaveBtn}
-                activeOpacity={0.7}
-                onPress={handleLeave}
-              >
-                <Text style={st.modalLeaveText}>Leave</Text>
-              </TouchableOpacity>
+      {/* Same gate as the button above — the modal can't open for
+           a creator, so we don't need to render it for them either. */}
+      {!iAmCreator && (
+        <Modal visible={showLeaveConfirm} transparent animationType="fade">
+          <TouchableOpacity
+            style={st.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowLeaveConfirm(false)}
+          >
+            <View style={st.modalBox}>
+              <Text style={st.modalTitle}>Leave Chat</Text>
+              <Text style={st.modalMsg}>Are you sure you want to leave this activity?</Text>
+              <View style={st.modalBtns}>
+                <TouchableOpacity
+                  style={st.modalCancelBtn}
+                  activeOpacity={0.7}
+                  onPress={() => setShowLeaveConfirm(false)}
+                >
+                  <Text style={st.modalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={st.modalLeaveBtn}
+                  activeOpacity={0.7}
+                  onPress={handleLeave}
+                >
+                  <Text style={st.modalLeaveText}>Leave</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
+          </TouchableOpacity>
+        </Modal>
+      )}
 
       {/* ─── Members Modal — "the window" when user taps "Members (N)" ─── */}
       <MembersModal
