@@ -1,11 +1,19 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   KeyboardAvoidingView, ScrollView, Platform, ActivityIndicator, Alert, Linking,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { supabase } from '../lib/supabase';
+
+/* AsyncStorage key for the most recent successful login email.
+ * Pre-fills the email field on the login form so a user who
+ * signed out (or whose persisted session expired) doesn't have
+ * to retype their address. NEVER stores password — that would
+ * be a privacy / security red line. See lib/supabase.ts comment. */
+const LAST_EMAIL_KEY = '@nomadspeople/lastEmail';
 import { TERMS_VERSION, PRIVACY_VERSION } from '../lib/legal/content';
 import NomadIcon from '../components/NomadIcon';
 import {
@@ -67,6 +75,15 @@ export default function AuthScreen({ onSuccess }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  /* Pre-fill email from the last successful login. Runs ONCE on
+   * mount; doesn't overwrite anything the user has already typed.
+   * Silent on read failure — worst case the field is just empty. */
+  useEffect(() => {
+    AsyncStorage.getItem(LAST_EMAIL_KEY)
+      .then((saved) => { if (saved) setEmail(saved); })
+      .catch(() => {});
+  }, []);
+
   /* ── Consent state (signup only) ──────────────────────────────
      Three checkboxes: age (required), terms (required), privacy
      (required), plus one optional marketing opt-in. All four start
@@ -127,8 +144,9 @@ export default function AuthScreen({ onSuccess }: Props) {
     // renders a raw JSON dump.
     try {
       if (mode === 'signup') {
+        const cleanedEmail = email.trim().toLowerCase();
         const { data, error: signUpErr } = await supabase.auth.signUp({
-          email: email.trim().toLowerCase(),
+          email: cleanedEmail,
           password,
           options: {
             data: { full_name: fullName.trim() },
@@ -200,11 +218,15 @@ export default function AuthScreen({ onSuccess }: Props) {
           }
         }
 
+        // Remember the email for next launch — same pattern as login.
+        AsyncStorage.setItem(LAST_EMAIL_KEY, cleanedEmail).catch(() => {});
+
         onSuccess();
       } else {
         // Login
+        const cleanedEmail = email.trim().toLowerCase();
         const { error: signInErr } = await supabase.auth.signInWithPassword({
-          email: email.trim().toLowerCase(),
+          email: cleanedEmail,
           password,
         });
 
@@ -213,6 +235,10 @@ export default function AuthScreen({ onSuccess }: Props) {
           setLoading(false);
           return;
         }
+
+        // Remember the email for next launch — fire-and-forget,
+        // a write failure shouldn't block the login flow.
+        AsyncStorage.setItem(LAST_EMAIL_KEY, cleanedEmail).catch(() => {});
 
         onSuccess();
       }
