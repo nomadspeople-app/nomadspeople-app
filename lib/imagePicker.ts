@@ -32,27 +32,25 @@ import { Alert, Platform } from 'react-native';
  *            assume the app froze.
  */
 export async function pickImage(aspect?: [number, number]): Promise<string | null> {
-  let status: string;
-  try {
-    const result = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    status = result.status;
-  } catch (err: any) {
-    showPickFailure('PERM', err?.message || 'requestMediaLibraryPermissionsAsync threw');
-    return null;
-  }
-  if (status !== 'granted') {
-    showPickFailure('PERM', `Permission status: ${status}. Please allow photo access in Settings.`);
-    return null;
-  }
-
-  // UX fix (2026-04-26 PM): on Android, `allowsEditing: true` invokes
-  // the system cropper which on Samsung One UI / many OEM skins is
-  // broken (postage-stamp preview, no Save button). We skip it on
-  // Android and accept the image as-picked. iOS keeps the cropper.
+  // Permissions: Android 13+ uses the system Photo Picker which
+  // requires NO runtime permission — it grants per-photo access via
+  // a temporary URI grant. iOS uses PHPhotoPicker which the picker
+  // itself prompts for the first time it's invoked. Calling
+  // requestMediaLibraryPermissionsAsync up front used to return
+  // 'denied' on Android 13+ when the app's manifest doesn't declare
+  // READ_MEDIA_IMAGES (we don't, because the modern picker doesn't
+  // need it) — that 'denied' was making us bail before the picker
+  // even opened. Tester report 2026-04-26: "אין כניסה אפילו לאלבום
+  // בחירת תמונות כלל". Fix: skip the upfront permission check and
+  // let the system picker handle access internally. If the user
+  // genuinely lacks access, launchImageLibraryAsync surfaces it.
   let result;
   try {
     result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
+      // UX: on Android, `allowsEditing: true` invokes the OEM system
+      // cropper which on Samsung One UI is broken (postage-stamp
+      // preview, no Save button). Skip it on Android, keep on iOS.
       allowsEditing: Platform.OS === 'ios',
       aspect: aspect || [1, 1],
       quality: 0.7,
