@@ -457,6 +457,36 @@ export default function HomeScreen() {
     }
   }, [route.params?.newActivity]);
 
+  /* ── Tab-level Plus button → open creation flow ──
+   * The global floating Plus lives in App.tsx (see CreateFab) and
+   * is visible across every tab. When tapped on a non-Home tab it
+   * navigates to Home with `openCreate: Date.now()`. The nonce
+   * (Date.now()) ensures useEffect fires even when the user was
+   * already on Home — same param value would skip the effect.
+   *
+   * We clear the param immediately after consuming it so:
+   *   - leaving Home and coming back doesn't re-trigger creation
+   *   - the deep-link state stays clean for any other code that
+   *     reads route.params (none today, but the next dev's
+   *     surprise budget shouldn't be paid in creation modals).
+   *
+   * Guarded on `userId` because openCreation needs auth to write
+   * the eventual checkin row. If the tap lands before auth is
+   * ready, the effect re-runs once userId is set (since userId is
+   * in the deps array) — the tap doesn't get lost.
+   */
+  useEffect(() => {
+    const nonce = route.params?.openCreate;
+    if (nonce && userId) {
+      openCreation();
+      nav.setParams({ openCreate: undefined } as any);
+    }
+    // openCreation is referenced but not in deps because re-running
+    // it when its identity changes (e.g. userLat refresh) would
+    // reopen creation unexpectedly. The nonce alone is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.openCreate, userId]);
+
   const [showProfile, setShowProfile] = useState(false);
   const [selectedNomad, setSelectedNomad] = useState<any>(null);
   const [showNotifs, setShowNotifs] = useState(false);
@@ -622,8 +652,16 @@ export default function HomeScreen() {
   // Exposed by CreationBubble — parent calls it after pickMode
   // commits so the bubble can update its internal location state
   // without unmounting. Stays null when the bubble isn't mounted.
+  //
+  // `opts.manual` distinguishes a USER pick (pickMode commit)
+  // from a BACKGROUND refresh (openCreation's async GPS chain).
+  // The bubble ignores background pushes once a manual pick has
+  // landed — see CreationBubble.manuallyPickedRef. This prevents
+  // a slow GPS resolver from silently overriding the picked
+  // coords with the device GPS (the "pin always takes my
+  // location" bug, fixed 2026-04-26).
   const creationLocationUpdater = useRef<
-    ((loc: { lat: number; lng: number; address: string }) => void) | null
+    ((loc: { lat: number; lng: number; address: string }, opts?: { manual?: boolean }) => void) | null
   >(null);
 
   /** Open the unified creation bubble.
@@ -755,7 +793,12 @@ export default function HomeScreen() {
   const commitPickFromCreation = useCallback(() => {
     const snap = { lat: pickLat, lng: pickLng, address: pickAddr };
     exitPickMode();
-    creationLocationUpdater.current?.(snap);
+    // `manual: true` locks the bubble against any background GPS
+    // push that may still be in flight from openCreation. Without
+    // this flag a slow-arriving GPS resolver could overwrite the
+    // user's pick a few seconds later — the exact bug reported on
+    // 2026-04-26 ("הפין במפות לא עובד / הוא תמיד לוקח לוקיישן שלי").
+    creationLocationUpdater.current?.(snap, { manual: true });
     setShowCreation(true);
   }, [pickLat, pickLng, pickAddr, exitPickMode]);
 
@@ -2008,13 +2051,14 @@ export default function HomeScreen() {
         </Animated.View>
       )}
 
-      {/* ── HEADER — floats above map ── */}
+      {/* ── HEADER — floats above map ──
+           Bell relocated to the right-side fabColumn (April 2026) so the
+           top header carries only brand + city search. The Bell is now
+           rendered alongside the My-Location button, in the same
+           visual column where the green Plus used to live. */}
       <View style={[st.header, { paddingTop: insets.top }]} onLayout={onHeaderLayout}>
         <View style={st.hRow}>
           <Text style={st.brand}>{t('home.brand')}</Text>
-          <TouchableOpacity style={st.hBtn} onPress={() => setShowNotifs(true)}>
-            <NomadIcon name="bell" size={s(8)} color={colors.dark} strokeWidth={1.8} />
-          </TouchableOpacity>
         </View>
         {/* ── City Search Bar (compact) + City Label ── */}
         <View style={st.searchRow}>
@@ -2182,26 +2226,31 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* ── FAB Column — single unified "post" button ──
-           The old red-timer / green-status duo is gone. The user
-           no longer has to decide "timer or status" before they
-           start typing — the CreationBubble asks WHEN as step 2
-           and derives timer / status from the answer. One button,
-           one entry point, one flow. See CLAUDE.md Rule Zero. */}
+      {/* ── FAB Column — Bell + My-Location stack ──
+           April 2026: the Plus button moved to the bottom tab bar
+           (see CreateFab in App.tsx) and is now visible across
+           every tab — Home, People, Pulse, Profile. The Bell that
+           used to sit in the top-right header took the Plus's old
+           slot here, beside the My-Location button.
+
+           Hidden when the user is in snooze mode — show_on_map=false
+           means no map presence, so floating affordances would be
+           noise. Notifications are still reachable via the standard
+           push flow / system tray; the in-app Bell just hides while
+           the user is invisible. */}
       {!isSnoozed && <View style={st.fabColumn}>
+        {/* Notifications bell (bottom of column) — same visual
+            language as the My-Location button below. onPress opens
+            the standard NotificationsSheet defined further down in
+            this file. */}
         <TouchableOpacity
-          style={st.fabBubbleGreen}
-          activeOpacity={0.85}
-          onPress={() => {
-            if (!userId) return;
-            // Always open. Any conflict (existing timer or
-            // scheduled) is surfaced INSIDE the bubble at its
-            // PUBLISH step — one warning, one flow, one language.
-            // No separate Replace modal any more.
-            openCreation();
-          }}
+          accessibilityLabel={t('home.notifications')}
+          accessibilityRole="button"
+          style={st.fabLocationBtn}
+          activeOpacity={0.8}
+          onPress={() => setShowNotifs(true)}
         >
-          <NomadIcon name="plus" size={s(10)} color="#4ADE80" strokeWidth={2} />
+          <NomadIcon name="bell" size={s(10)} color="#555" strokeWidth={1.8} />
         </TouchableOpacity>
 
         {/* My Location — white square (top) */}
@@ -2780,13 +2829,10 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   },
   hRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: s(3) },
   brand: { fontSize: s(9), fontWeight: FW.extra, color: c.dark, letterSpacing: -0.3 },
-  hIcons: { flexDirection: 'row', gap: s(2.5) },
-  hBtn: {
-    width: s(22), height: s(22), borderRadius: s(11),
-    backgroundColor: c.white82, alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: s(0.5) },
-    shadowOpacity: 0.08, shadowRadius: s(2),
-  },
+  /* hRow is now brand-only — Bell moved to fabColumn (April 2026).
+     hBtn / hIcons styles removed with the relocation; if a future
+     header-right control returns, model it after fabLocationBtn so
+     it shares the same visual language as the on-map controls. */
 
   /* Search */
   searchRow: {
@@ -2894,20 +2940,11 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     borderWidth: 1.5, borderColor: c.borderSoft,
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2,
   },
-  fabBubbleGreen: {
-    width: s(24), height: s(24), borderRadius: s(7),
-    backgroundColor: '#F5F3EF',
-    borderWidth: 1.5, borderColor: '#4ADE80',
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2,
-  },
-  fabBubbleRed: {
-    width: s(24), height: s(24), borderRadius: s(7),
-    backgroundColor: '#F5F3EF',
-    borderWidth: 1.5, borderColor: '#FF6B6B',
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2,
-  },
+  /* fabBubbleGreen / fabBubbleRed retired (April 2026): the
+     unified Plus moved to the bottom tab bar (App.tsx CreateFab)
+     and the Timer/Status duo had already been merged into one
+     creation entry point. Both styles intentionally removed
+     rather than left as dead code — Rule Zero / no band-aids. */
 
   /* Popup — only shown on group pin tap */
   popup: {

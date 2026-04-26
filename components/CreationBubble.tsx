@@ -123,8 +123,20 @@ interface Props {
   onPublish: (data: CreationPayload) => void;
   /** If the parent wants to push a new location into the bubble
    *  (e.g. after pickMode commits), it assigns this ref's current
-   *  to the updater function. The bubble fills it on mount. */
-  locationUpdaterRef?: React.MutableRefObject<((loc: { lat: number; lng: number; address: string }) => void) | null>;
+   *  to the updater function. The bubble fills it on mount.
+   *
+   *  `opts.manual` distinguishes a USER pick (pickMode commit,
+   *  address autocomplete) from a BACKGROUND refresh (the async
+   *  GPS chain `openCreation` fires to improve the seed). Once
+   *  the user has made a manual pick, background refreshes are
+   *  IGNORED — otherwise a slow GPS resolver could finish AFTER
+   *  pickMode commit and silently overwrite the picked coords
+   *  with the user's actual GPS, which is the exact "the pin
+   *  always takes my location" bug reported on 2026-04-26.
+   *  Root-cause fix; see no-band-aids Rule Zero. */
+  locationUpdaterRef?: React.MutableRefObject<
+    ((loc: { lat: number; lng: number; address: string }, opts?: { manual?: boolean }) => void) | null
+  >;
   /** Informational flags — the user ALREADY has an active
    *  timer / scheduled. The bubble doesn't block anything; it
    *  simply shows a "this will replace your current X" banner
@@ -230,6 +242,22 @@ export default function CreationBubble({
   const textInputRef = useRef<TextInput>(null);
   const addressInputRef = useRef<TextInput>(null);
 
+  /* ── Manual-pick guard ──
+   *
+   * Flips to true the moment the user takes ANY explicit location
+   * action — committing pickMode from HomeScreen OR tapping a
+   * search result in the address autocomplete. While this flag is
+   * true, background GPS pushes via locationUpdaterRef are
+   * IGNORED. Without this guard, the async GPS chain that
+   * `openCreation` fires on bubble open could finish AFTER
+   * pickMode commit and silently overwrite the user's picked
+   * coordinates with the device GPS — producing the exact "the
+   * pin always takes my location" report from 2026-04-26.
+   *
+   * Reset on fresh sessionKey so a new "+ Publish" tap starts
+   * with a clean slate. */
+  const manuallyPickedRef = useRef(false);
+
   /* ── Reset only when a FRESH session starts ──
    *
    * Keyed off `sessionKey`, NOT `visible`. Parent hides the
@@ -270,6 +298,9 @@ export default function CreationBubble({
     setWhenChoice('now');
     setWhenTouched(false);
     setScheduledAt(null);
+    // Fresh session = fresh location intent. Until the user picks
+    // again, background GPS is allowed to refine the seed.
+    manuallyPickedRef.current = false;
     // Auto-focus the input on step 1 — users expect the keyboard
     // the moment a creation bubble opens.
     setTimeout(() => textInputRef.current?.focus(), 180);
@@ -277,13 +308,26 @@ export default function CreationBubble({
 
   /* ── Expose a location updater so the parent (HomeScreen) can
    *    push the result of pickMode back into the bubble without
-   *    unmounting it. */
+   *    unmounting it.
+   *
+   *    `opts.manual` differentiates:
+   *      - manual: true   → pickMode commit. ALWAYS applies and
+   *                          locks the bubble so background GPS
+   *                          can't override.
+   *      - manual: false  → background GPS refresh. Applies ONLY
+   *                          if the user hasn't already picked.
+   *
+   *    See manuallyPickedRef above for full rationale. */
   useEffect(() => {
     if (!locationUpdaterRef) return;
-    locationUpdaterRef.current = (loc) => {
+    locationUpdaterRef.current = (loc, opts) => {
+      const isManual = opts?.manual === true;
+      // Background GPS may not override a user pick.
+      if (!isManual && manuallyPickedRef.current) return;
       setLat(loc.lat);
       setLng(loc.lng);
       setAddress(loc.address || cityName);
+      if (isManual) manuallyPickedRef.current = true;
     };
     return () => {
       if (locationUpdaterRef) locationUpdaterRef.current = null;
@@ -321,6 +365,10 @@ export default function CreationBubble({
     if (Number.isFinite(nextLat) && Number.isFinite(nextLng)) {
       setLat(nextLat);
       setLng(nextLng);
+      // Same lock as a pickMode commit — the user has explicitly
+      // chosen a location, so any pending background GPS push
+      // from openCreation must not override it.
+      manuallyPickedRef.current = true;
     }
     setAddress(r.subLine ? `${r.mainLine}, ${r.subLine}` : r.mainLine || r.display_name);
     setAddressResults([]);
