@@ -146,9 +146,32 @@ export default function NotificationsSheet({ visible, onClose, userId, onNavigat
       case 'activity_joined':
       case 'area_heating':
       case 'timer_expiring':
-      case 'activity_reminder':
-        // Go to home/map
+      case 'activity_reminder': {
+        // Open Home with a focus param so the map centres on the
+        // activity's pin and pops the TimerBubble for it. Pre-fix
+        // this case was an empty `break;` — the comment said
+        // "Go to home/map" but the code did nothing, producing a
+        // dead-end button. Tester report 2026-04-26: "אבל זה לא
+        // מכניס אותי לאירוע / לחיצה על הנוטיפיקיישן לא פותח לי
+        // את האירוע". `entity_id` is set on every activity_* row
+        // (the trigger writes NEW.id::text); `metadata.checkinId`
+        // is a redundant fallback the trigger also fills.
+        const checkinId = notif.entity_id || meta.checkinId;
+        if (checkinId) {
+          // Date.now() nonce ensures HomeScreen's useEffect
+          // re-fires even if the user was already on Home and
+          // had previously focused the same pin — same pattern
+          // as the openCreate deep-link in HomeScreen.
+          onNavigate('Home', { focusCheckinId: checkinId, focusNonce: Date.now() });
+        } else {
+          // No id we can navigate to — at least take them to the
+          // map. Falling through to plain Home is still better
+          // than the previous empty break (which closed the sheet
+          // and stranded them on whatever screen was behind it).
+          onNavigate('Home', {});
+        }
         break;
+      }
     }
   };
 

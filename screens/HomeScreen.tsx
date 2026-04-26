@@ -529,6 +529,10 @@ export default function HomeScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.params?.openCreate, userId]);
 
+  /* Deep-link `focusCheckinId` is consumed further down — placed
+   * after the useActiveCheckins() call so it can read `checkins`
+   * without a TDZ error. Search for "focusCheckinId effect" below. */
+
   const [showProfile, setShowProfile] = useState(false);
   const [selectedNomad, setSelectedNomad] = useState<any>(null);
   const [showNotifs, setShowNotifs] = useState(false);
@@ -1088,6 +1092,65 @@ export default function HomeScreen() {
     }
     return { hasActiveTimer: timer, hasActiveScheduled: scheduled };
   }, [checkins, userId]);
+
+  /* ── focusCheckinId effect — notification deep-link ────────────
+   *
+   * Notifications navigate here with `focusCheckinId` + `focusNonce`
+   * when the user taps an activity_* notification (see
+   * NotificationsSheet.handleNotifPress). We:
+   *   1. Find the checkin in the already-loaded `checkins` list.
+   *   2. If found — animate the map to its coordinates and pop the
+   *      TimerBubble for it (same as if the user tapped its pin).
+   *   3. If NOT found — fetch it directly by id from app_checkins.
+   *      Covers the case where the user is in a different city from
+   *      the activity (useActiveCheckins is city-scoped) or the
+   *      checkin landed via Realtime AFTER the notification but
+   *      BEFORE the focus effect ran.
+   *
+   * The nonce makes this fire even when the same notification is
+   * tapped twice — same pattern as `openCreate`.
+   * Pre-fix the corresponding NotificationsSheet case was an empty
+   * `// Go to home/map` comment with no code — tapping any
+   * activity_* notification was a dead-end button. Tester report
+   * 2026-04-26: "לחיצה על הנוטיפיקיישן לא פותח לי את האירוע".
+   */
+  useEffect(() => {
+    const targetId = route.params?.focusCheckinId as string | undefined;
+    const nonce = route.params?.focusNonce;
+    if (!targetId || !nonce) return;
+
+    let cancelled = false;
+    (async () => {
+      let target = checkins.find(c => c.id === targetId) as any;
+      if (!target) {
+        const { data } = await supabase
+          .from('app_checkins')
+          .select('*, profile:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type, bio, interests, show_on_map, hide_distance, birth_date)')
+          .eq('id', targetId)
+          .maybeSingle();
+        if (cancelled) return;
+        target = data;
+      }
+      if (!target || !target.latitude || !target.longitude) {
+        nav.setParams({ focusCheckinId: undefined, focusNonce: undefined } as any);
+        return;
+      }
+      mapRef.current?.animateToRegion({
+        latitude: target.latitude,
+        longitude: target.longitude,
+        latitudeDelta: 0.008,
+        longitudeDelta: 0.008,
+      }, 450);
+      // Wait for camera then open bubble — matches the locked Map
+      // Pin Tap Flow in CLAUDE.md (zoom 400ms → wait 450ms → popup).
+      setTimeout(() => {
+        if (!cancelled) setTimerBubbleCheckin(target);
+      }, 470);
+      nav.setParams({ focusCheckinId: undefined, focusNonce: undefined } as any);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.focusCheckinId, route.params?.focusNonce, checkins.length]);
 
   const { profile: myProfile, refetch: refetchProfile } = useProfile(userId);
   const myName = myProfile?.display_name || myProfile?.full_name || myProfile?.username || 'You';
