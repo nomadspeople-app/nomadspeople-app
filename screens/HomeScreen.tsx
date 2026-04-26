@@ -778,38 +778,81 @@ export default function HomeScreen() {
       setPickMode('status');
 
       (async () => {
-        let initialLat = current.lat;
-        let initialLng = current.lng;
+        // ── Best-available seed for the FIRST pin animation ──
+        //
+        // Source preference (most → least trustworthy of "where the
+        // user actually is right now"):
+        //   1. userLat/Lng — HomeScreen's GPS state, refreshed on
+        //      app mount + when the user taps "center on me". On
+        //      a warm app this is the freshest non-blocking source.
+        //   2. Location.getLastKnownPositionAsync() — OS-cached
+        //      position. Synchronous-ish, returns null on cold GPS.
+        //   3. current.lat/lng — what the bubble was holding when
+        //      the user tapped "change location". This was the seed
+        //      passed at openCreation time and may be STALE: if
+        //      userLat was null at openCreation, current became the
+        //      city centre fallback. Trusting it here produced the
+        //      "pin opens in Tel Aviv even though I'm in Yavne"
+        //      report on 2026-04-26.
+        //   4. currentCity.lat/lng — the absolute last-resort city
+        //      centre. Better than crashing if every GPS path fails.
+        let initialLat: number | null = null;
+        let initialLng: number | null = null;
 
-        // Step 1 — last-known for an INSTANT accurate snap.
-        try {
-          const last = await Location.getLastKnownPositionAsync();
-          if (last) {
-            initialLat = last.coords.latitude;
-            initialLng = last.coords.longitude;
-          }
-        } catch (err) {
-          console.warn('[HomeScreen] last-known GPS failed:', err);
+        if (userLat != null && userLng != null) {
+          initialLat = userLat;
+          initialLng = userLng;
         }
 
-        setPickLat(initialLat);
-        setPickLng(initialLng);
+        if (initialLat == null) {
+          try {
+            const last = await Location.getLastKnownPositionAsync();
+            if (last) {
+              initialLat = last.coords.latitude;
+              initialLng = last.coords.longitude;
+            }
+          } catch (err) {
+            console.warn('[HomeScreen] last-known GPS failed:', err);
+          }
+        }
+
+        if (initialLat == null || initialLng == null) {
+          // Bubble seed last — it's frequently the city centre by the
+          // time we reach here, but it's still better than nothing.
+          initialLat = current.lat || currentCity.lat;
+          initialLng = current.lng || currentCity.lng;
+        }
+
+        // initialLat / initialLng are now guaranteed numbers thanks
+        // to the city-centre fallback above. Capture into locals so
+        // TypeScript narrows the type for the setState calls.
+        const seedLat = initialLat as number;
+        const seedLng = initialLng as number;
+
+        setPickLat(seedLat);
+        setPickLng(seedLng);
         setPickAddr(current.address || '');
         mapRef.current?.animateToRegion({
-          latitude: initialLat, longitude: initialLng,
+          latitude: seedLat, longitude: seedLng,
           latitudeDelta: 0.005, longitudeDelta: 0.005,
         }, 300);
 
-        // Step 2 — high-accuracy fresh fix. Only re-animate if the
-        // drift vs. initial snap is > ~10 m (0.0001° lat ≈ 11 m);
-        // otherwise the map would visibly twitch for a handful of
-        // meters of GPS jitter.
+        // High-accuracy fresh fix. Only re-animate if the drift vs.
+        // the initial snap is > ~10 m (0.0001° lat ≈ 11 m); otherwise
+        // the map would visibly twitch for a handful of meters of GPS
+        // jitter. Running this even when we already had userLat lets
+        // the pin settle on the very latest position by the time the
+        // user looks at the screen.
         try {
           const fresh = await Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.High,
           });
-          const dLat = Math.abs(fresh.coords.latitude - initialLat);
-          const dLng = Math.abs(fresh.coords.longitude - initialLng);
+          // Sync HomeScreen state too — next openCreation will pick
+          // up this fresh value as the bubble seed.
+          setUserLat(fresh.coords.latitude);
+          setUserLng(fresh.coords.longitude);
+          const dLat = Math.abs(fresh.coords.latitude - seedLat);
+          const dLng = Math.abs(fresh.coords.longitude - seedLng);
           if (dLat > 0.0001 || dLng > 0.0001) {
             mapRef.current?.animateToRegion({
               latitude: fresh.coords.latitude,
@@ -824,7 +867,7 @@ export default function HomeScreen() {
         }
       })();
     },
-    [],
+    [userLat, userLng, currentCity.lat, currentCity.lng],
   );
 
   /** Called when the user commits a pick that originated from the
