@@ -13,18 +13,27 @@ export async function pickImage(aspect?: [number, number]): Promise<string | nul
     return null;
   }
 
+  // UX fix (2026-04-26 PM): on Android, `allowsEditing: true` invokes the
+  // system cropper which (on Samsung One UI / many OEM skins) renders the
+  // image into a postage-stamp preview with no visible "Done"/"Save"
+  // affordance. Testers reported "התמונה מאוד מצומצמת ... ואין אופציה
+  // להעלות". The native cropper is the bug, not our code — we cannot fix
+  // its layout from JS. So we skip it entirely on Android and accept the
+  // image as-picked. iOS keeps the cropper because Apple's is well-behaved.
+  // Trade-off: no in-app crop for Android users in Closed Testing v14.
+  // Follow-up (post-Google review): integrate `expo-image-manipulator` or
+  // a proper crop modal so Android users can crop without the system UI.
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
-    allowsEditing: true,
+    allowsEditing: Platform.OS === 'ios',
     aspect: aspect || [1, 1],
     quality: 0.7,
   });
 
-  // Robustness fix (2026-04-26): on Android, the system cropper sometimes
-  // returns `canceled: true` AFTER a successful crop — `assets` still has
-  // a real URI. The previous `result.canceled || !uri` short-circuit threw
-  // those away and the user saw "nothing happened" after every crop. We
-  // now trust the URI when present and only honour `canceled` when there
+  // Robustness fix (2026-04-26): even with editing disabled on Android,
+  // `result.canceled` is occasionally true while `assets[0].uri` is a
+  // real, usable file — the user saw "nothing happened" after every pick.
+  // We trust the URI when present and only honour `canceled` when there
   // is genuinely no asset to use.
   const asset = result.assets?.[0];
   if (asset?.uri) {
