@@ -2455,12 +2455,16 @@ export default function HomeScreen() {
           style={st.fabLocationBtn}
           activeOpacity={0.8}
           onPress={() => {
+            // Just open the sheet. The sheet itself runs the
+            // mark-all-as-read flow after a 1.5s delay — see
+            // NotificationsSheet's useEffect on `visible`. After
+            // that delay it both patches its own list AND calls
+            // onMarkedAllRead → refetchNotifs → the bell badge
+            // drops to 0. Pre-fix we ALSO called markNotifsRead
+            // here eagerly, which made the badge vanish before the
+            // user's eyes had a chance to register the count, AND
+            // duplicated the DB write the sheet would do anyway.
             setShowNotifs(true);
-            // Mark all read when the sheet opens — same UX pattern
-            // as Messages: opening the surface clears the badge.
-            // The sheet still shows them as a list (just no longer
-            // tinted "unread"), and the bell goes back to neutral.
-            if (notifUnread > 0) markNotifsRead();
           }}
         >
           <NomadIcon name="bell" size={s(10)} color="#555" strokeWidth={1.8} />
@@ -2584,6 +2588,10 @@ export default function HomeScreen() {
           setShowNotifs(false);
           setTimeout(() => nav.navigate(screen as any, params as any), 200);
         }}
+        // The sheet calls this once it has marked rows as read in
+        // DB + local state. Refetching here keeps the bell badge in
+        // sync with the per-row visual state inside the sheet.
+        onMarkedAllRead={refetchNotifs}
       />
       {/* CityPickerSheet removed — replaced by inline search */}
 

@@ -57,9 +57,15 @@ interface Props {
   onClose: () => void;
   userId: string | null;
   onNavigate?: (screen: string, params: Record<string, any>) => void;
+  /** Called once after the sheet's mark-all-as-read DB update lands.
+   *  Lets the parent (HomeScreen) refetch its own useNotifications
+   *  hook so the bell badge updates in lockstep with the per-row
+   *  visual state in the sheet. Without this, the parent's badge
+   *  count and the sheet's per-row "unread dot" drift apart. */
+  onMarkedAllRead?: () => void;
 }
 
-export default function NotificationsSheet({ visible, onClose, userId, onNavigate }: Props) {
+export default function NotificationsSheet({ visible, onClose, userId, onNavigate, onMarkedAllRead }: Props) {
   const { colors } = useTheme();
   const st = useMemo(() => makeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -90,13 +96,33 @@ export default function NotificationsSheet({ visible, onClose, userId, onNavigat
       setLoading(true);
       fetchNotifications();
 
-      // Mark all as read after a short delay
+      // Mark all as read after a short delay so the user sees which
+      // rows were unread before they're cleared. Pre-fix this only
+      // updated the DB; the local rows kept their old `is_read=false`
+      // and the parent's bell badge (driven by useNotifications)
+      // didn't refetch — both read as "still unread" until the user
+      // killed and reopened the sheet. Tester report 2026-04-26:
+      // "עדין יש נקודה אדומה שהנוטיפיקיישן לא נקראה / וגם לא מופיע
+      // לי סימון על הפעמון של נוטיפיקיישן". Now we update DB +
+      // local state + tell the parent to refetch its hook in one
+      // synchronized step so badge + per-row dot agree.
       const timer = setTimeout(async () => {
-        await supabase
+        const nowIso = new Date().toISOString();
+        const { error: updErr } = await supabase
           .from('app_notifications')
-          .update({ is_read: true, read_at: new Date().toISOString() })
+          .update({ is_read: true, read_at: nowIso })
           .eq('user_id', userId)
           .eq('is_read', false);
+        if (updErr) {
+          console.warn('[NotificationsSheet] markAllRead failed:', updErr.message);
+          return; // leave local state alone so we don't lie to the user
+        }
+        // 1) Patch the local list — per-row red dot disappears.
+        setNotifications(prev =>
+          prev.map(n => n.is_read ? n : { ...n, is_read: true, read_at: nowIso })
+        );
+        // 2) Tell the parent — bell badge in HomeScreen drops to 0.
+        onMarkedAllRead?.();
       }, 1500);
       return () => clearTimeout(timer);
     }
