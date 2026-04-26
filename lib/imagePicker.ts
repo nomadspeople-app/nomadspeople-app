@@ -3,10 +3,12 @@ import * as ImagePicker from 'expo-image-picker';
 // `legacy` subpath; the default import now throws at runtime for
 // `readAsStringAsync` / `EncodingType`. We need the legacy module
 // to read the picker URI as base64 in a single line, regardless
-// of file:// vs content:// scheme.
-import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
+// of file:// vs content:// scheme. `getInfoAsync` is from the same
+// path so the existence check before reading is consistent.
+import { readAsStringAsync, getInfoAsync, EncodingType } from 'expo-file-system/legacy';
 import { decode as base64ToArrayBuffer } from 'base64-arraybuffer';
 import { supabase } from './supabase';
+import { captureError } from './sentry';
 import { Alert, Platform } from 'react-native';
 
 /**
@@ -85,53 +87,120 @@ export async function pickImage(aspect?: [number, number]): Promise<string | nul
  * `chat/{conversationId}/{userId}-{ts}.{ext}` so admin cleanup is
  * trivial.
  */
+/* Tiny diagnostic helper — surfaces a failure to the user with
+ * the EXACT failing step so we never debug "it didn't work" again.
+ * Each call also fires a Sentry breadcrumb-style captureError for
+ * post-mortem analysis without needing a screenshot. */
+function showFailure(stage: string, detail: string, ctx?: Record<string, any>): void {
+  const msg = `[${stage}] ${detail}`;
+  console.error(`[uploadImage] ${msg}`, ctx || {});
+  captureError(new Error(`uploadImage:${stage}`), { detail, ...ctx });
+  if (Platform.OS === 'web') window.alert(`Upload failed\n${msg}`);
+  else Alert.alert('Upload failed', msg);
+}
+
 export async function uploadImage(
   localUri: string,
   bucket: 'avatars' | 'post-images',
   userId: string,
   customFileName?: string,
 ): Promise<string | null> {
+  /* This function is the single chokepoint for every image upload
+   * in the app (avatar, profile grid, chat attachment). It MUST
+   * NEVER fail silently — the user sees the picker close and
+   * expects feedback. We surface a stage-tagged Alert at every
+   * exit path so the report "I picked a photo but nothing happened"
+   * always becomes "I picked a photo and saw `[STAGE] reason`"
+   * instead, which is debuggable instead of a guess.
+   *
+   * Stages, in order:
+   *   URI    — the picker handed us nothing usable.
+   *   STAT   — file system can't see the URI on disk.
+   *   READ   — readAsStringAsync threw or returned empty.
+   *   AUTH   — no Supabase session → RLS will reject upload.
+   *   SDK    — supabase.storage.upload threw (network / RLS / size).
+   *   URL    — upload succeeded but getPublicUrl returned nothing.
+   * Every catch flows through showFailure so Sentry sees it too.
+   */
   try {
-    // Determine extension and content type from the picker URI.
-    // expo-image-picker URIs always carry an extension; fall back
-    // to jpg if a future asset somehow slips through without one.
-    const uriParts = localUri.split('.');
-    const ext = (uriParts[uriParts.length - 1] || 'jpg').toLowerCase().split('?')[0];
-    const mimeType = ext === 'png' ? 'image/png'
-      : ext === 'webp' ? 'image/webp'
-      : 'image/jpeg';
-    const fileName = customFileName || `${userId}/${Date.now()}.${ext}`;
-
-    // Step 1 — read the file as base64. Expo's FileSystem handles
-    // both `file://` (iOS) and `content://` (Android Photos picker)
-    // schemes, so we don't need to scheme-detect or URL-encode here.
-    const base64 = await readAsStringAsync(localUri, {
-      encoding: EncodingType.Base64,
-    });
-
-    // Sanity guard — a 0-byte read means the picker handed us a URI
-    // the file system can't access. Surface it instead of uploading
-    // an empty image and silently saving an unviewable URL.
-    if (!base64 || base64.length === 0) {
-      const msg = 'Could not read the selected image (empty file).';
-      if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert('Upload failed', msg);
+    // ── Stage URI: sanity-check the picker output ─────────────
+    if (!localUri || typeof localUri !== 'string') {
+      showFailure('URI', 'Picker returned no usable image URI', { localUri });
       return null;
     }
 
-    // Step 2 — base64 → ArrayBuffer for the Supabase SDK.
-    const arrayBuffer = base64ToArrayBuffer(base64);
+    // Determine extension + content type. Strip any query string
+    // (some Android pickers append `?width=..&height=..`).
+    const cleaned = localUri.split('?')[0];
+    const dotIdx = cleaned.lastIndexOf('.');
+    const ext = (dotIdx >= 0 ? cleaned.slice(dotIdx + 1) : 'jpg').toLowerCase();
+    const mimeType = ext === 'png' ? 'image/png'
+      : ext === 'webp' ? 'image/webp'
+      : ext === 'heic' || ext === 'heif' ? 'image/heic'
+      : 'image/jpeg';
+    const fileName = customFileName || `${userId}/${Date.now()}.${ext}`;
 
-    // Step 3 — upload via the SDK with the raw bytes. The SDK now
-    // sees a binary value, sets the right Content-Type from our
-    // override, and does NOT do the broken JSON-serialize-the-asset
-    // path that bit us before.
-    //
-    // upsert: false is intentional — our paths embed a timestamp so
-    // collisions are impossible, and `true` would force RLS to
-    // evaluate the UPDATE policy too (which has a NULL check_expr
-    // and default-denies, producing 403s on what should be plain
-    // inserts). See storage.objects policies in Supabase Dashboard.
+    // ── Stage STAT: confirm the file actually exists ──────────
+    // expo-image-picker on Android sometimes hands back a URI that
+    // looks valid but points to a vanished cache file. Check first
+    // so the failure has a clear message instead of a cryptic
+    // "could not read" further down.
+    let fileSizeBytes = 0;
+    try {
+      const info = await getInfoAsync(localUri);
+      if (!info.exists) {
+        showFailure('STAT', 'Picker URI does not point to a file on disk', { localUri });
+        return null;
+      }
+      fileSizeBytes = (info as any).size ?? 0;
+    } catch (statErr: any) {
+      showFailure('STAT', statErr?.message || 'getInfoAsync threw', { localUri });
+      return null;
+    }
+
+    // ── Stage READ: pull bytes as base64 ──────────────────────
+    let base64: string;
+    try {
+      base64 = await readAsStringAsync(localUri, { encoding: EncodingType.Base64 });
+    } catch (readErr: any) {
+      showFailure('READ', readErr?.message || 'readAsStringAsync threw', {
+        localUri,
+        fileSizeBytes,
+      });
+      return null;
+    }
+    if (!base64 || base64.length === 0) {
+      showFailure('READ', 'Read succeeded but file is empty', {
+        localUri,
+        fileSizeBytes,
+      });
+      return null;
+    }
+
+    const arrayBuffer = base64ToArrayBuffer(base64);
+    const arrayBufferBytes = arrayBuffer.byteLength;
+    if (arrayBufferBytes === 0) {
+      showFailure('READ', 'Decoded ArrayBuffer is empty', {
+        base64Length: base64.length,
+      });
+      return null;
+    }
+
+    // ── Stage AUTH: confirm we have a live Supabase session ───
+    // Without it, RLS denies the upload. Surface as auth, not as
+    // a generic upload error, so the user knows to re-sign-in.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      showFailure('AUTH', 'No active session — please sign in again', { userId });
+      return null;
+    }
+
+    // ── Stage SDK: upload via the Supabase Storage SDK ────────
+    // ArrayBuffer payload + explicit contentType is the official
+    // RN pattern. upsert:false because our timestamped paths can
+    // never collide and our UPDATE storage RLS policy has a NULL
+    // check_expr that default-denies, which would produce 403s if
+    // we let upsert engage the UPDATE branch.
     const { error: uploadErr } = await supabase.storage
       .from(bucket)
       .upload(fileName, arrayBuffer, {
@@ -140,22 +209,30 @@ export async function uploadImage(
       });
 
     if (uploadErr) {
-      console.error('[uploadImage] storage upload failed:', uploadErr.message, { bucket, fileName });
-      const msg = `Upload failed: ${uploadErr.message}`;
-      if (Platform.OS === 'web') window.alert(msg);
-      else Alert.alert('Upload failed', msg);
+      showFailure('SDK', uploadErr.message || 'Storage SDK rejected the upload', {
+        bucket,
+        fileName,
+        mimeType,
+        arrayBufferBytes,
+      });
       return null;
     }
 
-    // Build public URL the same way as before — public buckets
-    // return a stable HTTPS link the Image component can render.
+    // ── Stage URL: build the public URL for callers ───────────
     const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(fileName);
+    if (!urlData?.publicUrl) {
+      showFailure('URL', 'Upload succeeded but no public URL returned', {
+        bucket,
+        fileName,
+      });
+      return null;
+    }
     return urlData.publicUrl;
   } catch (err: any) {
-    console.error('[uploadImage] exception:', err);
-    const msg = err?.message || 'Unknown error';
-    if (Platform.OS === 'web') window.alert(`Upload failed: ${msg}`);
-    else Alert.alert('Upload failed', msg);
+    // Fallback safety net — should never hit if every stage
+    // above caught its own error, but keeps a guarantee that
+    // SOMETHING is shown on any reachable failure.
+    showFailure('CATCH', err?.message || 'Unknown error', { stack: err?.stack });
     return null;
   }
 }
