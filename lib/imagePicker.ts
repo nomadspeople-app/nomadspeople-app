@@ -13,49 +13,81 @@ import { Alert, Platform } from 'react-native';
 
 /**
  * Pick an image from the gallery and return a local URI.
+ *
+ * Stage-tagged failure model — same posture as uploadImage below.
+ * Every reachable exit either returns a usable URI or surfaces an
+ * Alert with `[STAGE] reason` so the user never sees a blind
+ * "nothing happened". Cancelled by user is the ONE silent path
+ * (returning to the screen without an alert is the desired UX).
+ *
+ * Stages:
+ *   PERM   — gallery permission denied. Alert + null.
+ *   PICKER — launchImageLibraryAsync threw (rare, but happens on
+ *            some OEM skins when the gallery app is missing).
+ *   EMPTY  — picker returned no asset AND wasn't cancelled.
+ *            Tester report 2026-04-26: Samsung Photos picker
+ *            returns canceled:true with assets:[] sometimes after
+ *            a successful selection — no URI handed back. We
+ *            surface this so the user knows to retry rather than
+ *            assume the app froze.
  */
 export async function pickImage(aspect?: [number, number]): Promise<string | null> {
-  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  let status: string;
+  try {
+    const result = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    status = result.status;
+  } catch (err: any) {
+    showPickFailure('PERM', err?.message || 'requestMediaLibraryPermissionsAsync threw');
+    return null;
+  }
   if (status !== 'granted') {
-    if (Platform.OS === 'web') window.alert('Permission needed: Please allow access to your photo library.');
-    else Alert.alert('Permission needed', 'Please allow access to your photo library.');
+    showPickFailure('PERM', `Permission status: ${status}. Please allow photo access in Settings.`);
     return null;
   }
 
-  // UX fix (2026-04-26 PM): on Android, `allowsEditing: true` invokes the
-  // system cropper which (on Samsung One UI / many OEM skins) renders the
-  // image into a postage-stamp preview with no visible "Done"/"Save"
-  // affordance. Testers reported "התמונה מאוד מצומצמת ... ואין אופציה
-  // להעלות". The native cropper is the bug, not our code — we cannot fix
-  // its layout from JS. So we skip it entirely on Android and accept the
-  // image as-picked. iOS keeps the cropper because Apple's is well-behaved.
-  // Trade-off: no in-app crop for Android users in Closed Testing v14.
-  // Follow-up (post-Google review): integrate `expo-image-manipulator` or
-  // a proper crop modal so Android users can crop without the system UI.
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ['images'],
-    allowsEditing: Platform.OS === 'ios',
-    aspect: aspect || [1, 1],
-    quality: 0.7,
-  });
+  // UX fix (2026-04-26 PM): on Android, `allowsEditing: true` invokes
+  // the system cropper which on Samsung One UI / many OEM skins is
+  // broken (postage-stamp preview, no Save button). We skip it on
+  // Android and accept the image as-picked. iOS keeps the cropper.
+  let result;
+  try {
+    result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: Platform.OS === 'ios',
+      aspect: aspect || [1, 1],
+      quality: 0.7,
+    });
+  } catch (err: any) {
+    showPickFailure('PICKER', err?.message || 'launchImageLibraryAsync threw');
+    return null;
+  }
 
-  // Robustness fix (2026-04-26): even with editing disabled on Android,
-  // `result.canceled` is occasionally true while `assets[0].uri` is a
-  // real, usable file — the user saw "nothing happened" after every pick.
-  // We trust the URI when present and only honour `canceled` when there
-  // is genuinely no asset to use.
+  // Robustness order: trust the URI first, honor cancelled second.
+  // Some Android pickers return canceled:true alongside a perfectly
+  // good asset URI; we'd rather upload it than throw it away.
   const asset = result.assets?.[0];
   if (asset?.uri) {
     return asset.uri;
   }
   if (result.canceled) {
-    return null; // truly cancelled — no asset, no URI, nothing to do
+    // Genuine cancel — silent return. The user tapped Cancel; no
+    // alert needed, that would be UX noise.
+    return null;
   }
-  // Not cancelled but also no URI — usually a permissions / IO failure.
-  // Surface it instead of silent null so the user knows to retry.
-  if (Platform.OS === 'web') window.alert('Could not read the selected image. Please try again.');
-  else Alert.alert('Image error', 'Could not read the selected image. Please try again.');
+  // Not cancelled, but also no asset URI. Most common cause: OEM
+  // picker returned an unreadable result (permissions, missing
+  // gallery app, system intent quirk). Surface clearly so the user
+  // knows the app isn't broken — the picker is.
+  showPickFailure('EMPTY', `No image returned (canceled=${result.canceled}, assets=${result.assets?.length ?? 0})`);
   return null;
+}
+
+function showPickFailure(stage: string, detail: string): void {
+  const msg = `[${stage}] ${detail}`;
+  console.error(`[pickImage] ${msg}`);
+  captureError(new Error(`pickImage:${stage}`), { detail });
+  if (Platform.OS === 'web') window.alert(`Image picker failed\n${msg}`);
+  else Alert.alert('Image picker failed', msg);
 }
 
 /**
