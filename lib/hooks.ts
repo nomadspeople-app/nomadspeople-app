@@ -216,8 +216,37 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
           })
         : visible;
 
-      // 3c. Skip state update if same checkins AND same member counts (prevents marker flicker)
-      const newFingerprint = filtered.map((c: any) => `${c.id}:${c.member_count ?? 0}`).sort().join(',');
+      // 3c. Skip state update if NOTHING the map cares about changed.
+      //
+      // History: this used to fingerprint only `${id}:${member_count}`,
+      // intended to suppress no-op re-renders that caused pin flicker
+      // during map pans. Side effect — when an owner edited an event
+      // (location_name, lat/lng, activity_text, expires_at, etc.) the
+      // fingerprint was identical, so setCheckins was SKIPPED and the
+      // pins kept showing the OLD coords / title forever, even though
+      // the DB was correctly updated. Tester report 2026-04-26:
+      // "שינוי לוקיישן בתוך האינפו של היוצר - לאחר שינוי ושמירה - אין שינוי".
+      //
+      // Fix: fingerprint every field a marker (or the People list) reads.
+      // If ANY of them changes, the fingerprint changes and the new
+      // checkin list flows down. Pin-jitter prevention now lives at
+      // the Marker level (NomadMarker memoization) — separated concerns.
+      const fp = (c: any) => [
+        c.id,
+        c.latitude ?? '',
+        c.longitude ?? '',
+        c.location_name ?? '',
+        c.activity_text ?? '',
+        c.status_emoji ?? '',
+        c.category ?? '',
+        c.member_count ?? 0,
+        c.is_open ?? '',
+        c.expires_at ?? '',
+        c.scheduled_for ?? '',
+        c.profile?.avatar_url ?? '',
+        c.profile?.show_on_map ?? '',
+      ].join('|');
+      const newFingerprint = filtered.map(fp).sort().join('§');
       if (newFingerprint !== prevIdsRef.current) {
         prevIdsRef.current = newFingerprint;
         setCheckins(filtered as unknown as CheckinWithProfile[]);
