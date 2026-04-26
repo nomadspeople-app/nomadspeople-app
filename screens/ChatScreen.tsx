@@ -23,6 +23,7 @@ import { useI18n } from '../lib/i18n';
 import { renderChatContent } from '../lib/chatText';
 import { uploadImage } from '../lib/imagePicker';
 import { haversineKm } from '../lib/distance';
+import { canEndEvent, canLeaveGroup } from '../lib/roles';
 import { AuthContext, UnreadContext } from '../App';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -127,17 +128,34 @@ export default function ChatScreen() {
   // chat they see it again, in case the situation changed.
   const [farAwayKm, setFarAwayKm] = useState<number | null>(null);
   const [farAwayDismissed, setFarAwayDismissed] = useState(false);
+  /* The OWNER of the linked event (app_checkins.user_id). Source
+   * of truth for canEndEvent / canLeaveGroup gates per lib/roles.
+   * Stays null for ad-hoc / 1-on-1 chats; in those cases the role
+   * helpers fall back to conversation.created_by (groups) or
+   * disable creator gates entirely (DMs). */
+  const [linkedCheckinUserId, setLinkedCheckinUserId] = useState<string | null>(null);
+  /* Mirror of the conversation's checkin_id — needed so the role
+   * context object can carry it, and so the role helpers know
+   * whether to consult the linked event at all. */
+  const [conversationCheckinId, setConversationCheckinId] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       const [{ data: convData }, { data: memberData }] = await Promise.all([
-        supabase.from('app_conversations').select('is_locked, user_a, user_b, created_by').eq('id', conversationId).maybeSingle(),
+        // checkin_id added so we can resolve the EVENT owner — see
+        // linkedCheckinUserId fetch below. Without this, the dots
+        // menu would gate on conversation.created_by alone, which
+        // since the April 2026 RLS hardening can be the FIRST
+        // JOINER of an event (not its owner) — exactly the bug
+        // reported on 2026-04-26 ("חבר ראה End Event").
+        supabase.from('app_conversations').select('is_locked, user_a, user_b, created_by, checkin_id').eq('id', conversationId).maybeSingle(),
         userId
           ? supabase.from('app_conversation_members').select('muted_at, status').eq('conversation_id', conversationId).eq('user_id', userId).maybeSingle()
           : Promise.resolve({ data: null }),
       ]);
       if (convData?.is_locked) setIsLocked(true);
       if (convData?.created_by) setCreatedBy(convData.created_by);
+      if ((convData as any)?.checkin_id) setConversationCheckinId((convData as any).checkin_id);
       if (memberData?.muted_at) setIsMuted(true);
       if (memberData?.status === 'request') setIsPendingRequest(true);
       if (convData && userId) {
@@ -150,6 +168,15 @@ export default function ChatScreen() {
           .select('id', { count: 'exact', head: true })
           .eq('conversation_id', conversationId);
         if (count === 0) setShowSafety(true);
+      }
+      // Resolve the event owner if this chat is bound to one.
+      if ((convData as any)?.checkin_id) {
+        const { data: ck } = await supabase
+          .from('app_checkins')
+          .select('user_id')
+          .eq('id', (convData as any).checkin_id)
+          .maybeSingle();
+        if (ck?.user_id) setLinkedCheckinUserId(ck.user_id);
       }
     })();
   }, [conversationId]);
@@ -476,20 +503,27 @@ export default function ChatScreen() {
               const buttons: any[] = [{ text: muteLabel, onPress: toggleMute }];
               if (isGroup) {
                 buttons.push({ text: 'group info', onPress: () => nav.navigate('GroupInfo', { conversationId }) });
-                // ── Creator vs participant split (logic skill) ──
-                //   The creator OWNS the group. There is no "leave"
-                //   for them — that would orphan the bubble on the
-                //   map and leave members without an admin. Their
-                //   destructive path is "end event", which lives
-                //   in GroupInfo and properly archives the pin +
-                //   posts the system message. Members get the
-                //   "leave group" path as before.
-                if (userId && createdBy === userId) {
+                // ── Creator vs participant split — gates from lib/roles ──
+                //   Single source of truth so the dots menu can never
+                //   drift from GroupInfoScreen's gating. canEndEvent
+                //   for the owner; canLeaveGroup for everyone else.
+                //   Both helpers correctly defer to the linked event's
+                //   user_id when present, falling back to
+                //   conversation.created_by only for ad-hoc groups.
+                const roleCtx = {
+                  userId,
+                  conversation: {
+                    created_by: createdBy,
+                    checkin_id: conversationCheckinId,
+                  },
+                  checkin: linkedCheckinUserId ? { user_id: linkedCheckinUserId } : null,
+                };
+                if (canEndEvent(roleCtx)) {
                   buttons.push({
                     text: 'end event', style: 'destructive' as const,
                     onPress: () => nav.navigate('GroupInfo', { conversationId }),
                   });
-                } else {
+                } else if (canLeaveGroup(roleCtx)) {
                   buttons.push({
                     text: 'leave group', style: 'destructive' as const,
                     onPress: () => {

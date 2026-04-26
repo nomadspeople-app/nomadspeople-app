@@ -18,6 +18,12 @@ import { supabase } from '../lib/supabase';
 import { leaveGroupChat, removeGroupMember } from '../lib/hooks';
 import MembersModal from '../components/MembersModal';
 import { postEventSystemMessage, eventSystemMsg } from '../lib/eventSystemMessages';
+import {
+  canEndEvent,
+  canEditGroupName,
+  canLeaveGroup,
+  canRemoveMember,
+} from '../lib/roles';
 import { useEventTime } from '../lib/eventTime';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -99,6 +105,12 @@ export default function GroupInfoScreen() {
   const [showMembersModal, setShowMembersModal] = useState(false);
   // Fallback coords from linked checkin
   const [checkinCoords, setCheckinCoords] = useState<{ lat: number; lng: number; locName?: string } | null>(null);
+  /* The OWNER of the linked event (app_checkins.user_id). This is
+   * the source of truth for `iAmCreator` per lib/roles. Lives in
+   * its own state so role-aware UI doesn't flash creator-only
+   * controls during the brief window where conv is loaded but the
+   * linked checkin is still being fetched. */
+  const [linkedCheckinUserId, setLinkedCheckinUserId] = useState<string | null>(null);
   /* Timing info pulled from the linked app_checkins row — feeds
    * the "when" row right under the activity name so a member
    * always knows whether this is running now (timer) or scheduled
@@ -136,6 +148,7 @@ export default function GroupInfoScreen() {
       // a live countdown (timer) or the exact scheduled date/time
       // (status) without a second roundtrip.
       let checkinRow: {
+        user_id: string | null;
         latitude: number | null;
         longitude: number | null;
         location_name: string | null;
@@ -145,9 +158,15 @@ export default function GroupInfoScreen() {
         is_flexible_time: boolean | null;
       } | null = null;
       if ((conv as any).checkin_id) {
+        // CRITICAL: include user_id. lib/roles.canEndEvent et al
+        // read it as the source of truth for "who is the event
+        // owner". Pre-fix this row didn't pull user_id and the
+        // creator-vs-member gate fell back to conversation.created_by
+        // — which became wrong after the April 2026 RLS hardening
+        // (created_by is now "first inserter", often a JOINER).
         const { data } = await supabase
           .from('app_checkins')
-          .select('latitude, longitude, location_name, checkin_type, expires_at, scheduled_for, is_flexible_time')
+          .select('user_id, latitude, longitude, location_name, checkin_type, expires_at, scheduled_for, is_flexible_time')
           .eq('id', (conv as any).checkin_id)
           .maybeSingle();
         checkinRow = data as any;
@@ -156,7 +175,7 @@ export default function GroupInfoScreen() {
         // Older chats may have no checkin_id — fall back to active-checkin lookup.
         const { data } = await supabase
           .from('app_checkins')
-          .select('latitude, longitude, location_name, checkin_type, expires_at, scheduled_for, is_flexible_time')
+          .select('user_id, latitude, longitude, location_name, checkin_type, expires_at, scheduled_for, is_flexible_time')
           .eq('user_id', conv.created_by)
           .eq('is_active', true)
           .order('created_at', { ascending: false })
@@ -170,6 +189,15 @@ export default function GroupInfoScreen() {
           lng: checkinRow.longitude,
           locName: checkinRow.location_name || undefined,
         });
+      }
+      // Capture the event owner for the role gates below. Stays
+      // null for ad-hoc groups (no linked checkin), in which case
+      // lib/roles falls back to conversation.created_by — correct
+      // for groups created from scratch without an event anchor.
+      if (checkinRow?.user_id) {
+        setLinkedCheckinUserId(checkinRow.user_id);
+      } else {
+        setLinkedCheckinUserId(null);
       }
       if (checkinRow) {
         setCheckinTiming({
@@ -260,7 +288,22 @@ export default function GroupInfoScreen() {
     nav.navigate('UserProfile', { userId: memberId, name: memberName || undefined });
   };
 
-  const iAmCreator = !!(userId && group?.created_by === userId);
+  /* Single source of truth — see lib/roles.ts. For event-linked
+   * chats this defers to app_checkins.user_id (the EVENT owner);
+   * for ad-hoc groups it falls back to app_conversations.created_by.
+   * Pre-fix used `group.created_by === userId` directly, which after
+   * the April 2026 RLS hardening returned true for the FIRST JOINER
+   * of an event (because they were the first to insert the chat
+   * row) — making members see creator-only controls. */
+  const roleCtx = {
+    userId,
+    conversation: group,
+    checkin: linkedCheckinUserId ? { user_id: linkedCheckinUserId } : null,
+  };
+  const iAmCreator = canEndEvent(roleCtx);
+  const iCanLeave = canLeaveGroup(roleCtx);
+  const iCanEditName = canEditGroupName(roleCtx);
+  const iCanRemoveMember = canRemoveMember(roleCtx);
 
   const handleEditName = async () => {
     if (!editName.trim() || !group) return;
@@ -608,7 +651,12 @@ export default function GroupInfoScreen() {
           </TouchableOpacity>
           <View style={st.membersList}>
             {members.map((m) => {
-              const isCreator = m.user_id === group?.created_by || m.role === 'admin';
+              // Same precedence as lib/roles: linked event owner first,
+              // chat row created_by second. Pre-fix this read group.created_by
+              // alone, which after the April 2026 RLS hardening tagged the
+              // FIRST JOINER as "creator" in the inline member list.
+              const eventOwnerId = linkedCheckinUserId || group?.created_by;
+              const isCreator = m.user_id === eventOwnerId || m.role === 'admin';
               const name = m.profile?.display_name || m.profile?.full_name || m.profile?.username || 'Nomad';
               const avatarUrl = m.profile?.avatar_url || null;
               const ini = name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -632,7 +680,7 @@ export default function GroupInfoScreen() {
                     {isCreator && <Text style={st.creatorTag}>creator</Text>}
                     {m.user_id === userId && !isCreator && <Text style={st.youTag}>you</Text>}
                   </View>
-                  {iAmCreator && !isCreator && m.user_id !== userId ? (
+                  {iCanRemoveMember && !isCreator && m.user_id !== userId ? (
                     <TouchableOpacity
                       onPress={() => handleRemoveMember(m.user_id, name)}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -662,7 +710,7 @@ export default function GroupInfoScreen() {
              properly archives the pin + posts a system message.
              Per the `logic` skill: never render a button whose
              closed loop the system can't honour. */}
-        {!iAmCreator && (
+        {iCanLeave && (
           <TouchableOpacity
             style={st.leaveBtn}
             activeOpacity={0.7}
@@ -717,7 +765,11 @@ export default function GroupInfoScreen() {
         conversationId={conversationId}
         members={members}
         currentUserId={userId || null}
-        creatorUserId={group?.created_by || null}
+        // Prefer the EVENT owner (app_checkins.user_id) over the chat
+        // row's created_by — same source of truth as lib/roles. If
+        // there's no linked event, the chat creator is the legitimate
+        // owner of an ad-hoc group.
+        creatorUserId={linkedCheckinUserId || group?.created_by || null}
         onTapMember={handleMemberTap}
         onAfterRemove={fetchAll}
       />

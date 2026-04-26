@@ -57,6 +57,76 @@ Until then: JS, DB, Cloud only.
 
 ---
 
+## Rule Two — Creator vs Participant (Locked 2026-04-26)
+
+> **יוצר ≠ משתמש. They are different people with different controls.
+> Never the same set of buttons. Never gated inline.**
+
+### The principle
+
+A nomadspeople conversation has at most one **creator** — the person who
+started the underlying event (status / timer) or, for ad-hoc groups,
+who first opened the chat. Everyone else is a **participant**. These
+are not interchangeable. They never see the same UI.
+
+- Creator can: end event, edit title / time / location / privacy,
+  remove members, rename the chat. **Cannot** "leave" — that orphans
+  the bubble on the map and leaves participants without an admin.
+- Participant can: leave, mute, view info. **Cannot** end, edit, or
+  remove anyone.
+- 1-on-1 chats: no creator role. Both sides are peers; "leave" is
+  replaced by "block".
+
+### How to enforce it
+
+The single source of truth is **`lib/roles.ts`**. Every UI surface
+that decides "show this button to X but not Y" MUST import from there:
+
+```typescript
+import { canEndEvent, canLeaveGroup, canRemoveMember } from '../lib/roles';
+
+const roleCtx = { userId, conversation, checkin };
+{canEndEvent(roleCtx)   && <EndEventButton/>}
+{canLeaveGroup(roleCtx) && <LeaveButton/>}
+```
+
+### Forbidden patterns
+
+- ❌ `userId === conversation.created_by` inline. After the April 2026
+  RLS hardening, `app_conversations.created_by` is "the first user to
+  insert the row" — often the FIRST JOINER of an event, not its owner.
+  Tester report 2026-04-26 ("חבר ראה End Event") was caused by this.
+- ❌ Local `iAmCreator = ...` derivations in screen code.
+- ❌ Passing `conversation.created_by` to `<MembersModal creatorUserId>`
+  for event-linked chats. Pass the EVENT owner (`app_checkins.user_id`).
+- ❌ Hardcoding "creator only" or "members only" without a `lib/roles`
+  helper to gate it.
+
+### When you add a new role-aware affordance
+
+1. Add a `canFooBar` helper to `lib/roles.ts` — never reuse an
+   unrelated one to save typing.
+2. Import it at the call site, gate via `{canFooBar(ctx) && <Btn/>}`.
+3. If it depends on event ownership, make sure the calling screen
+   loads the linked `app_checkins.user_id` and threads it through
+   the `roleCtx`.
+4. Document the helper in `lib/roles.ts` with one sentence on
+   "what creator can vs what participant sees".
+
+### Why this rule exists
+
+We shipped the inverse failure mode twice in a single day:
+- 2026-04-26 morning: a creator could "leave" their own group →
+  bubble stayed alive on map without an owner.
+- 2026-04-26 afternoon: a participant who joined someone else's
+  status saw "End Event" → could destroy a group they don't own.
+
+Both were the same root cause: `created_by` interpreted as "creator"
+without checking whether it was an event chat. Roles must live in
+one file or this drift recurs every sprint.
+
+---
+
 ## Rule Zero — No Band-Aids (Locked April 2026)
 
 > **There are no patches. There are no small fixes. Every change is a full
