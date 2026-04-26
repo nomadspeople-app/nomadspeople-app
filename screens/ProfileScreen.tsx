@@ -263,7 +263,7 @@ export default function ProfileScreen() {
   const isOwner = !routeUserId || routeUserId === myUserId;
   const cameViaLink = !!routeUserId; // true = navigated here via link, needs back button
 
-  const { profile, stats, followerPreviews, loading, refetch } = useProfile(profileUserId);
+  const { profile, stats, followerPreviews, loading, refetch, updateLocal: updateLocalProfile } = useProfile(profileUserId);
   const { toggle: toggleFollow, isFollowing: checkFollowing } = useFollow(myUserId);
   const { posts: photoPosts, loading: photosLoading } = usePhotoPosts(profileUserId, myUserId);
   const [isFollowing, setIsFollowing] = useState(false);
@@ -368,17 +368,27 @@ export default function ProfileScreen() {
   const handleAvatarPress = async () => {
     if (!isOwner || !myUserId) return;
     setAvatarUploading(true);
+    const previousAvatar = profile?.avatar_url ?? null;
     try {
       const url = await pickAndUploadAvatar(myUserId);
       if (!url) return; // pick was cancelled or upload failed (alert already shown)
+      // Optimistic UI: paint the new avatar immediately so the
+      // user sees their save land in the same frame as the tap.
+      updateLocalProfile({ avatar_url: url } as any);
       const { error } = await supabase
         .from('app_profiles')
         .upsert({ user_id: myUserId, avatar_url: url }, { onConflict: 'user_id' });
       if (error) {
+        // Revert local state on DB failure so the visible value
+        // matches the truth.
+        updateLocalProfile({ avatar_url: previousAvatar } as any);
         console.error('[ProfileScreen] avatar save failed:', error.message);
         Alert.alert('Could not save avatar', error.message || 'Please try again.');
         return;
       }
+      // Background reconciliation — non-blocking; the optimistic
+      // update already drove the UI, this just makes sure other
+      // server-side fields (e.g., updated_at) stay in sync.
       refetch();
     } finally {
       setAvatarUploading(false);
@@ -399,18 +409,32 @@ export default function ProfileScreen() {
   const handleBioSave = async () => {
     if (!myUserId) return;
     const trimmed = bioText.trim();
+    const previousBio = profile?.bio ?? null;
+    const newBio = trimmed || null;
+    // Optimistic UI: paint the new bio immediately AND close the
+    // editor in the same frame. The user sees their save land at
+    // tap time. Pre-fix this awaited the network round trip first
+    // and the user complained "אני אומנם יכול לכתוב - אבל זה לא
+    // משתנה באותו הרגע - לוקח לו זמן".
+    updateLocalProfile({ bio: newBio } as any);
+    setEditingBio(false);
     const { error } = await supabase
       .from('app_profiles')
       .upsert(
-        { user_id: myUserId, bio: trimmed || null },
+        { user_id: myUserId, bio: newBio },
         { onConflict: 'user_id' },
       );
     if (error) {
+      // Revert + reopen editor with the unsaved text restored so
+      // the user can retry without retyping.
+      updateLocalProfile({ bio: previousBio } as any);
+      setBioText(trimmed);
+      setEditingBio(true);
       console.error('[ProfileScreen] bio save failed:', error.message);
       Alert.alert('Could not save bio', error.message || 'Please try again.');
       return;
     }
-    setEditingBio(false);
+    // Background reconciliation only — UI already updated.
     refetch();
   };
 
@@ -712,10 +736,10 @@ export default function ProfileScreen() {
     if (!profileUserId) return;
     const current = (profile as any)?.visited_places || [];
     const updated = [...current, place];
-    // UPSERT + error surface — same closed-loop pattern as the
-    // bio / avatar saves above. Pre-fix the user could "add a
-    // place" and it would vanish on the next refetch because the
-    // .update().eq() silently no-op'd.
+    // Optimistic UI — same closed-loop pattern as bio / avatar:
+    // paint the new place into the passport immediately, fire the
+    // UPSERT in parallel, revert on error.
+    updateLocalProfile({ visited_places: updated } as any);
     const { error } = await supabase
       .from('app_profiles')
       .upsert(
@@ -723,6 +747,7 @@ export default function ProfileScreen() {
         { onConflict: 'user_id' },
       );
     if (error) {
+      updateLocalProfile({ visited_places: current } as any);
       console.error('[ProfileScreen] visited_places save failed:', error.message);
       Alert.alert('Could not save place', error.message || 'Please try again.');
       return;

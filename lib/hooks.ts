@@ -1200,7 +1200,20 @@ export function useProfile(userId: string | null) {
     fetchProfile();
   }, [fetchProfile]);
 
-  return { profile, stats, followerPreviews, loading, refetch: fetchProfile };
+  /* Optimistic-UI helper. Lets a save handler patch the local
+   * profile state INSTANTLY (so the new bio / avatar / etc shows
+   * the moment the user taps Save) and fire the DB UPSERT in
+   * parallel. On DB error the caller can either revert with
+   * another updateLocal call or just let the next refetch
+   * reconcile. Pre-fix the only update path was refetch(), which
+   * waited for a full network round-trip before the UI reflected
+   * the change — tester report 2026-04-26: "אני אומנם יכול לכתוב
+   * - אבל זה לא משתנה באותו הרגע". */
+  const updateLocal = useCallback((patch: Partial<AppProfile>) => {
+    setProfile(prev => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
+  return { profile, stats, followerPreviews, loading, refetch: fetchProfile, updateLocal };
 }
 
 export function useFollow(myUserId: string | null) {
