@@ -31,7 +31,33 @@ import { Alert, Platform } from 'react-native';
  *            surface this so the user knows to retry rather than
  *            assume the app froze.
  */
+/* TEMPORARY GUARD — pickImage is disabled in v14.
+ *
+ * Native version mismatch in v14 AAB: expo-image-picker@55.x calls
+ * AppContext.getServices() which doesn't exist in expo-modules-core@3.0.29.
+ * Every launchImageLibraryAsync crashes natively with NoSuchMethodError.
+ * No JS-only fix possible — the native code itself is broken.
+ *
+ * v15 will ship with the SDK 54-aligned versions (expo-image-picker@~17.0.10
+ * and expo-file-system@~19.0.21) and this guard reverts to a no-op.
+ *
+ * Until v15 lands: every upload entry point shows a friendly "coming
+ * in next update" Alert instead of opening the picker (which would
+ * crash). Testers can complete every other flow without an avatar
+ * or grid photo. This is option B from the 2026-04-26 incident
+ * triage — the JS-only bridge while the native rebuild is in
+ * Google review.
+ *
+ * REMOVE WHEN v15 IS LIVE — search for "V14_PICKER_DISABLED".
+ */
+const V14_PICKER_DISABLED = true;
+
 export async function pickImage(aspect?: [number, number]): Promise<string | null> {
+  if (V14_PICKER_DISABLED && Platform.OS !== 'web') {
+    const msg = 'Photo upload is coming in our next update (in Google review now). Sorry for the wait!';
+    Alert.alert('Coming soon', msg);
+    return null;
+  }
   // Permissions: Android 13+ uses the system Photo Picker which
   // requires NO runtime permission — it grants per-photo access via
   // a temporary URI grant. iOS uses PHPhotoPicker which the picker
