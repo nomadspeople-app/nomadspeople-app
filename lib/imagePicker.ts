@@ -20,8 +20,24 @@ export async function pickImage(aspect?: [number, number]): Promise<string | nul
     quality: 0.7,
   });
 
-  if (result.canceled || !result.assets?.[0]?.uri) return null;
-  return result.assets[0].uri;
+  // Robustness fix (2026-04-26): on Android, the system cropper sometimes
+  // returns `canceled: true` AFTER a successful crop — `assets` still has
+  // a real URI. The previous `result.canceled || !uri` short-circuit threw
+  // those away and the user saw "nothing happened" after every crop. We
+  // now trust the URI when present and only honour `canceled` when there
+  // is genuinely no asset to use.
+  const asset = result.assets?.[0];
+  if (asset?.uri) {
+    return asset.uri;
+  }
+  if (result.canceled) {
+    return null; // truly cancelled — no asset, no URI, nothing to do
+  }
+  // Not cancelled but also no URI — usually a permissions / IO failure.
+  // Surface it instead of silent null so the user knows to retry.
+  if (Platform.OS === 'web') window.alert('Could not read the selected image. Please try again.');
+  else Alert.alert('Image error', 'Could not read the selected image. Please try again.');
+  return null;
 }
 
 /**
