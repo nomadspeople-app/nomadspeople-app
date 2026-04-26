@@ -199,7 +199,31 @@ export function getChannelForType(type: NotificationType): string {
   }
 }
 
-/* ─── Request permission & register push token ─── */
+/* ─── Request permission & register push token ─────────────
+ *
+ * Self-healing registration. Called on every cold start (and on
+ * app focus) so that any prior failure — denied permission later
+ * granted, token-fetch timeout, transient DB error — is corrected
+ * automatically the next time the app opens.
+ *
+ * Idempotency contract (called multiple times safely):
+ *   1. If permission still not granted → return null. We do NOT
+ *      re-prompt every cold start; that would be UX abuse. The
+ *      onboarding flow (lib/permissions.ts) is the one allowed to
+ *      prompt, and Settings has a manual "Enable notifications"
+ *      affordance. Here we passively check and exit.
+ *   2. If permission granted → fetch the device's Expo token. The
+ *      token can change (OS reinstall, restore from backup) so
+ *      we always re-fetch and re-save.
+ *   3. UPSERT the token to app_profiles.
+ *
+ * Pre-fix (2026-04-26): registration only fired once after
+ * onboarding completion. If the token call timed out, the .update()
+ * was blocked by RLS for any reason, or the user temporarily
+ * dismissed the OS prompt before tapping Allow, push_token stayed
+ * NULL FOREVER. Tester DB confirmed: shospeople + reviewer had
+ * NULL tokens despite completing onboarding multiple days ago.
+ */
 export async function registerForPushNotifications(userId: string): Promise<string | null> {
   // Must be a physical device
   if (!Device.isDevice) {
@@ -207,25 +231,22 @@ export async function registerForPushNotifications(userId: string): Promise<stri
     return null;
   }
 
-  // Check existing permissions
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
-
-  // Request if not granted
-  if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
-
-  if (finalStatus !== 'granted') {
-    console.log('[Notifications] Permission not granted');
+  // Check existing permissions WITHOUT prompting. If the user has
+  // never granted (or has revoked), exit silently — re-prompting
+  // every app open trains the user to swat away our permission
+  // dialogs. The Settings screen has an explicit "Enable" CTA for
+  // recovery. The onboarding flow is the only place that prompts.
+  const { status } = await Notifications.getPermissionsAsync();
+  if (status !== 'granted') {
+    console.log('[Notifications] Permission not granted (status:', status, ')');
     return null;
   }
 
-  // Setup Android channels
+  // Setup Android channels (idempotent — safe to call every launch)
   await setupNotificationChannels();
 
-  // Get Expo push token
+  // Get Expo push token. Re-fetched every launch on purpose: tokens
+  // can rotate (app reinstall, OS restore from backup, FCM cleanup).
   try {
     const projectId =
       Constants.expoConfig?.extra?.eas?.projectId ??
@@ -233,33 +254,54 @@ export async function registerForPushNotifications(userId: string): Promise<stri
       'f7b98f05-2cda-4e34-8ea2-b1782649d5e3';
     const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     const token = tokenData.data;
+    if (!token) {
+      console.warn('[Notifications] getExpoPushTokenAsync returned empty token');
+      return null;
+    }
     console.log('[Notifications] Push token:', token);
 
-    // Save token to Supabase
-    await savePushToken(userId, token);
-
-    return token;
+    // UPSERT to Supabase. If this fails, log + return null so the
+    // caller can retry on the next launch — the in-memory `token`
+    // would be useless without a DB row pointing at it.
+    const saved = await savePushToken(userId, token);
+    return saved ? token : null;
   } catch (error) {
     console.error('[Notifications] Error getting push token:', error);
     return null;
   }
 }
 
-/* ─── Save push token to DB ─── */
-async function savePushToken(userId: string, token: string): Promise<void> {
+/* ─── Save push token to DB ─────────────────────────────
+ *
+ * UPSERT (not UPDATE) per the same `logic` skill rule we applied
+ * to profile saves on 2026-04-26: if the app_profiles row is
+ * missing for any reason — fresh signup race, ghost row deleted
+ * by an admin, etc. — UPDATE silently no-ops and the token is
+ * lost forever. Tester report 2026-04-26: shospeople and reviewer
+ * had push_token=NULL in DB despite completing onboarding (which
+ * fires the registration). UPSERT closes the loop end-to-end.
+ *
+ * Returns success boolean so the caller can decide whether to
+ * retry on next app open.
+ */
+async function savePushToken(userId: string, token: string): Promise<boolean> {
   const { error } = await supabase
     .from('app_profiles')
-    .update({
-      push_token: token,
-      push_token_updated_at: new Date().toISOString(),
-    })
-    .eq('user_id', userId);
+    .upsert(
+      {
+        user_id: userId,
+        push_token: token,
+        push_token_updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id' },
+    );
 
   if (error) {
     console.error('[Notifications] Error saving push token:', error.message);
-  } else {
-    console.log('[Notifications] Push token saved to DB');
+    return false;
   }
+  console.log('[Notifications] Push token saved to DB');
+  return true;
 }
 
 /* ─── Remove push token (logout / disable) ─── */
