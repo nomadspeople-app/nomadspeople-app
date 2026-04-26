@@ -1132,6 +1132,23 @@ export default function HomeScreen() {
         target = data;
       }
       if (!target || !target.latitude || !target.longitude) {
+        Alert.alert(
+          'Activity not found',
+          "We couldn't find this activity. It may have been removed.",
+        );
+        nav.setParams({ focusCheckinId: undefined, focusNonce: undefined } as any);
+        return;
+      }
+      // Hide ghost bubbles: an event whose owner ended it (or that
+      // expired via cron) keeps its row in app_checkins but flips
+      // is_active=false. Opening the TimerBubble for it would let
+      // the user tap Join on a dead group. Friendlier to surface a
+      // quick "ended" alert and stay on the map.
+      if (target.is_active === false) {
+        Alert.alert(
+          'Activity ended',
+          'This activity has already ended.',
+        );
         nav.setParams({ focusCheckinId: undefined, focusNonce: undefined } as any);
         return;
       }
