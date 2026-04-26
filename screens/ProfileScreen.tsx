@@ -2090,9 +2090,16 @@ export default function ProfileScreen() {
             <View style={{ gap: s(4) }}>
               <TouchableOpacity
                 onPress={() => {
-                  if (!myUserId || !activeCheckin) return;
-                  const checkinId = activeCheckin.id;
-                  const isTimer = activeCheckin.checkin_type === 'timer';
+                  // Use editCheckin (the activity actually being viewed/edited in
+                  // the bubble), NOT the legacy `activeCheckin = activeStatus ||
+                  // activeTimer` short-circuit which always picked the status
+                  // when both existed and silently cancelled the WRONG row.
+                  // (Reported by Barak 2026-04-26: "I press Cancel Timer and it
+                  // cancels my Scheduled.")
+                  const target = editCheckin;
+                  if (!myUserId || !target) return;
+                  const checkinId = target.id;
+                  const isTimer = target.checkin_type === 'timer';
                   // Optimistic: remove from UI immediately
                   setShowDeleteConfirm(false);
                   if (isTimer) setActiveTimer(null); else setActiveStatus(null);
