@@ -1,5 +1,62 @@
 # nomadspeople App — Development Rules
 
+## Rule Minus-One — No Native Changes During Google Review (Locked 2026-04-26)
+
+> **While the app is in any active Google Play review window, NATIVE
+> code changes are FORBIDDEN. Only JS / DB / backend / Cloud Console
+> changes are allowed.**
+
+### Why this rule exists
+
+Every native change forces a new AAB upload, which restarts the
+Google review clock (1-3 days for Closed Testing, 7+ for Production).
+On 2026-04-26 we burned a full day rebuilding through 6 AAB versions
+(v8 → v14) chasing native config issues. The owner explicitly locked
+this in: until Google gives a final verdict, the app native surface
+is FROZEN.
+
+### What counts as "native" — FORBIDDEN during review
+
+- Anything in `app.json` plugins, permissions, android.config,
+  ios.infoPlist, ios.config
+- Adding/removing/upgrading any package that has a native module
+  (anything in `node_modules` with `android/` or `ios/` folders)
+- AndroidManifest.xml or Info.plist direct edits
+- Anything that requires re-running `expo prebuild`
+- Adding new SDKs (Firebase, OneSignal, RevenueCat, etc.)
+- Changing app icon / splash screen image references
+- versionCode bumps without a real reason
+
+### What's ALLOWED during review — these can ship via EAS Update or DB
+
+- `screens/*.tsx`, `components/*.tsx`, `lib/*.ts(x)` — JS/TS only
+- `lib/translations/*.ts` — copy changes
+- Supabase SQL: schema, RLS, policies, edge functions
+- Storage bucket changes
+- Google Cloud Console (OAuth clients, API keys, restrictions)
+- Sentry / Vercel / external service configs
+- Adding/removing Closed Testing testers in Play Console
+- Web (`/web`) — Vite SPA changes deploy via Vercel, no Play involved
+
+### When the owner asks for a native change during review
+
+Treat it as a **WARNING LIGHT 🚨** and refuse the rebuild. Steps:
+1. Surface the request and name it native explicitly
+2. Explain the cost (new review cycle, 1-3 days minimum)
+3. Offer a JS-only / DB-only alternative if one exists
+4. Only proceed with native + new AAB if the owner explicitly
+   acknowledges the cost and confirms in writing
+
+### When this rule lifts
+
+Only after Google gives the **final verdict** on the current submission:
+- ✅ Approved → free to plan next native change cycle
+- ❌ Rejected with concrete fix → that fix is the only allowed native change
+
+Until then: JS, DB, Cloud only.
+
+---
+
 ## Rule Zero — No Band-Aids (Locked April 2026)
 
 > **There are no patches. There are no small fixes. Every change is a full
@@ -129,9 +186,9 @@ Every user-facing string in the app MUST use the `t()` function. No hardcoded te
 
 **Rules — DO NOT CHANGE:**
 - ZERO hardcoded user-facing strings — every label, title, sublabel, placeholder, alert message, button text, and error message must use `t('key')`
-- Every new `t()` key MUST be added to ALL 8 translation files: `en.ts`, `he.ts`, `es.ts`, `pt.ts`, `it.ts`, `fr.ts`, `de.ts`, `ru.ts`
+- Every new `t()` key MUST be added to ALL 3 translation files: `en.ts`, `he.ts`, `ru.ts`. (An earlier version of this file listed 8 locales — es/pt/it/fr/de were removed during the MVP scope cut. `lib/i18n.ts → SUPPORTED_LOCALES` is the canonical list.)
 - Translation files location: `lib/translations/`
-- Supported locales defined in `lib/i18n.ts`: en, he, es, pt, it, fr, de, ru
+- Supported locales defined in `lib/i18n.ts`: en, he, ru
 - When adding a new screen or feature: add ALL strings as `t()` keys from the start — never "add translations later"
 - Alert.alert() titles, messages, and button labels — ALL must use `t()`
 - Section headers, sublabels, empty states, error messages — ALL must use `t()`
@@ -150,7 +207,11 @@ If a user turns off "Show me on the map" (`show_on_map: false`):
 - Expo SDK 54, React Native, TypeScript
 - Supabase backend (project: apzpxnkmuhcwmvmgisms)
 - react-native-maps 1.14 (NO clustering library in use)
-- tracksViewChanges={false} on ALL markers (performance critical)
+- tracksViewChanges starts TRUE, flips to FALSE after content paints
+  (was hardcoded false — caused invisible markers per 2026-04-26
+  tester report. Marker hit-targets existed but the bitmap snapshot
+  was empty because it captured pre-image-load layout. Pattern owned
+  by NomadMarker component in screens/HomeScreen.tsx.)
 
 ### One Map — Locked April 2026
 

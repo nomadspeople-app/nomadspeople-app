@@ -280,21 +280,55 @@ function PulseRing({ heat, size }: { heat: number; size: number }) {
   );
 }
 
-/* ─── Helper: build a single Marker element for a checkin ─── */
-function buildNomadMarker(
-  c: CheckinWithProfile,
-  i: number,
-  cityLat: number,
-  cityLng: number,
-  onPinTap: (c: CheckinWithProfile) => void,
-  avatarUri: (url: string | null | undefined) => string | undefined,
-  st: ReturnType<typeof makeStyles>,
-  hotMap?: Map<string, number>,
-) {
+/* ─── NomadMarker — proper React component (was a bare function) ───
+ *
+ * Why this is a real component now (2026-04-26):
+ *
+ *   `react-native-maps` snapshots a custom-view Marker into a native
+ *   bitmap exactly ONCE when `tracksViewChanges={false}`. The original
+ *   buildNomadMarker hardcoded that to false (CLAUDE.md rule, added
+ *   to stop pin-jitter on map pans). Side effect: the snapshot fires
+ *   on the very first render, BEFORE the avatar `<CachedImage/>`
+ *   resolves and BEFORE Yoga lays out the rounded ring + emoji
+ *   badge. The native bitmap captured an empty subtree, the marker
+ *   stayed touchable (its hit-rect is fine) but rendered as
+ *   completely invisible pixels.
+ *
+ *   Tester report 2026-04-26: "אין בועות על המפה - לחצתי סתם על המפה
+ *   וקפץ לי חלונית של באבל - זה אומר שהן שם רק לא רואים אותם". The
+ *   pin-tap callback fired correctly because the Marker was real;
+ *   only the bitmap was blank.
+ *
+ *   Standard react-native-maps fix: start with tracksViewChanges=true
+ *   so the engine re-snapshots on every render, then flip to false
+ *   AFTER the content has stabilised. The marker draws correctly,
+ *   subsequent map pans don't redraw it, no jitter, no invisible
+ *   pin. Both invariants of the original CLAUDE.md rule are kept.
+ *
+ *   We flip after a short timer (700ms = 1 image load + layout).
+ *   Avatar load events would be more precise but add complexity for
+ *   no visible improvement — the 700ms snapshot includes the avatar
+ *   in the overwhelming majority of cases (CachedImage hits its
+ *   disk cache on warm starts).
+ */
+function NomadMarker({
+  c,
+  cityLat,
+  cityLng,
+  onPinTap,
+  avatarUri,
+  st,
+  hotMap,
+}: {
+  c: CheckinWithProfile;
+  cityLat: number;
+  cityLng: number;
+  onPinTap: (c: CheckinWithProfile) => void;
+  avatarUri: (url: string | null | undefined) => string | undefined;
+  st: ReturnType<typeof makeStyles>;
+  hotMap?: Map<string, number>;
+}) {
   const catStyle = getCatStyle(c.category);
-  // Prefer display_name (the user-controlled "nickname") over full_name —
-  // legacy rows sometimes have full_name='Deleted User' or similar stale
-  // defaults. display_name is the thing the user actually set in Settings.
   const nameForDisplay = (c.profile as any)?.display_name || c.profile?.full_name || '';
   const ini = getInitials(nameForDisplay || undefined);
   const firstName = nameForDisplay?.split(' ')[0] || 'Nomad';
@@ -312,16 +346,24 @@ function buildNomadMarker(
 
   const heat = hotMap?.get(c.id) ?? 0;
   const isHot = heat > 0 && !isExpired;
-  const ringSize = s(33); // slightly larger than avatarRing (s(27))
+  const ringSize = s(33);
+
+  // tracksViewChanges starts TRUE so the first render captures the
+  // fully-painted subtree (avatar, ring, badge, name). After 700ms
+  // we flip to FALSE so map pans don't trigger snapshots and the pin
+  // stays rock-still — the original CLAUDE.md performance invariant.
+  // 700ms is generous: CachedImage cache hits paint in <100ms, even
+  // a cold network avatar usually beats 500ms.
+  const [tracksChanges, setTracksChanges] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setTracksChanges(false), 700);
+    return () => clearTimeout(t);
+  }, [c.id]);
 
   return (
     <Marker
       key={c.id}
-      // Per CLAUDE.md: tracksViewChanges must be FALSE on all markers —
-      // the Marker view gets snapshotted once, no per-frame redraws, no
-      // flicker. The "hot" visual signal stays in the border color only;
-      // we don't animate the Marker itself any more.
-      tracksViewChanges={false}
+      tracksViewChanges={tracksChanges}
       coordinate={{
         latitude: c.latitude ? c.latitude : scatter(cityLat, hashCode(c.id)),
         longitude: c.longitude ? c.longitude : scatter(cityLng, hashCode(c.id + '_lng')),
@@ -1138,9 +1180,22 @@ export default function HomeScreen() {
    *  add a plain arrow function or inline object as a dep. */
   const nomadMarkers = useMemo(() => {
     if (isSnoozed) return null;
-    return filteredCheckins.map((c, i) =>
-      buildNomadMarker(c, i, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins),
-    );
+    // NomadMarker is now a real React component (was a plain
+    // function until 2026-04-26) so it can own its own
+    // tracksViewChanges state — see the component header for the
+    // invisible-marker bug it fixes.
+    return filteredCheckins.map((c) => (
+      <NomadMarker
+        key={c.id}
+        c={c}
+        cityLat={currentCity.lat}
+        cityLng={currentCity.lng}
+        onPinTap={handlePinTap}
+        avatarUri={avatarUri}
+        st={st}
+        hotMap={hotCheckins}
+      />
+    ));
   }, [isSnoozed, filteredCheckins, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins]);
 
   const handleViewProfile = (userId: string) => {
