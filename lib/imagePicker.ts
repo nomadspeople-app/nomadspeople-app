@@ -1,4 +1,11 @@
 import * as ImagePicker from 'expo-image-picker';
+// expo-file-system v55 split the old function-style API into the
+// `legacy` subpath; the default import now throws at runtime for
+// `readAsStringAsync` / `EncodingType`. We need the legacy module
+// to read the picker URI as base64 in a single line, regardless
+// of file:// vs content:// scheme.
+import { readAsStringAsync, EncodingType } from 'expo-file-system/legacy';
+import { decode as base64ToArrayBuffer } from 'base64-arraybuffer';
 import { supabase } from './supabase';
 import { Alert, Platform } from 'react-native';
 
@@ -51,14 +58,27 @@ export async function pickImage(aspect?: [number, number]): Promise<string | nul
 
 /**
  * Upload a local image URI to Supabase Storage.
- * Uses FormData approach which is the most reliable on React Native.
  *
- * Why this detour around supabase.storage.from().upload({uri,type,name}):
- * the Supabase JS SDK quietly JSON-serializes the object instead of
- * reading the file on RN, producing a 341-byte text/plain upload that
- * the Image component can't render. We hit that in ChatScreen image
- * attachments on 2026-04-22 and moved every image path here as a
- * result.
+ * This is the canonical Supabase + React Native upload pattern:
+ *
+ *   1. Read the picker URI as base64 with expo-file-system. This
+ *      works for both `file://` and `content://` URIs that
+ *      expo-image-picker hands back on Android.
+ *   2. Decode the base64 string into an ArrayBuffer with
+ *      base64-arraybuffer.
+ *   3. Pass the ArrayBuffer + contentType to
+ *      `supabase.storage.from(bucket).upload(path, buf, {contentType})`.
+ *      The SDK PUTs the raw bytes correctly because it sees a
+ *      typed binary value, not the `{uri,type,name}` blob shape
+ *      that triggered the old "341-byte text/plain upload" bug.
+ *
+ * History: pre-2026-04-26 this used a manual `fetch()` with a
+ * FormData body. That works on iOS but is unreliable on Android —
+ * tester report ("עכשיו הוא מכניס אותי לאלבום וקופץ ישר החוצה
+ * לאחר בחירת תמונה") narrowed to FormData multipart on certain
+ * OEMs producing zero-byte uploads with no surfaced error. The
+ * ArrayBuffer path bypasses the FormData layer entirely and is
+ * what the official Supabase RN docs now recommend.
  *
  * `customFileName` lets callers override the default `${userId}/time.ext`
  * layout — used by chat attachments, which want
@@ -72,64 +92,68 @@ export async function uploadImage(
   customFileName?: string,
 ): Promise<string | null> {
   try {
-    // Determine extension and content type
+    // Determine extension and content type from the picker URI.
+    // expo-image-picker URIs always carry an extension; fall back
+    // to jpg if a future asset somehow slips through without one.
     const uriParts = localUri.split('.');
-    const ext = uriParts[uriParts.length - 1]?.toLowerCase() || 'jpg';
-    const mimeType = ext === 'png' ? 'image/png' : 'image/jpeg';
+    const ext = (uriParts[uriParts.length - 1] || 'jpg').toLowerCase().split('?')[0];
+    const mimeType = ext === 'png' ? 'image/png'
+      : ext === 'webp' ? 'image/webp'
+      : 'image/jpeg';
     const fileName = customFileName || `${userId}/${Date.now()}.${ext}`;
 
-    // Create FormData — the most reliable method on React Native
-    const formData = new FormData();
-    formData.append('', {
-      uri: Platform.OS === 'ios' ? localUri.replace('file://', '') : localUri,
-      name: `upload.${ext}`,
-      type: mimeType,
-    } as any);
-
-    // Upload via Supabase REST endpoint directly
-    const supabaseUrl = 'https://apzpxnkmuhcwmvmgisms.supabase.co';
-    const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFwenB4bmttdWhjd212bWdpc21zIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzNzg2MjksImV4cCI6MjA4OTk1NDYyOX0.Hr0n3c4l0vznMRN7eLPB40VATb77CjyOBWmYlLlK3KM';
-
-    // Get session token if available
-    const { data: { session } } = await supabase.auth.getSession();
-    const authToken = session?.access_token || supabaseKey;
-
-    const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${fileName}`;
-
-    // IMPORTANT: x-upsert is FALSE. When Supabase sees x-upsert=true,
-    // RLS evaluates BOTH the INSERT and the UPDATE policies — and our
-    // UPDATE policies on storage.objects for post-images / avatars
-    // have check_expr = NULL, which Postgres interprets as default-
-    // deny for the row-being-written. Result: 403 "new row violates
-    // row-level security policy" on every chat image upload.
-    // Our paths embed a timestamp, so collisions are impossible —
-    // plain INSERT is the correct primitive. Do NOT flip this back
-    // to 'true' without also fixing the UPDATE policy check_expr.
-    const response = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${authToken}`,
-        'apikey': supabaseKey,
-        'x-upsert': 'false',
-      },
-      body: formData,
+    // Step 1 — read the file as base64. Expo's FileSystem handles
+    // both `file://` (iOS) and `content://` (Android Photos picker)
+    // schemes, so we don't need to scheme-detect or URL-encode here.
+    const base64 = await readAsStringAsync(localUri, {
+      encoding: EncodingType.Base64,
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Upload error:', response.status, errorText);
-      const msg = `Upload failed: server returned ${response.status}. ${errorText.slice(0, 120)}`;
+    // Sanity guard — a 0-byte read means the picker handed us a URI
+    // the file system can't access. Surface it instead of uploading
+    // an empty image and silently saving an unviewable URL.
+    if (!base64 || base64.length === 0) {
+      const msg = 'Could not read the selected image (empty file).';
       if (Platform.OS === 'web') window.alert(msg);
       else Alert.alert('Upload failed', msg);
       return null;
     }
 
-    // Build public URL
+    // Step 2 — base64 → ArrayBuffer for the Supabase SDK.
+    const arrayBuffer = base64ToArrayBuffer(base64);
+
+    // Step 3 — upload via the SDK with the raw bytes. The SDK now
+    // sees a binary value, sets the right Content-Type from our
+    // override, and does NOT do the broken JSON-serialize-the-asset
+    // path that bit us before.
+    //
+    // upsert: false is intentional — our paths embed a timestamp so
+    // collisions are impossible, and `true` would force RLS to
+    // evaluate the UPDATE policy too (which has a NULL check_expr
+    // and default-denies, producing 403s on what should be plain
+    // inserts). See storage.objects policies in Supabase Dashboard.
+    const { error: uploadErr } = await supabase.storage
+      .from(bucket)
+      .upload(fileName, arrayBuffer, {
+        contentType: mimeType,
+        upsert: false,
+      });
+
+    if (uploadErr) {
+      console.error('[uploadImage] storage upload failed:', uploadErr.message, { bucket, fileName });
+      const msg = `Upload failed: ${uploadErr.message}`;
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert('Upload failed', msg);
+      return null;
+    }
+
+    // Build public URL the same way as before — public buckets
+    // return a stable HTTPS link the Image component can render.
     const { data: urlData } = supabase.storage.from(bucket).getPublicUrl(fileName);
     return urlData.publicUrl;
   } catch (err: any) {
-    console.error('Upload exception:', err);
-    const msg = err.message || 'Unknown error';
+    console.error('[uploadImage] exception:', err);
+    const msg = err?.message || 'Unknown error';
     if (Platform.OS === 'web') window.alert(`Upload failed: ${msg}`);
     else Alert.alert('Upload failed', msg);
     return null;
