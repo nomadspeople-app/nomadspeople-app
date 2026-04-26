@@ -483,11 +483,11 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
               : username.length >= 3 ? <Text style={st.successText}>@{username} is available</Text>
               : null}
 
-            <Text style={[st.question, { marginTop: s(14) }]}>your name</Text>
-            <Text style={st.subtitle}>this is how other nomads will see you</Text>
+            <Text style={[st.question, { marginTop: s(14) }]}>{t('setup.displayName')}</Text>
+            <Text style={st.subtitle}>{t('setup.displayNameSub')}</Text>
             <TextInput
               style={st.textInput}
-              placeholder="Barak Perez"
+              placeholder={t('setup.displayNamePlaceholder')}
               placeholderTextColor="#B0ADA5"
               value={displayName}
               onChangeText={setDisplayName}
@@ -495,7 +495,7 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
               autoCorrect={false}
             />
             {displayName.trim().length >= 2 && (
-              <Text style={st.successText}>hi {displayName.trim()}!</Text>
+              <Text style={st.successText}>{t('setup.greetingHi', { name: displayName.trim() })}</Text>
             )}
 
             <Text style={[st.question, { marginTop: s(14) }]}>instagram (optional)</Text>

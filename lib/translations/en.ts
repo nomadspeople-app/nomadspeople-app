@@ -37,6 +37,8 @@ export const en: Record<string, string> = {
   'home.vibeHang': 'hang',
   'home.activeCount': '{{count}} active',
   'home.nomadsHere': 'nomads here',
+  'home.createActivity': 'create activity',
+  'home.notifications': 'notifications',
 
   /* ── Nomads List Sheet ── */
   'nomadsList.title': 'nomads in town',
@@ -329,6 +331,10 @@ export const en: Record<string, string> = {
   'setup.languageSub': 'the app will be displayed in this language',
   'setup.username': 'pick a username',
   'setup.usernameSub': "this is how other nomads will find you",
+  'setup.displayName': 'your name',
+  'setup.displayNameSub': 'this is how other nomads will see you',
+  'setup.displayNamePlaceholder': 'your full name',
+  'setup.greetingHi': 'hi {name}!',
   'setup.birthYear': 'when were you born?',
   'setup.birthYearSub': 'we use this for age-appropriate matching',
   'setup.nomadType': "what's your vibe?",

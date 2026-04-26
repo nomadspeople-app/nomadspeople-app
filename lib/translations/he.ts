@@ -37,6 +37,8 @@ export const he: Record<string, string> = {
   'home.vibeHang': 'מפגש',
   'home.activeCount': '{{count}} פעילים',
   'home.nomadsHere': 'נוודים כאן',
+  'home.createActivity': 'צור פעילות',
+  'home.notifications': 'התראות',
 
   /* ── Nomads List Sheet ── */
   'nomadsList.title': 'נוודים בעיר',
@@ -299,6 +301,10 @@ export const he: Record<string, string> = {
   'setup.languageSub': 'האפליקציה תוצג בשפה זו',
   'setup.username': 'בחר שם משתמש',
   'setup.usernameSub': 'ככה נוודים אחרים ימצאו אותך',
+  'setup.displayName': 'השם שלך',
+  'setup.displayNameSub': 'ככה נוודים אחרים יראו אותך',
+  'setup.displayNamePlaceholder': 'השם המלא שלך',
+  'setup.greetingHi': 'היי {name}!',
   'setup.birthYear': 'מתי נולדת?',
   'setup.birthYearSub': 'אנחנו משתמשים בזה להתאמה לפי גיל',
   'setup.nomadType': 'מה הווייב שלך?',

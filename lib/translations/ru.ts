@@ -37,6 +37,8 @@ export const ru: Record<string, string> = {
   'home.vibeHang': 'тусовка',
   'home.activeCount': '{{count}} активных',
   'home.nomadsHere': 'номады здесь',
+  'home.createActivity': 'создать активность',
+  'home.notifications': 'уведомления',
 
   /* ── Nomads List Sheet ── */
   'nomadsList.title': 'номады в городе',
@@ -299,6 +301,10 @@ export const ru: Record<string, string> = {
   'setup.languageSub': 'приложение будет отображаться на этом языке',
   'setup.username': 'выберите имя пользователя',
   'setup.usernameSub': 'так другие номады смогут вас найти',
+  'setup.displayName': 'ваше имя',
+  'setup.displayNameSub': 'так вас увидят другие номады',
+  'setup.displayNamePlaceholder': 'ваше полное имя',
+  'setup.greetingHi': 'привет, {name}!',
   'setup.birthYear': 'когда вы родились?',
   'setup.birthYearSub': 'мы используем это для подбора по возрасту',
   'setup.nomadType': 'какой у вас стиль?',
