@@ -300,6 +300,15 @@ export default function PeopleScreen() {
     const myLooking = myProfile.looking_for || [];
     const myJobType = myProfile.job_type || '';
 
+    // Active-presence threshold (24h since last_active_at) — owner
+    // directive 2026-04-27. A user who deleted the app or hasn't
+    // opened it in 24h must NOT surface in matches. Same logic /
+    // same constant as useNomadsInCity. last_active_at is
+    // refreshed on every 30s GPS tick by HomeScreen, so any
+    // currently-using user is "live".
+    const ACTIVE_PRESENCE_HOURS = 24;
+    const cutoff = new Date(Date.now() - ACTIVE_PRESENCE_HOURS * 3600 * 1000).toISOString();
+
     supabase
       .from('app_profiles')
       // birth_date / age_min / age_max needed for the bidirectional age
@@ -318,6 +327,7 @@ export default function PeopleScreen() {
       // signal — not strict enough. Now we strictly require the
       // candidate's profile.current_city to match the viewedCity.
       .ilike('current_city', currentCity)
+      .gte('last_active_at', cutoff)
       .limit(100)
       .then(({ data }) => {
         if (!data) { setMatchesLoading(false); return; }

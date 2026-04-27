@@ -538,6 +538,20 @@ export function useNomadsInCity(city: string, viewer?: ViewerForFilter | null) {
   const fetch = async () => {
     const viewerAge = calcAge(viewerBirth);
 
+    // ─── Active-presence threshold ─────────────────────────────
+    // Owner directive 2026-04-27: a user who hasn't opened the app
+    // recently must NOT appear in city nomad lists, even though
+    // their profile remains in the DB. Otherwise an uninstalled
+    // user (Eli case 2026-04-27 — deleted the app, kept appearing
+    // in Tel Aviv list, would have received messages and matches)
+    // looks "present" to everyone. Definition: last_active_at within
+    // the last 24 hours. last_active_at is updated by HomeScreen's
+    // GPS-first sync on every 30s tick — so any user with the app
+    // open in the last day is "live", anyone else is hidden until
+    // they reopen.
+    const ACTIVE_PRESENCE_HOURS = 24;
+    const cutoff = new Date(Date.now() - ACTIVE_PRESENCE_HOURS * 3600 * 1000).toISOString();
+
     // Fetch candidates — birth_date / age_min / age_max are now in
     // the SELECT so we can apply the bidirectional filter below.
     const { data, error } = await supabase
@@ -545,6 +559,7 @@ export function useNomadsInCity(city: string, viewer?: ViewerForFilter | null) {
       .select('user_id, full_name, display_name, username, avatar_url, bio, job_type, current_city, home_country, show_on_map, birth_date, age_min, age_max')
       .ilike('current_city', city)
       .eq('show_on_map', true)
+      .gte('last_active_at', cutoff)
       .limit(200);
 
     if (!data) {
