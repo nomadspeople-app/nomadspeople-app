@@ -929,6 +929,66 @@ export default function HomeScreen() {
    * into them. See the "creation publish bridge" block further
    * down near the other publish handlers. */
 
+  /* ── Live city sync from GPS — owner directive 2026-04-27 ────
+   *
+   * The user's "current city" is derived from LIVE GPS, not from
+   * a profile field they once filled in or a hardcoded default.
+   * Owner: "ברור שהכלל חייב להיות מובנה GPS / אם הוא נסע למטולה
+   * הוא נכנס לצ'ק אין מטולה". Without this, Yuval (Rehovot)
+   * opened the app this morning and the map snapped to Tel Aviv
+   * because his profile.current_city was NULL and CITIES[0] = TLV.
+   *
+   * On every GPS tick we:
+   *   1. Reverse-geocode the coords → city name (via shared
+   *      cityResolver, no inline duplication).
+   *   2. setCurrentCity to that city — drives map center, "nomads
+   *      in city" filter, country derivation, etc.
+   *   3. Persist the city + lat/lng to app_profiles so other
+   *      users see this nomad in the correct city's nomad list.
+   *
+   * Guarded by lastSyncedCityName ref so we don't spam Supabase
+   * with identical UPDATEs on every 30s GPS refresh.
+   */
+  const lastSyncedCityName = useRef<string | null>(null);
+  const syncLiveCityFromGPS = useCallback(async (lat: number, lng: number) => {
+    if (!userId) return;
+    try {
+      const { cityName, country, countryCode } = await reverseGeocodeCityFull(lat, lng);
+      if (!cityName) return; // reverse-geocode failed — keep previous city
+      if (lastSyncedCityName.current === cityName) return; // unchanged
+
+      lastSyncedCityName.current = cityName;
+
+      // Prefer a CITIES entry if we have one (richer metadata: flag, active count).
+      const fromList = CITIES.find(c => c.name.toLowerCase() === cityName.toLowerCase());
+      const liveCity: City = fromList ?? {
+        id: `${cityName}-${country}`.toLowerCase().replace(/\s+/g, '-'),
+        name: cityName,
+        country,
+        countryCode,
+        flag: '',
+        lat,
+        lng,
+        active: 0,
+      };
+      setCurrentCity(liveCity);
+
+      // Persist — fire and forget, errors logged not surfaced (silent
+      // failure here just means OTHER users see stale "nomad in X"
+      // for this user; the local map still works correctly).
+      const { error } = await supabase.from('app_profiles').update({
+        current_city: cityName,
+        last_location_latitude: lat,
+        last_location_longitude: lng,
+        last_location_timestamp: new Date().toISOString(),
+        last_active_at: new Date().toISOString(),
+      }).eq('user_id', userId);
+      if (error) console.warn('[HomeScreen] Profile city sync failed:', error.message);
+    } catch (e) {
+      console.warn('[HomeScreen] Live city sync error:', e);
+    }
+  }, [userId]);
+
   const refreshGPS = useCallback(async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -936,10 +996,14 @@ export default function HomeScreen() {
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       setUserLat(pos.coords.latitude);
       setUserLng(pos.coords.longitude);
+      // Re-sync city — covers the "user drove from Rehovot to Tel Aviv
+      // while the app was open" case. The internal ref-guard skips the
+      // DB write if the resolved city is unchanged.
+      syncLiveCityFromGPS(pos.coords.latitude, pos.coords.longitude);
     } catch (e) {
       console.warn('[HomeScreen] GPS refresh error:', e);
     }
-  }, []);
+  }, [syncLiveCityFromGPS]);
 
   useEffect(() => {
     (async () => {
@@ -951,12 +1015,20 @@ export default function HomeScreen() {
         if (last) {
           setUserLat(last.coords.latitude);
           setUserLng(last.coords.longitude);
+          // Sync city from cached coords too — gets "Rehovot" on the
+          // map almost instantly even before fresh GPS lands.
+          syncLiveCityFromGPS(last.coords.latitude, last.coords.longitude);
         }
         // 2) Then get fresh GPS — may take 1-3s
         const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         setUserLat(pos.coords.latitude);
         setUserLng(pos.coords.longitude);
-        // 3) Zoom map to real location on first GPS fix
+        // 3) Re-sync city from the precise fix (covers cases where
+        //    the cached position was stale by hundreds of km, e.g.
+        //    a flight). lastSyncedCityName ref skips the DB write if
+        //    the cached and fresh fixes resolve to the same city.
+        syncLiveCityFromGPS(pos.coords.latitude, pos.coords.longitude);
+        // 4) Zoom map to real location on first GPS fix
         if (!gpsInitDone.current) {
           gpsInitDone.current = true;
           mapRef.current?.animateToRegion({
@@ -973,7 +1045,7 @@ export default function HomeScreen() {
     // Refresh GPS every 30 seconds
     const gpsInterval = setInterval(refreshGPS, 30_000);
     return () => clearInterval(gpsInterval);
-  }, [refreshGPS]);
+  }, [refreshGPS, syncLiveCityFromGPS]);
 
   /* ── Notifications hook ──
    *
