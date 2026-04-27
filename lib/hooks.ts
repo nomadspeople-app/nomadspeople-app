@@ -491,6 +491,15 @@ export interface NomadInCity {
  * Root cause: this hook had NO age filter at all — it just selected
  * every profile in the matching city with show_on_map=true.
  *
+ * Second owner report 2026-04-27 (later same day): when Barak
+ * changed his age range in Settings and came back, the filter
+ * didn't react until he refreshed. Root cause #2: the hook was
+ * fetching the viewer profile internally, with deps only on
+ * [city, viewerUserId]. A change to age_max didn't change either
+ * dep, so no refetch fired. Fix: take the viewer's age + range
+ * as parameters, deps include them — when Barak's age_max
+ * changes, parent passes new value, hook refetches immediately.
+ *
  * Fix: bidirectional age check, mirroring the same pattern that's
  * already in `useActiveCheckins` (line 201). Both sides must opt-in
  * to each other's age:
@@ -502,35 +511,35 @@ export interface NomadInCity {
  * (we can't compute age, so we err on the side of "show them"; the
  * user can still mute / report). Same default as useActiveCheckins.
  *
- * If the viewer has no birth_date or the viewerUserId isn't passed
- * (called from a place without an authed user), the filter is a
- * no-op — all candidates pass through. This keeps the hook safe to
- * call from anywhere without crashing.
+ * If `viewer` is undefined / null, the filter is a no-op — all
+ * candidates pass through. Hook stays safe to call from anywhere.
  */
-export function useNomadsInCity(city: string, viewerUserId?: string | null) {
+export interface ViewerForFilter {
+  /** Viewer's birth_date — used to compute their age for the
+   *  "candidate accepts viewer's age" check. */
+  birthDate: string | null;
+  /** Viewer's preferred minimum age of others. Default 18. */
+  ageMin: number;
+  /** Viewer's preferred maximum age of others. Default 100. */
+  ageMax: number;
+}
+
+export function useNomadsInCity(city: string, viewer?: ViewerForFilter | null) {
   const [nomads, setNomads] = useState<NomadInCity[]>([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const fetch = async () => {
-    // 1. Resolve viewer's age + age preference once. Only matters if
-    //    we have a logged-in viewer; otherwise skip the whole filter.
-    let viewerAge: number | null = null;
-    let viewerAgeMin = 18;
-    let viewerAgeMax = 100;
-    if (viewerUserId) {
-      const { data: viewerProfile } = await supabase
-        .from('app_profiles')
-        .select('birth_date, age_min, age_max')
-        .eq('user_id', viewerUserId)
-        .maybeSingle();
-      viewerAge = calcAge(viewerProfile?.birth_date);
-      viewerAgeMin = viewerProfile?.age_min ?? 18;
-      viewerAgeMax = viewerProfile?.age_max ?? 100;
-    }
+  // Stabilise the viewer object across re-renders that pass a new
+  // reference but identical values, so deps comparison works.
+  const viewerBirth = viewer?.birthDate ?? null;
+  const viewerMin = viewer?.ageMin ?? 18;
+  const viewerMax = viewer?.ageMax ?? 100;
 
-    // 2. Fetch candidates — birth_date / age_min / age_max are now in
-    //    the SELECT so we can apply the bidirectional filter below.
+  const fetch = async () => {
+    const viewerAge = calcAge(viewerBirth);
+
+    // Fetch candidates — birth_date / age_min / age_max are now in
+    // the SELECT so we can apply the bidirectional filter below.
     const { data, error } = await supabase
       .from('app_profiles')
       .select('user_id, full_name, display_name, username, avatar_url, bio, job_type, current_city, home_country, show_on_map, birth_date, age_min, age_max')
@@ -543,10 +552,10 @@ export function useNomadsInCity(city: string, viewerUserId?: string | null) {
       return;
     }
 
-    // 3. Apply bidirectional age filter only if we know the viewer's
-    //    age. Same logic as useActiveCheckins so the two surfaces
-    //    stay consistent — a person hidden from the map list is also
-    //    hidden from the city nomads list.
+    // Apply bidirectional age filter only if we know the viewer's
+    // age. Same logic as useActiveCheckins so the two surfaces
+    // stay consistent — a person hidden from the map list is also
+    // hidden from the city nomads list.
     const filtered = viewerAge != null
       ? data.filter((p: any) => {
           // A. Viewer's age must be within the candidate's [age_min, age_max].
@@ -558,7 +567,7 @@ export function useNomadsInCity(city: string, viewerUserId?: string | null) {
           //    same default as useActiveCheckins.
           const theirAge = calcAge(p.birth_date);
           if (theirAge != null) {
-            if (theirAge < viewerAgeMin || theirAge > viewerAgeMax) return false;
+            if (theirAge < viewerMin || theirAge > viewerMax) return false;
           }
           return true;
         })
@@ -569,7 +578,11 @@ export function useNomadsInCity(city: string, viewerUserId?: string | null) {
     setLoading(false);
   };
 
-  useEffect(() => { fetch(); }, [city, viewerUserId]);
+  // Re-fetch whenever the city OR the viewer's age preference changes.
+  // The age preference reactivity is the second-stage fix — without
+  // these three deps a Settings change to age_max wouldn't update
+  // the visible nomad list until next mount (Barak report 2026-04-27).
+  useEffect(() => { fetch(); }, [city, viewerBirth, viewerMin, viewerMax]);
 
   return { nomads, count, loading, refetch: fetch };
 }

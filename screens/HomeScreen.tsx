@@ -1147,12 +1147,8 @@ export default function HomeScreen() {
     Keyboard.dismiss();
   }, []);
 
-  // Nomads in city (profiles with current_city) — separate from map pins
-  // Pass userId so the hook can apply the viewer's age filter
-  // (bidirectional: viewer's age in candidate's range AND vice versa).
-  // Without userId the hook returns ALL profiles in the city
-  // regardless of age preference — pre-2026-04-27 behavior.
-  const { nomads: nomadsInCity, count: nomadsCount, loading: nomadsLoading } = useNomadsInCity(currentCity.name, userId);
+  // useNomadsInCity moved further down — it now depends on myProfile
+  // for the viewer's age range, and myProfile is declared below.
 
   // Real data from Supabase
   const { checkins, count: activeCount, loading: checkinsLoading, refetch: refetchCheckins, addOptimistic } = useActiveCheckins(currentCity.name, userId);
@@ -1306,8 +1302,26 @@ export default function HomeScreen() {
   const myName = myProfile?.display_name || myProfile?.full_name || myProfile?.username || 'You';
   const myInitials = myName.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase();
   const { toggle: toggleFollow, isFollowing } = useFollow(userId);
+
+  // ─── Nomads-in-city — bidirectional age filter, reactive to Settings ───
+  // Pass viewer details derived from myProfile so when the user changes
+  // age_min/age_max in Settings and comes back, fetchProfile updates
+  // myProfile, the deps below change, and useNomadsInCity re-fetches
+  // immediately. Owner report 2026-04-27: "הסרגל לא מגיב מיידי /
+  // המערכת דורשת ריפרש".
+  const viewerForFilter = myProfile ? {
+    birthDate: myProfile.birth_date ?? null,
+    ageMin: myProfile.age_min ?? 18,
+    ageMax: myProfile.age_max ?? 100,
+  } : null;
+  const { nomads: nomadsInCity, count: nomadsCount, loading: nomadsLoading, refetch: refetchNomads } = useNomadsInCity(currentCity.name, viewerForFilter);
+
   /* ── Refetch profile every time screen gains focus (catches Settings changes) ── */
-  useFocusEffect(useCallback(() => { refetchProfile(); refetchCheckins(); }, [refetchProfile, refetchCheckins]));
+  useFocusEffect(useCallback(() => {
+    refetchProfile();
+    refetchCheckins();
+    refetchNomads(); // also refresh nomad list on focus — covers age changes
+  }, [refetchProfile, refetchCheckins, refetchNomads]));
 
   const isSnoozed = myProfile?.show_on_map === false;
 

@@ -310,6 +310,14 @@ export default function PeopleScreen() {
       .neq('user_id', userId)
       .eq('onboarding_done', true)
       .eq('show_on_map', true)
+      // City scope — owner report 2026-04-27 (later same day): "אלי
+      // הופיע לי בלשונית People כאשר הייתי על רחובות". Pre-fix this
+      // query was global (showed every nomad regardless of city), so
+      // a Tel Aviv profile leaked into a Rehovot viewer's matches.
+      // The "+25 same city" bonus in scoring below was the only city
+      // signal — not strict enough. Now we strictly require the
+      // candidate's profile.current_city to match the viewedCity.
+      .ilike('current_city', currentCity)
       .limit(100)
       .then(({ data }) => {
         if (!data) { setMatchesLoading(false); return; }
