@@ -273,6 +273,83 @@ If a user turns off "Show me on the map" (`show_on_map: false`):
 - `show_on_map` is the SINGLE source of truth for both visibility AND the notification quiet-mode. The old `snooze_mode` column is deprecated and no longer read or written anywhere in the client (Stage 9 of the no-band-aids refactor, April 2026). Do NOT re-introduce reads/writes to `snooze_mode`.
 - Premium exception (future): paid users may get "stealth mode" to watch without being seen
 
+### Incoming Flights — Global Feature (Locked 2026-04-27)
+
+> **Incoming Flights is the ONE feature in the app that is intentionally
+> NOT scoped to the user's GPS / city / country / age preference. It
+> is GLOBAL and STAYS GLOBAL. Every user sees every flight group from
+> every country, period.**
+
+**Owner directive 2026-04-27 (verbatim):**
+
+> "אין בה גילאים ואין לה ג'יפיאס - כל המשתמשים יוכלו לראות אותה -
+> הסיבה היא ליצור שיח בין מדינות / כל אחד יוכל להכנס אליה מכל
+> מקום באשר הוא חול או כל מדינה ויוכל להצטרף לשיחת - ישראל -
+> פורטוגל וכו וכו לא משנה איזו מדינה תהיה בטיסות קרובות"
+
+**Translation:** No age filter, no GPS filter, every user can see it.
+The purpose is to create cross-border conversations. Anyone, anywhere
+in the world, can join any flight group (Israel→Portugal, Israel→
+Thailand, etc.) regardless of where they currently are.
+
+**The contract — locked once and for all:**
+
+The "Incoming Flights" section in `screens/PeopleScreen.tsx` and the
+underlying `useFlightGroups` / `useFlightGroupDetail` hooks in
+`lib/hooks.ts` MUST stay free of:
+
+- Age filtering (`age_min`, `age_max`, `birth_date`)
+- GPS / `current_city` / `home_country` / `viewedCity` filtering
+- ANY scoping to the viewer's identity beyond authentication
+- ANY filtering that hides flight groups from any signed-in user
+
+The current implementations are correct (as of 2026-04-27):
+
+- `useFlightGroups()` — `SELECT * FROM flight_groups WHERE
+  member_count > 0 ORDER BY member_count DESC`. No WHERE clauses
+  on viewer identity. Returns every flight group globally.
+- `useFlightGroupDetail(flightGroupId, userId)` — uses userId only
+  to determine "am I a member of this group", NOT to filter what
+  the user is allowed to see.
+- The Incoming Flights horizontal slider in PeopleScreen reads from
+  `useFlightGroups()` directly, no further filtering on the client.
+
+**Forbidden patterns:**
+
+- ❌ Adding `.eq('country', myProfile.home_country)` or similar to
+  `useFlightGroups`. This is the most tempting "improvement" — DON'T.
+- ❌ Adding age filter to flight_members (the join modal on a flight
+  group). A 60-year-old in Israel must be able to see and join a
+  flight group of 25-year-olds going to Portugal. Cross-border, no
+  bidirectional age check.
+- ❌ Adding `.eq('current_city', currentCity)` to filter flight
+  groups by viewer's city. Wrong concept.
+- ❌ Hiding flight groups from users in countries other than the
+  destination country. Wrong — Israelis abroad still want to see
+  who's flying to Israel from anywhere.
+
+**When you add a new feature near the flights surface:**
+
+1. Re-read this section before touching `useFlightGroups`,
+   `useFlightGroupDetail`, `joinFlightGroup`, `flight_groups` table,
+   or anything in `screens/FlightDetailScreen.tsx`.
+2. If the feature you're adding requires viewer-context filtering
+   (age / city / country / etc.) — don't apply it here. Apply it
+   in a different surface that's location-bound (Map, People DNA
+   matches), not Incoming Flights.
+3. The flights data model is intentionally simple. Keep it simple.
+
+**Why this rule exists:**
+
+The rest of the app is heavily GPS-bound — "see nomads near you",
+"see activities in your city". Flights is the deliberate counter-
+balance: a place where someone in Tel Aviv discovers a Brazilian
+who's also flying to Lisbon next month, and they make plans before
+either lands. If we accidentally scope flights to the viewer's
+city or age, we destroy the only cross-pollination feature in the
+product. Every cross-cutting fix that touches People / city
+filtering has a 1-line risk of breaking this — hence the lock.
+
 ## Architecture Notes
 - Expo SDK 54, React Native, TypeScript
 - Supabase backend (project: apzpxnkmuhcwmvmgisms)
