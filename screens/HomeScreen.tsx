@@ -385,40 +385,41 @@ function NomadMarker({
   const isHot = heat > 0 && !isExpired;
   const ringSize = s(33);
 
-  // ─── tracksViewChanges contract — locked 2026-04-27 (Barak screenshot 09:21) ───
+  // tracksViewChanges starts TRUE so the first render captures the
+  // fully-painted subtree (avatar, ring, badge, name). We flip to
+  // FALSE only AFTER the layout has had time to apply borderRadius
+  // and the avatar image (if any) has loaded.
   //
-  // ALWAYS true. Permanently. Period.
+  // Pre-fix: the flip timeout was 700ms. On Samsung One UI the
+  // bitmap snapshot was firing before borderRadius was computed,
+  // leaving the avatar circle rendered as a SQUARE (with a colored
+  // border, no clipping). Tester report 2026-04-27: "האווטאר אצלו
+  // עכשיו מרובע עם מסגרת / אין לו קשר לעיצוב האווטאר שלנו".
   //
-  // Background: prior versions tried to flip this to false after layout
-  // settled, to avoid native re-snapshot churn on map pans. Across
-  // multiple devices (Barak's, Eli's Samsung) the markers FELL BACK to
-  // default RN colored-teardrop pins because the bitmap snapshot fired
-  // before the custom view subtree was usable, and react-native-maps's
-  // native side gave up and rendered its built-in fallback. The "4
-  // nomads here" pill said 4 but only default pins showed.
-  //
-  // The reliability cost of `true` (a re-snapshot when the React tree
-  // re-renders for that marker) is invisible at our scale: at most
-  // ~10 nomads on screen, each marker only re-renders when its own
-  // checkin data changes (memoized list elsewhere). Pin "jitter" on
-  // pan is owned by the visibleNomadIds equality-guard in
-  // onRegionChangeComplete (CLAUDE.md "Map Pin Flow Perf Rule"), NOT
-  // by tracksViewChanges. They were two different bugs collapsed into
-  // one decision.
-  //
-  // Do NOT re-introduce the timeout-based flip. The marker bitmap
-  // snapshot path on Android is too unreliable to rely on it firing
-  // exactly when our content is ready. true=always-snapshot is the
-  // contract.
-  const tracksChanges = true;
+  // Two-pronged fix:
+  //   (a) Wait until the marker View reports onLayout (means Yoga
+  //       has computed dimensions AND applied borderRadius styles).
+  //   (b) For markers with an avatar image, ALSO wait for the
+  //       Image's onLoad/onError event before flipping — otherwise
+  //       the snapshot captures a transparent square placeholder.
+  //   (c) Belt-and-braces 1.8s timeout fallback so we never get
+  //       stuck retracking forever even if onLayout/onLoad
+  //       silently never fire.
+  const [layoutReady, setLayoutReady] = useState(false);
+  const [imageReady, setImageReady] = useState(!avatarUrl); // no image to wait for
+  const tracksChanges = !(layoutReady && imageReady);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setLayoutReady(true);
+      setImageReady(true);
+    }, 1800);
+    return () => clearTimeout(t);
+  }, [c.id]);
 
   return (
     <Marker
       key={c.id}
       tracksViewChanges={tracksChanges}
-      // flat=true so the marker doesn't tilt with map camera bearing —
-      // tilted markers on Android sometimes render as a default pin.
-      flat
       coordinate={{
         latitude: c.latitude ? c.latitude : scatter(cityLat, hashCode(c.id)),
         longitude: c.longitude ? c.longitude : scatter(cityLng, hashCode(c.id + '_lng')),
@@ -426,31 +427,27 @@ function NomadMarker({
       anchor={{ x: 0.5, y: 1 }}
       onPress={() => onPinTap(c)}
     >
-      {/* Unified bubble — one cohesive container.
-       *
-       * collapsable={false} prevents Android view-flattening from
-       * dropping this View when its only purpose is layout; without
-       * it, react-native-maps occasionally captures an empty subtree
-       * and falls back to its default colored teardrop pin (Barak
-       * screenshot 2026-04-27 09:21: "4 nomads here" pill but only
-       * default pins visible).
-       *
-       * NO negative offsets anywhere in the subtree — Android marker
-       * bitmap clips at the root view's measured bounds, and any
-       * negative top/right on a child can either get cropped (best
-       * case) or invalidate the whole snapshot (worst case). Emoji
-       * badge sits INSIDE the avatar circle bounds via positive
-       * top/right inside an absolutely-positioned wrapper. */}
+      {/* Unified bubble — one cohesive container, NOT three stacked
+          floating pieces. Tester report 2026-04-27: "זה ריבוע
+          שמעליו יש אייקון עגול / זה תקלה". The previous design
+          had avatar circle + name pill + timer pill as three
+          separate floating shapes; from a distance they read as
+          a "square with a round icon on top" instead of one pin.
+          New design: a single rounded white card with a colored
+          border (green = status, red = timer), avatar circle
+          centered at the top, name underneath, timer countdown
+          underneath that — ALL inside one container with one
+          shadow. Looks like one bubble, behaves like one bubble. */}
       <View
-        collapsable={false}
         style={[
           st.markerBubble,
           { borderColor },
           isExpired && { opacity: 0.5 },
         ]}
+        onLayout={() => setLayoutReady(true)}
       >
         {isHot && <PulseRing heat={heat} size={s(40)} />}
-        <View collapsable={false} style={st.markerAvatarWrap}>
+        <View>
           <View style={[st.markerAvatarCircle, { backgroundColor: catStyle.color }]}>
             {avatarUrl ? (
               <CachedImage
@@ -3051,27 +3048,14 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     paddingHorizontal: s(4),
     paddingVertical: s(3),
     alignItems: 'center',
-    borderWidth: 2,
-    // Fixed width — auto-sizing min/max creates layout race conditions
-    // that break Android marker bitmap snapshots. (Barak screenshot
-    // 2026-04-27 09:21: bubbles fell back to default RN pins.)
-    width: s(36),
+    borderWidth: 2.5,
+    minWidth: s(28),
+    maxWidth: s(42),
     shadowColor: '#000',
     shadowOffset: { width: 0, height: s(2) },
     shadowOpacity: 0.18,
     shadowRadius: s(4),
     elevation: 5,
-  },
-  /* Wrapper that contains the avatar circle + emoji badge. Padded
-   * on top/right to make room for the badge to sit at top-right
-   * INSIDE the wrapper bounds — no negative offsets. Negative
-   * positions would extend outside the marker bitmap snapshot's
-   * measured bounds and on Android cause the whole marker to fall
-   * back to react-native-maps's default colored pin. */
-  markerAvatarWrap: {
-    paddingTop: MARKER_EMOJI_OFFSET,
-    paddingRight: MARKER_EMOJI_OFFSET,
-    alignSelf: 'center',
   },
   markerAvatarCircle: {
     width: MARKER_AVATAR_SIZE,
@@ -3095,15 +3079,12 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     fontSize: s(7),
     fontWeight: FW.bold as any,
   },
-  /* Emoji badge — POSITIVE position inside markerAvatarWrap.
-   * Sits at the wrapper's top-right (which, because the avatar
-   * circle is offset down/left by the wrapper's padding, lands
-   * visually at the avatar's top-right corner — the same look
-   * as the negative-offset version, but bitmap-safe on Android.) */
+  /* Emoji badge sits on the avatar's top-right corner — single
+   * visual cue for the activity category, INSIDE the bubble. */
   markerEmojiBadge: {
     position: 'absolute',
-    top: 0,
-    right: 0,
+    top: -MARKER_EMOJI_OFFSET,
+    right: -MARKER_EMOJI_OFFSET,
     width: MARKER_EMOJI_SIZE,
     height: MARKER_EMOJI_SIZE,
     borderRadius: MARKER_EMOJI_SIZE / 2, // ← deterministic 1:2 ratio (locked)

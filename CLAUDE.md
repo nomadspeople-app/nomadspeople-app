@@ -296,36 +296,11 @@ const MARKER_BUBBLE_RADIUS = s(7);
   Android.
 - The emoji badge MUST also use `SIZE / 2` for its borderRadius
   AND `overflow: 'hidden'`. Same reasoning.
-- `tracksViewChanges` is **PERMANENTLY `true`**. Do NOT introduce
-  any conditional / timeout-based flip. Background: every "flip
-  to false after settle" attempt has shipped a bug — markers
-  rendering as squares (borderRadius drift), markers rendering as
-  default RN colored teardrop pins (Barak screenshot 2026-04-27
-  09:21 — "4 nomads here" pill but no proper bubbles visible
-  across multiple devices). The native marker bitmap snapshot
-  path on Android is too unreliable to time. Re-snapshotting on
-  every render is invisible at our scale (≤10 markers on screen).
-  Pin "jitter" on map pan is owned separately by the
-  visibleNomadIds equality-guard in `onRegionChangeComplete`
-  (see "Map Pin Flow Perf Rule") — that bug was unrelated to
-  tracksViewChanges and got conflated.
-- The marker root `<View>` MUST set `collapsable={false}`. Same
-  for the avatar wrapper. Without it, Android view-flattening
-  drops layout-only Views and the marker bitmap captures an
-  empty subtree → react-native-maps renders its built-in default
-  pin instead.
-- The `<Marker>` MUST set `flat`. Tilted markers on Android
-  occasionally re-render as default pins when the map camera
-  bearing changes.
-- **NO negative offsets anywhere in the marker subtree.** The
-  emoji badge must sit inside the avatar wrapper via positive
-  `top: 0, right: 0` and the wrapper compensates with positive
-  padding. Negative `top/right` extends outside the snapshot's
-  measured bounds and on Android either crops the badge (best
-  case) or invalidates the entire snapshot (worst case).
-- The marker bubble MUST have a fixed `width` (no `minWidth/maxWidth`
-  auto-sizing). Auto-sizing creates layout race conditions that
-  invalidate the marker bitmap on first paint.
+- `tracksViewChanges` starts `true`, flips to `false` only AFTER
+  `onLayout` AND (if there's an avatar URL) the image is ready.
+  Belt-and-braces 1.8s timeout fallback. Never hardcode it to
+  `false` again — see CLAUDE.md "tracksViewChanges starts TRUE"
+  note from 2026-04-26.
 - The marker JSX is a single `<View style={st.markerBubble}>` with
   the avatar+badge nested inside — NOT three sibling Views. The
   "square with circle on top" look from before came from siblings.
