@@ -621,9 +621,17 @@ export default function PeopleScreen() {
       {/* ── Divider ── */}
       <View style={st.divider} />
 
-      {/* ═══ SECTION 3 — MY MATCH PEOPLE ═══ */}
+      {/* ═══ SECTION 3 — MEETUP PEOPLE ═══
+       *
+       * Renamed from "My Match People" + percentage badge removed
+       * 2026-04-27 per owner directive: the % score was opaque to
+       * users (computed client-side from interest/looking_for/
+       * job_type overlaps with arbitrary weights). Showing "73%"
+       * without explanation invited "where does this come from?"
+       * confusion. The internal score still drives the SORT order
+       * (best matches first) but is no longer surfaced to the user. */}
       <View style={[st.section, { height: SECTION_H }]}>
-        <SectionTitle icon="heart" color="#EC4899" title="my match people" count={matches.length} />
+        <SectionTitle icon="heart" color="#EC4899" title="meetup people" count={matches.length} />
         {matchesLoading ? (
           <View style={st.loadingRow}><ActivityIndicator color="#EC4899" /></View>
         ) : matches.length === 0 ? (
@@ -644,10 +652,11 @@ export default function PeopleScreen() {
                 activeOpacity={0.8}
                 onPress={() => goProfile(item.user_id, item.full_name)}
               >
-                {/* Match score */}
-                <View style={st.matchScoreBadge}>
-                  <Text style={st.matchScoreText}>{Math.min(item.matchScore, 99)}%</Text>
-                </View>
+                {/* Match score badge removed 2026-04-27 — the %
+                    was a client-side fabrication with arbitrary
+                    weights (interest +15, looking_for +20, etc.)
+                    that confused users. Score still drives sort
+                    order in `scored.sort` above — just hidden. */}
 
                 {/* Avatar */}
                 <View style={[st.matchAvatar, { backgroundColor: avatarColor(item.user_id) }]}>
