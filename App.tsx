@@ -1,9 +1,35 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, createRef } from 'react';
-import { View, ActivityIndicator, Image, StyleSheet } from 'react-native';
-import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View, ActivityIndicator, Image, StyleSheet, TouchableOpacity, I18nManager } from 'react-native';
+
+/* One-time RTL reset (2026-04-27).
+ *
+ * Tester directive: the app must NOT mirror its layout when the
+ * user picks Hebrew. Only the text content flips (RN handles bidi
+ * automatically inside Text). The product owner explicitly does
+ * not want the entire UI inverted.
+ *
+ * Users whose previous app version set I18nManager.forceRTL(true)
+ * (when they picked Hebrew) carry that NATIVE setting forward
+ * across OTAs — clearing it requires an explicit reset call.
+ * This top-level statement runs once when the JS bundle loads,
+ * BEFORE any component renders. The first time a user with the
+ * stuck-RTL state opens the new bundle, this fires forceRTL(false);
+ * the current session still renders with the old NATIVE state
+ * (forceRTL needs app reload), but on the NEXT launch the layout
+ * is back to LTR for everyone, regardless of locale.
+ *
+ * After v15 (or after every existing tester has reloaded once),
+ * this side-effect is a no-op. Safe to leave in. */
+if (I18nManager.isRTL) {
+  I18nManager.allowRTL(false);
+  I18nManager.forceRTL(false);
+}
+import { NavigationContainer, NavigationContainerRef, useNavigation } from '@react-navigation/native';
+import { createNativeStackNavigator, type NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
+import { useI18n } from './lib/i18n';
 import NomadIcon from './components/NomadIcon';
 import type { NomadIconName } from './components/NomadIcon';
 import {
@@ -100,6 +126,112 @@ const TAB_ICONS: Record<string, NomadIconName> = {
  *     hooks that surfaced it are gone (switchDevUser context value
  *     is undefined → conditional render in SettingsScreen drops it). */
 
+/**
+ * Floating Plus button rendered as an overlay above the tab bar.
+ *
+ * Lives inside <MainTabs/>, as a sibling of <Tab.Navigator/>. Sits
+ * absolute-positioned at the bottom center, half-overlapping the
+ * tab bar's top edge — Instagram / Spotify / X pattern. White
+ * surface, black border, black plus icon — intentionally distinct
+ * from tab icons so the eye reads it as the primary action across
+ * every tab.
+ *
+ * The FAB disappears automatically when the user is inside Chat,
+ * GroupInfo, Settings, etc. (those are Stack screens above
+ * MainTabs). Rendering inside MainTabs gives that for free —
+ * React Navigation hides the whole stack frame when the active
+ * stack screen is something else.
+ *
+ * NAVIGATION MODEL — nested navigate:
+ *   useNavigation() inside this component returns the STACK
+ *   navigator, because CreateFab is a sibling of <Tab.Navigator/>,
+ *   not a child. The Stack has no screen named 'Home' — only
+ *   'MainTabs'. Calling `navigate('Home', ...)` on the Stack
+ *   raises "was not handled by any navigator". The right form is
+ *   the nested payload documented at
+ *   https://reactnavigation.org/docs/nesting-navigators#navigating-to-a-screen-in-a-nested-navigator —
+ *   navigate to the parent screen ('MainTabs') and pass
+ *   { screen: 'Home', params: {...} } so the Tab navigator
+ *   receives it.
+ *
+ * We use Date.now() as a nonce so repeat taps re-fire useEffect
+ * even when the user is already on the Home tab (HomeScreen
+ * clears the param right after consuming it).
+ *
+ * pointerEvents='box-none' on the wrapper lets touches pass
+ * through the surrounding transparent area to the underlying tab
+ * bar buttons.
+ */
+function CreateFab() {
+  const insets = useSafeAreaInsets();
+  const { t } = useI18n();
+  // Typed against the Stack navigator on purpose — useNavigation
+  // here returns the Stack (CreateFab is a sibling of the Tab
+  // navigator, not a child). With the Stack typing, attempting to
+  // navigate('Home', ...) becomes a compile-time error because
+  // 'Home' isn't a stack screen — forcing the correct nested form.
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+
+  // Tab bar visible height (matches tabBarStyle below): s(30) + insets.bottom.
+  // Center the FAB on the TOP edge of the tab bar so it's half above /
+  // half over. Button size s(28); we want its vertical center at
+  // (tab bar top edge) → bottom = (s(30) + insets.bottom) - s(14).
+  const tabBarHeight = s(30) + insets.bottom;
+  const buttonSize = s(28);
+  const bottomOffset = tabBarHeight - buttonSize / 2;
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: bottomOffset,
+        alignItems: 'center',
+        zIndex: 50,
+      }}
+    >
+      <TouchableOpacity
+        accessibilityLabel={t('home.createActivity')}
+        accessibilityRole="button"
+        activeOpacity={0.85}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+          // Nested form — see comment above. Navigates to the
+          // 'MainTabs' Stack screen with an inner 'screen: Home'
+          // payload so the Tab navigator switches to Home and
+          // delivers the openCreate nonce as route.params.
+          navigation.navigate('MainTabs', {
+            screen: 'Home',
+            params: { openCreate: Date.now() },
+          });
+        }}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        style={{
+          width: buttonSize,
+          height: buttonSize,
+          borderRadius: buttonSize / 2,
+          backgroundColor: '#FFFFFF',
+          borderWidth: 1.5,
+          borderColor: '#1A1A1A',
+          alignItems: 'center',
+          justifyContent: 'center',
+          // iOS shadow
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.18,
+          shadowRadius: 6,
+          // Android shadow
+          elevation: 6,
+        }}
+      >
+        <NomadIcon name="plus" size={s(12)} color="#1A1A1A" strokeWidth={2.4} />
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 function MainTabs() {
   const { colors } = useContext(ThemeContext);
   const { total: unreadTotal } = useContext(UnreadContext);
@@ -115,60 +247,66 @@ function MainTabs() {
   }, [userId]);
 
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarIcon: ({ color, focused }) => {
-          if (route.name === 'Profile') {
-            return avatarUrl ? (
-              <Image
-                source={{ uri: avatarUrl }}
-                style={[
-                  tabStyles.avatar,
-                  { borderColor: focused ? colors.primary : 'transparent' },
-                ]}
-              />
-            ) : (
-              <NomadIcon name="user" size={s(9)} color={color} strokeWidth={1.8} />
-            );
-          }
-          return <NomadIcon name={TAB_ICONS[route.name]} size={s(9)} color={color} strokeWidth={1.8} />;
-        },
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: '#1A1A1A',
-        tabBarStyle: {
-          backgroundColor: colors.tabBar,
-          borderTopColor: colors.border,
-          height: s(30) + insets.bottom,
-          paddingBottom: insets.bottom || s(4),
-        },
-        tabBarLabelStyle: {
-          fontSize: s(5),
-          fontWeight: FW.medium,
-          marginBottom: s(1),
-        },
-        tabBarIconStyle: {
-          marginTop: s(2),
-        },
-      })}
-    >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="People" component={PeopleScreen} />
-      <Tab.Screen name="Pulse" component={PulseScreen} options={{
-        tabBarLabel: 'Messages',
-        tabBarBadge: unreadTotal > 0 ? unreadTotal : undefined,
-        tabBarBadgeStyle: {
-          backgroundColor: '#1A1A2E',
-          fontSize: s(5),
-          fontWeight: FW.bold as any,
-          minWidth: s(9),
-          height: s(9),
-          lineHeight: s(9),
-          borderRadius: s(4.5),
-        },
-      }} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
-    </Tab.Navigator>
+    <View style={{ flex: 1 }}>
+      <Tab.Navigator
+        screenOptions={({ route }) => ({
+          headerShown: false,
+          tabBarIcon: ({ color, focused }) => {
+            if (route.name === 'Profile') {
+              return avatarUrl ? (
+                <Image
+                  source={{ uri: avatarUrl }}
+                  style={[
+                    tabStyles.avatar,
+                    { borderColor: focused ? colors.primary : 'transparent' },
+                  ]}
+                />
+              ) : (
+                <NomadIcon name="user" size={s(9)} color={color} strokeWidth={1.8} />
+              );
+            }
+            return <NomadIcon name={TAB_ICONS[route.name]} size={s(9)} color={color} strokeWidth={1.8} />;
+          },
+          tabBarActiveTintColor: colors.primary,
+          tabBarInactiveTintColor: '#1A1A1A',
+          tabBarStyle: {
+            backgroundColor: colors.tabBar,
+            borderTopColor: colors.border,
+            height: s(30) + insets.bottom,
+            paddingBottom: insets.bottom || s(4),
+          },
+          tabBarLabelStyle: {
+            fontSize: s(5),
+            fontWeight: FW.medium,
+            marginBottom: s(1),
+          },
+          tabBarIconStyle: {
+            marginTop: s(2),
+          },
+        })}
+      >
+        <Tab.Screen name="Home" component={HomeScreen} />
+        <Tab.Screen name="People" component={PeopleScreen} />
+        <Tab.Screen name="Pulse" component={PulseScreen} options={{
+          tabBarLabel: 'Messages',
+          tabBarBadge: unreadTotal > 0 ? unreadTotal : undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: '#1A1A2E',
+            fontSize: s(5),
+            fontWeight: FW.bold as any,
+            minWidth: s(9),
+            height: s(9),
+            lineHeight: s(9),
+            borderRadius: s(4.5),
+          },
+        }} />
+        <Tab.Screen name="Profile" component={ProfileScreen} />
+      </Tab.Navigator>
+
+      {/* Floating create-activity button — visible across every tab,
+          half-overlapping the tab bar's top edge. */}
+      <CreateFab />
+    </View>
   );
 }
 

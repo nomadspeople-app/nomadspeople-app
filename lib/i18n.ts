@@ -55,12 +55,36 @@ export function isRTL(locale: Locale): boolean {
   return LOCALE_META[locale]?.rtl ?? false;
 }
 
-export function applyRTL(locale: Locale) {
-  const rtl = isRTL(locale);
-  if (I18nManager.isRTL !== rtl) {
-    I18nManager.forceRTL(rtl);
-    I18nManager.allowRTL(rtl);
-  }
+export function applyRTL(_locale: Locale) {
+  /* DELIBERATELY DISABLED — 2026-04-27.
+   *
+   * Tester directive: "זה שהוא החליף את השפה לעברית - זה לא אומר
+   * שכל המערכת צריכה להיות מצד ימין / זה תקלה מטורפת / המערכת
+   * צריכה להיות אותו הדבר / הפרופיל תמיד צריך להיות מצד ימין /
+   * המערכת עצמה לא צריכה לשנות צד / רק השפה."
+   *
+   * We do NOT mirror the entire layout when the locale is Hebrew /
+   * Arabic. Only the TEXT content within strings flips direction
+   * (React Native's Text renderer handles bidi automatically — a
+   * Hebrew word inside an English sentence aligns RTL, but the
+   * Text element itself stays in its English-laid-out container).
+   *
+   * Concrete: the profile tab stays bottom-right, the back button
+   * stays top-left, lists scroll left-to-right — exactly like the
+   * English layout — even when the user picks Hebrew. They get
+   * Hebrew COPY but the same SHAPE of app.
+   *
+   * Force-flipping the entire layout via I18nManager.forceRTL is
+   * a Native setting that requires app restart to take effect
+   * AND inverts every Stack/Flex direction across the app, which
+   * the user explicitly does not want for nomadspeople.
+   *
+   * If we ever change our mind: re-enable forceRTL + allowRTL,
+   * audit every screen for hardcoded `flexDirection: 'row'`
+   * (which auto-flips to row-reverse under RTL), and ship a
+   * NATIVE rebuild so existing users pick up the change.
+   */
+  // No-op. Locale text changes still happen via translate().
 }
 
 /* ── React Context ── */
