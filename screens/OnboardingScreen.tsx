@@ -395,8 +395,13 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
       case 4: return gender !== null;
       case 5: return true; // age range always has defaults
       case 6: return nomadType !== null;
-      case 7: return true;
-      case 8: return true;
+      // Owner directive 2026-04-27: country + current city are MANDATORY.
+      // Without them the map can't place the user anywhere and they
+      // silently become invisible (Yuval case 2026-04-27 morning —
+      // signed up, skipped these two steps, was never visible to any
+      // tester). The "skip" CTA on these steps is now gone.
+      case 7: return !!homeCountry;
+      case 8: return !!currentCity;
       case 9: return selectedInterests.length >= 1;
       case 10: return lookingFor.length >= 1;
       case 11: return true; // permissions
@@ -409,8 +414,11 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
     if (step === 0) return t('setup.getStarted');
     if (step === 11) return t('setup.next'); // permissions
     if (step === 12) return tripCountry && tripArrivalDate ? 'add trip' : t('setup.skip');
-    if (step === 7) return homeCountry ? t('setup.next') : t('setup.skip');
-    if (step === 8) return currentCity ? t('setup.next') : t('setup.skip');
+    // Steps 7 (home country) and 8 (current city) are mandatory per
+    // owner directive 2026-04-27 — no longer skippable. CTA always
+    // says "next", and canProceed gates the button until selection.
+    if (step === 7) return t('setup.next');
+    if (step === 8) return t('setup.next');
     return t('setup.next');
   };
 
