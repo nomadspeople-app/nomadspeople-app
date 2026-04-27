@@ -368,14 +368,14 @@ function NomadMarker({
   //   (c) Belt-and-braces 1.8s timeout fallback so we never get
   //       stuck retracking forever even if onLayout/onLoad
   //       silently never fire.
-  const [layoutReady, setLayoutReady] = useState(false);
-  const [imageReady, setImageReady] = useState(!avatarUrl); // no image to wait for
-  const tracksChanges = !(layoutReady && imageReady);
+  // Restored to the simple 700ms single-state pattern from before
+  // 2026-04-27 — the 1.8s + dual-state version (commit 0c4ad31) kept
+  // tracksViewChanges=true for almost 2 seconds, causing the marker
+  // to re-snapshot on every parent re-render during that window =
+  // flickering ("העיגולים מרצדים" — Barak 2026-04-27).
+  const [tracksChanges, setTracksChanges] = useState(true);
   useEffect(() => {
-    const t = setTimeout(() => {
-      setLayoutReady(true);
-      setImageReady(true);
-    }, 1800);
+    const t = setTimeout(() => setTracksChanges(false), 700);
     return () => clearTimeout(t);
   }, [c.id]);
 
