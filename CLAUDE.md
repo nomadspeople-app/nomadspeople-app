@@ -383,6 +383,74 @@ Rules:
 - If a new feature needs location picking, extend pickMode —
   do NOT add a new MapView instance anywhere.
 
+### No Negative Offsets in Marker Subtree (Locked 2026-04-27)
+
+> **NEVER use a negative `top`, `right`, `bottom`, or `left` value
+> on any element inside a `<Marker>` subtree. Period.**
+
+#### What this rule prevents
+
+Android marker bitmap snapshot (the path that turns a custom React
+view into a native `Marker`) uses the parent View's measured bounds.
+Any pixel positioned outside those bounds via a negative offset:
+- On Pixel / most Xiaomi → cropped silently (you don't see the
+  overhanging part).
+- On Samsung One UI → snapshot path partially fails. The marker
+  renders as a half-bitmap — random fragments of the intended
+  visual. Tester reports show this as a "cut" or "broken" bubble.
+- On Galaxy A series with low-RAM Android → snapshot returns null,
+  react-native-maps falls back to its built-in default colored pin.
+
+The same JSX produces three different visuals depending on device.
+There is no way to "test it on my Galaxy and call it done" — every
+Samsung sub-model is its own bitmap implementation.
+
+#### Concrete cases that already shipped this bug
+
+- 2026-04-27 morning, Eli (Samsung One UI X): emoji badge had
+  `top: -s(3.5), right: -s(3.5)`. Bubble rendered as a square with
+  the colored ring visible only on the bottom-left. Tester quote:
+  "האווטאר אצלו עכשיו מרובע עם מסגרת".
+- 2026-04-27 afternoon, Eli (after a partial revert): same emoji
+  badge, same negative offsets. Bubble rendered as a half-circle red
+  curve with a dark patch on the right. Tester screenshot shows
+  ~40% of the intended pixels.
+- The exact same bubble at the same moment on Barak's different
+  Samsung model: rendered correctly.
+
+#### The rule
+
+Inside `screens/HomeScreen.tsx` `NomadMarker` (and any future custom
+marker view):
+
+- `top`, `right`, `bottom`, `left` MUST be `>= 0`.
+- If a child needs to visually overhang its parent (e.g., emoji
+  badge in the top-right corner of an avatar circle), expand the
+  parent with positive padding to make room. The badge then sits at
+  `top: 0, right: 0` inside the padded parent, all pixels within
+  bounds, visually identical.
+- `transform: [{ translateX/Y: ... }]` with negative values is also
+  forbidden — same root cause, same failure modes.
+- `marginTop`, `marginRight`, etc. with negative values are also
+  forbidden.
+
+#### When you add or move any element inside a Marker
+
+1. Re-read this section before writing any style for a Marker child.
+2. If you find yourself writing `top: -s(...)` or `right: -s(...)`
+   STOP. The visual you want needs a wrapper with padding instead.
+3. Test on at least three Samsung sub-models if possible. If not
+   possible, assume the worst-case (One UI snapshot failure) and
+   refuse to ship overhanging pixels.
+
+#### Why we tolerate one-time visual shifts to enforce this
+
+A 3-pixel inward shift on the emoji badge looks *slightly* different
+from the original "overhanging" design. Compared to a Samsung user
+who sees a half-rendered bubble and abandons the app, the trade-off
+is obvious. Visual consistency across every device beats a designer's
+preferred subtle overhang every time.
+
 ### Map Pin Flow Perf Rule — Locked April 2026
 
 `onRegionChangeComplete` on HomeScreen MUST guard its setState
