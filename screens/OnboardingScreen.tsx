@@ -490,9 +490,26 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
               placeholder={t('setup.displayNamePlaceholder')}
               placeholderTextColor="#B0ADA5"
               value={displayName}
-              onChangeText={setDisplayName}
+              onChangeText={(next) => {
+                // English-only display name. Strips out anything
+                // that's not a Latin letter, space, apostrophe,
+                // hyphen, or period (covers names like "O'Brien",
+                // "Mary-Jane", "St. Clair"). This is a product-
+                // owner directive 2026-04-26: "אין עברית כלל" —
+                // the entire app is in Tel Aviv pilot but the
+                // public name field stays English so the social
+                // graph reads consistently regardless of which
+                // locale the viewer is in.
+                const cleaned = next.replace(/[^a-zA-Z\s'\-\.]/g, '');
+                setDisplayName(cleaned);
+              }}
               autoCapitalize="words"
               autoCorrect={false}
+              // ascii-capable nudges the OS to surface the English
+              // keyboard layout first on iOS. Android doesn't honour
+              // this prop, but the input filter above blocks any
+              // non-Latin characters either way.
+              keyboardType="ascii-capable"
             />
             {displayName.trim().length >= 2 && (
               <Text style={st.successText}>{t('setup.greetingHi', { name: displayName.trim() })}</Text>
