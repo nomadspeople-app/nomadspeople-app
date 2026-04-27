@@ -1579,21 +1579,23 @@ export default function HomeScreen() {
   const resolveCheckinCity = async (lat: number | null | undefined, lng: number | null | undefined): Promise<string> => {
     const checkinLat = lat ?? userLat ?? currentCity.lat;
     const checkinLng = lng ?? userLng ?? currentCity.lng;
-    const distFromCurrent = haversineKm(checkinLat, checkinLng, currentCity.lat, currentCity.lng);
-    // If within 50 km of currentCity, keep it — avoids re-resolving
-    // the same city on every publish in the common case.
-    if (distFromCurrent < 50) return currentCity.name;
-    // Drifted far enough to warrant re-resolving. Auto-correct the
-    // map's currentCity when we land on a known CITIES entry (this
-    // stays HomeScreen-specific; cityResolver doesn't mutate state).
-    const nearest = findNearestCity(checkinLat, checkinLng, 50);
-    if (nearest) {
-      console.log(`[City Resolve] GPS is ${distFromCurrent.toFixed(0)}km from ${currentCity.name}, auto-corrected to ${nearest.name}`);
-      setCurrentCity(nearest);
-      return nearest.name;
-    }
-    // Hand off to the shared resolver. It does the exact same nearest-
-    // CITIES-then-Nominatim pipeline; fallback is the current city name.
+    // 2026-04-27: removed the prior `if (distFromCurrent < 50) return
+    // currentCity.name` shortcut. It was a perf optimization that
+    // broke correctness whenever currentCity didn't match the user's
+    // actual GPS city — e.g., Yuval in Rehovot (22 km from Tel Aviv
+    // city center) creating a checkin while currentCity was still
+    // the default 'Tel Aviv'. The shortcut returned 'Tel Aviv' even
+    // though every coordinate of the checkin was in Rehovot, leading
+    // to a Tel Aviv-tagged checkin appearing in Rehovot viewers'
+    // lists (or worse, Tel Aviv viewers seeing a "phantom" Rehovot
+    // pin). Same systemic root cause as the inflated "4 events in
+    // Tel Aviv" count owner reported earlier today.
+    //
+    // Always reverse-geocode now. The cost is one Nominatim call
+    // per checkin creation (~300ms) — negligible vs the price of a
+    // mistagged checkin that confuses every viewer. The shared
+    // resolver internally checks CITIES first, then falls back to
+    // Nominatim, so the perf cost is bounded.
     return resolveCityFromCoordinates(checkinLat, checkinLng, currentCity.name);
   };
 
