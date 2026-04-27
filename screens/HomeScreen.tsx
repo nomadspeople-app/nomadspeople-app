@@ -1148,7 +1148,11 @@ export default function HomeScreen() {
   }, []);
 
   // Nomads in city (profiles with current_city) — separate from map pins
-  const { nomads: nomadsInCity, count: nomadsCount, loading: nomadsLoading } = useNomadsInCity(currentCity.name);
+  // Pass userId so the hook can apply the viewer's age filter
+  // (bidirectional: viewer's age in candidate's range AND vice versa).
+  // Without userId the hook returns ALL profiles in the city
+  // regardless of age preference — pre-2026-04-27 behavior.
+  const { nomads: nomadsInCity, count: nomadsCount, loading: nomadsLoading } = useNomadsInCity(currentCity.name, userId);
 
   // Real data from Supabase
   const { checkins, count: activeCount, loading: checkinsLoading, refetch: refetchCheckins, addOptimistic } = useActiveCheckins(currentCity.name, userId);

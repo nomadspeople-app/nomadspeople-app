@@ -21,7 +21,7 @@ import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { haversineKm, formatDistance } from '../lib/distance';
-import { useActiveCheckins, useFlightGroups, type FlightGroup } from '../lib/hooks';
+import { useActiveCheckins, useFlightGroups, calcAge, type FlightGroup } from '../lib/hooks';
 import { useViewedCity } from '../lib/ViewedCityContext';
 import { AuthContext } from '../App';
 import { supabase } from '../lib/supabase';
@@ -302,7 +302,11 @@ export default function PeopleScreen() {
 
     supabase
       .from('app_profiles')
-      .select('user_id, full_name, display_name, avatar_url, job_type, bio, interests, looking_for, featured_tags, current_city')
+      // birth_date / age_min / age_max needed for the bidirectional age
+      // filter below. Owner report 2026-04-27: Eli (52) and Yuval (62)
+      // appeared in Barak's matches (filter 18-48) because this query
+      // had no age filter at all.
+      .select('user_id, full_name, display_name, avatar_url, job_type, bio, interests, looking_for, featured_tags, current_city, birth_date, age_min, age_max')
       .neq('user_id', userId)
       .eq('onboarding_done', true)
       .eq('show_on_map', true)
@@ -310,7 +314,29 @@ export default function PeopleScreen() {
       .then(({ data }) => {
         if (!data) { setMatchesLoading(false); return; }
 
-        const scored = data.map((p: any) => {
+        // Bidirectional age filter — same pattern as useActiveCheckins
+        // and useNomadsInCity. Both sides must opt-in to each other's
+        // age. If a candidate has no birth_date (NULL — legacy users),
+        // they're INCLUDED (we err on "show"; user can mute / report).
+        const myAge = calcAge(myProfile?.birth_date);
+        const myAgeMin = myProfile?.age_min ?? 18;
+        const myAgeMax = myProfile?.age_max ?? 100;
+        const ageFiltered = myAge != null
+          ? data.filter((p: any) => {
+              // A. Viewer's age must fit candidate's preferred range.
+              const theirMin = p.age_min ?? 18;
+              const theirMax = p.age_max ?? 100;
+              if (myAge! < theirMin || myAge! > theirMax) return false;
+              // B. Candidate's age must fit viewer's preferred range.
+              const theirAge = calcAge(p.birth_date);
+              if (theirAge != null) {
+                if (theirAge < myAgeMin || theirAge > myAgeMax) return false;
+              }
+              return true;
+            })
+          : data;
+
+        const scored = ageFiltered.map((p: any) => {
           let score = 0;
           const reasons: string[] = [];
           const theirInterests: string[] = p.interests || [];

@@ -482,27 +482,94 @@ export interface NomadInCity {
   home_country: string | null;
 }
 
-export function useNomadsInCity(city: string) {
+/**
+ * useNomadsInCity — fetch profiles in a given city, filtered by the
+ * viewer's age preference (and the candidates' age preference too).
+ *
+ * Owner report 2026-04-27: Eli (52) and Yuval (62) appeared in the
+ * "nomads here" list of a viewer (Barak) whose age range was 18-48.
+ * Root cause: this hook had NO age filter at all — it just selected
+ * every profile in the matching city with show_on_map=true.
+ *
+ * Fix: bidirectional age check, mirroring the same pattern that's
+ * already in `useActiveCheckins` (line 201). Both sides must opt-in
+ * to each other's age:
+ *   A. The candidate's age is within the viewer's [age_min, age_max]
+ *   B. The viewer's age is within the candidate's [age_min, age_max]
+ *
+ * If a candidate has no birth_date (NULL — happens for legacy users
+ * who signed up before the field was required), they're INCLUDED
+ * (we can't compute age, so we err on the side of "show them"; the
+ * user can still mute / report). Same default as useActiveCheckins.
+ *
+ * If the viewer has no birth_date or the viewerUserId isn't passed
+ * (called from a place without an authed user), the filter is a
+ * no-op — all candidates pass through. This keeps the hook safe to
+ * call from anywhere without crashing.
+ */
+export function useNomadsInCity(city: string, viewerUserId?: string | null) {
   const [nomads, setNomads] = useState<NomadInCity[]>([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const fetch = async () => {
+    // 1. Resolve viewer's age + age preference once. Only matters if
+    //    we have a logged-in viewer; otherwise skip the whole filter.
+    let viewerAge: number | null = null;
+    let viewerAgeMin = 18;
+    let viewerAgeMax = 100;
+    if (viewerUserId) {
+      const { data: viewerProfile } = await supabase
+        .from('app_profiles')
+        .select('birth_date, age_min, age_max')
+        .eq('user_id', viewerUserId)
+        .maybeSingle();
+      viewerAge = calcAge(viewerProfile?.birth_date);
+      viewerAgeMin = viewerProfile?.age_min ?? 18;
+      viewerAgeMax = viewerProfile?.age_max ?? 100;
+    }
+
+    // 2. Fetch candidates — birth_date / age_min / age_max are now in
+    //    the SELECT so we can apply the bidirectional filter below.
     const { data, error } = await supabase
       .from('app_profiles')
-      .select('user_id, full_name, display_name, username, avatar_url, bio, job_type, current_city, home_country, show_on_map')
+      .select('user_id, full_name, display_name, username, avatar_url, bio, job_type, current_city, home_country, show_on_map, birth_date, age_min, age_max')
       .ilike('current_city', city)
       .eq('show_on_map', true)
       .limit(200);
 
-    if (data) {
-      setNomads(data as NomadInCity[]);
-      setCount(data.length);
+    if (!data) {
+      setLoading(false);
+      return;
     }
+
+    // 3. Apply bidirectional age filter only if we know the viewer's
+    //    age. Same logic as useActiveCheckins so the two surfaces
+    //    stay consistent — a person hidden from the map list is also
+    //    hidden from the city nomads list.
+    const filtered = viewerAge != null
+      ? data.filter((p: any) => {
+          // A. Viewer's age must be within the candidate's [age_min, age_max].
+          const theirMin = p.age_min ?? 18;
+          const theirMax = p.age_max ?? 100;
+          if (viewerAge! < theirMin || viewerAge! > theirMax) return false;
+          // B. Candidate's age must be within the viewer's range. If
+          //    candidate has no birth_date (NULL), let them through —
+          //    same default as useActiveCheckins.
+          const theirAge = calcAge(p.birth_date);
+          if (theirAge != null) {
+            if (theirAge < viewerAgeMin || theirAge > viewerAgeMax) return false;
+          }
+          return true;
+        })
+      : data;
+
+    setNomads(filtered as NomadInCity[]);
+    setCount(filtered.length);
     setLoading(false);
   };
 
-  useEffect(() => { fetch(); }, [city]);
+  useEffect(() => { fetch(); }, [city, viewerUserId]);
 
   return { nomads, count, loading, refetch: fetch };
 }
