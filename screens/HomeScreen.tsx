@@ -3190,7 +3190,12 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
 
   /* Outer ring = the colored border around the avatar (compact: -15%) */
   avatarRing: {
-    width: s(27), height: s(27), borderRadius: s(13.5),
+    // borderRadius: 9999 — RN/Android clamps to half-min-dimension
+    // natively, guaranteeing a perfect circle on every device. The
+    // prior `s(13.5)` rounded independently from `s(27)` and could
+    // drift on certain Samsung One UI render paths, leaving the ring
+    // half-rendered ("avatar split in half" — Eli 2026-04-27 15:47).
+    width: s(27), height: s(27), borderRadius: 9999,
     borderWidth: 2.5,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: c.card,
@@ -3200,12 +3205,14 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
 
   /* Inner avatar circle (compact: -15%) */
   avatar: {
-    width: s(22), height: s(22), borderRadius: s(11),
+    // borderRadius: 9999 — same reason as avatarRing above. Hard-clamp
+    // to perfect circle regardless of how s() rounds.
+    width: s(22), height: s(22), borderRadius: 9999,
     alignItems: 'center', justifyContent: 'center',
     overflow: 'hidden' as const,
   },
   avatarTxt: { color: c.white, fontSize: s(6.5), fontWeight: FW.bold },
-  avatarImg: { width: s(22), height: s(22), borderRadius: s(11) },
+  avatarImg: { width: s(22), height: s(22), borderRadius: 9999 },
 
   /* Emoji badge — sits on top-right of the ring (enlarged: +20%) */
   emojiBadge: {
@@ -3217,7 +3224,7 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     // right:-s(3.5). Now flush with the avatarRing's top-right corner
     // — slight visual shift inward but the bubble actually renders.
     position: 'absolute', top: 0, right: 0,
-    width: s(17), height: s(17), borderRadius: s(8.5),
+    width: s(17), height: s(17), borderRadius: 9999,
     backgroundColor: c.card, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: c.borderSoft,
     shadowColor: '#000', shadowOffset: { width: 0, height: s(0.5) },
