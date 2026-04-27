@@ -390,54 +390,52 @@ function NomadMarker({
       anchor={{ x: 0.5, y: 1 }}
       onPress={() => onPinTap(c)}
     >
-      {/* Unified bubble — one cohesive container, NOT three stacked
-          floating pieces. Tester report 2026-04-27: "זה ריבוע
-          שמעליו יש אייקון עגול / זה תקלה". The previous design
-          had avatar circle + name pill + timer pill as three
-          separate floating shapes; from a distance they read as
-          a "square with a round icon on top" instead of one pin.
-          New design: a single rounded white card with a colored
-          border (green = status, red = timer), avatar circle
-          centered at the top, name underneath, timer countdown
-          underneath that — ALL inside one container with one
-          shadow. Looks like one bubble, behaves like one bubble. */}
-      <View
-        style={[
-          st.markerBubble,
-          { borderColor },
-          isExpired && { opacity: 0.5 },
-        ]}
-        onLayout={() => setLayoutReady(true)}
-      >
-        {isHot && <PulseRing heat={heat} size={s(40)} />}
-        <View>
-          <View style={[st.markerAvatarCircle, { backgroundColor: catStyle.color }]}>
-            {avatarUrl ? (
-              <CachedImage
-                source={{ uri: avatarUri(avatarUrl) }}
-                style={st.markerAvatarImg}
-                recyclingKey={c.id}
-              />
-            ) : (
-              <Text style={st.markerInitials}>{ini}</Text>
-            )}
-          </View>
-          <View style={st.markerEmojiBadge}>
-            <Text style={st.markerEmojiText}>{pinEmoji}</Text>
+      {/* RESTORED original 3-piece marker (2026-04-27, after unified
+       * bubble redesign rendered as a square white rectangle on
+       * Samsung). Just a colored ring around the avatar circle, an
+       * emoji badge on the corner, name pill underneath, optional
+       * timer pill — exactly as it was before commit 7cb694f. The
+       * old style classes (avatarRing, avatar, emojiBadge, nameTag,
+       * timerPill) were never deleted from makeStyles. */}
+      <View style={[st.pinWrap, isExpired && { opacity: 0.5 }]}>
+        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+          {isHot && <PulseRing heat={heat} size={ringSize} />}
+          <View style={[st.avatarRing, { borderColor }]}>
+            <View style={[st.avatar, { backgroundColor: catStyle.color }]}>
+              {avatarUrl ? (
+                <CachedImage
+                  source={{ uri: avatarUri(avatarUrl) }}
+                  style={st.avatarImg}
+                  recyclingKey={c.id}
+                />
+              ) : (
+                <Text style={st.avatarTxt}>{ini}</Text>
+              )}
+            </View>
+            <View style={st.emojiBadge}>
+              <Text style={st.emojiText}>{pinEmoji}</Text>
+            </View>
           </View>
         </View>
-        <Text style={st.markerName} numberOfLines={1}>{firstName}</Text>
+        <View style={st.nameTag}>
+          <Text style={st.nameTxt}>{firstName}</Text>
+        </View>
         {isTimer && minsLeft !== null && (() => {
           const urgent = minsLeft <= 10;
           const soon = minsLeft <= 30 && !urgent;
           return (
-            <Text style={[
-              st.markerTimer,
-              urgent && { color: '#DC2626' },
-              soon && { color: '#F97316' },
+            <View style={[
+              st.timerPill,
+              urgent && st.timerPillUrgent,
+              soon && st.timerPillSoon,
             ]}>
-              {timerStr}
-            </Text>
+              <Text style={[
+                st.timerPillText,
+                urgent && st.timerPillTextUrgent,
+              ]}>
+                {timerStr}
+              </Text>
+            </View>
           );
         })()}
       </View>
