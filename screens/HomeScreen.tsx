@@ -18,6 +18,7 @@ import type { RootStackParamList } from '../lib/types';
 import { useActiveCheckins, useHotCheckins, useNomadsInCity, useFollow, useProfile, useNotifications, createOrJoinStatusChat, wisdomCheck, trackWisdomSignal, type CheckinWithProfile, type NomadInCity, type WisdomIntent } from '../lib/hooks';
 import { AuthContext } from '../App';
 import { useAvatar } from '../lib/AvatarContext';
+import { useViewedCity } from '../lib/ViewedCityContext';
 import { useI18n } from '../lib/i18n';
 import { gateContent } from '../lib/moderation';
 import {
@@ -562,7 +563,19 @@ export default function HomeScreen() {
   const [showProfile, setShowProfile] = useState(false);
   const [selectedNomad, setSelectedNomad] = useState<any>(null);
   const [showNotifs, setShowNotifs] = useState(false);
-  const [currentCity, setCurrentCity] = useState<City>(CITIES[0]);
+  // ─── Viewed city — single source of truth ───
+  // Lives in ViewedCityContext (lib/ViewedCityContext.tsx) so PeopleScreen
+  // and any future screen consume the same value. Aliased to currentCity
+  // here so the existing call sites in this file (40+ references) stay
+  // intact. Do NOT add a local useState for the city — the Context is
+  // the only writable copy.
+  //
+  // setGpsCity is the SECOND writer, used ONLY by syncLiveCityFromGPS
+  // below to record the device's actual GPS position; it then drives
+  // the DB update to profile.current_city. Owner directive 2026-04-27:
+  // "Registered location = GPS / viewed location = what user is looking
+  // at / they can differ when the user pans the map."
+  const { viewedCity: currentCity, setViewedCity: setCurrentCity, setGpsCity } = useViewedCity();
 
   /* ── City search state ── */
   const [searchFocused, setSearchFocused] = useState(false);
@@ -971,7 +984,12 @@ export default function HomeScreen() {
         lng,
         active: 0,
       };
-      setCurrentCity(liveCity);
+      // Route through the Context's setGpsCity (NOT setCurrentCity) so
+      // the manual-pan-vs-GPS logic in ViewedCityContext can decide
+      // whether to also update viewedCity. If the GPS city is the same
+      // as last fix → leave viewedCity alone (user might be panning).
+      // If GPS city changed → user moved → also update viewedCity.
+      setGpsCity(liveCity);
 
       // Persist — fire and forget, errors logged not surfaced (silent
       // failure here just means OTHER users see stale "nomad in X"
@@ -987,7 +1005,7 @@ export default function HomeScreen() {
     } catch (e) {
       console.warn('[HomeScreen] Live city sync error:', e);
     }
-  }, [userId]);
+  }, [userId, setGpsCity]);
 
   const refreshGPS = useCallback(async () => {
     try {
@@ -1289,19 +1307,27 @@ export default function HomeScreen() {
 
   const isSnoozed = myProfile?.show_on_map === false;
 
-  // Sync current city with user's profile city on load
-  useEffect(() => {
-    if (myProfile?.current_city) {
-      const match = CITIES.find(c => c.name.toLowerCase() === myProfile.current_city?.toLowerCase());
-      if (match && match.id !== currentCity.id) {
-        setCurrentCity(match);
-        mapRef.current?.animateToRegion({
-          latitude: match.lat, longitude: match.lng,
-          latitudeDelta: 0.08, longitudeDelta: 0.08,
-        }, 600);
-      }
-    }
-  }, [myProfile?.current_city]);
+  // ─── Removed 2026-04-27: profile.current_city → currentCity sync ───
+  //
+  // The original useEffect here matched myProfile.current_city against
+  // the static CITIES list and called setCurrentCity if a match was
+  // found. Two reasons it had to go:
+  //
+  //   1. With GPS-first sync (syncLiveCityFromGPS above), profile.current_city
+  //      is now WRITTEN BY HomeScreen on every GPS tick. Reading it
+  //      back into setCurrentCity created a feedback loop: GPS updates
+  //      profile → profile updates trigger this useEffect → useEffect
+  //      calls setCurrentCity → re-render → next GPS tick → repeat.
+  //
+  //   2. The match against CITIES was the bug Yuval (Rehovot) ran into
+  //      this morning — Rehovot is not in CITIES, so the match failed
+  //      silently and currentCity stayed at the Tel Aviv default.
+  //      syncLiveCityFromGPS handles unknown cities by constructing a
+  //      dynamic City object from the reverse-geocode result.
+  //
+  // viewedCity is now driven by:
+  //   • setGpsCity (from syncLiveCityFromGPS) — auto-syncs on GPS move
+  //   • setViewedCity (from CityPickerSheet, FAB, manual pan) — user override
 
   /* ── Cloud overlay animation refs ── */
   const cloudLeftX  = useRef(new Animated.Value(0)).current;

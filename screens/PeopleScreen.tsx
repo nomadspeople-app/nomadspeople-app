@@ -22,6 +22,7 @@ import * as Location from 'expo-location';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { haversineKm, formatDistance } from '../lib/distance';
 import { useActiveCheckins, useFlightGroups, type FlightGroup } from '../lib/hooks';
+import { useViewedCity } from '../lib/ViewedCityContext';
 import { AuthContext } from '../App';
 import { supabase } from '../lib/supabase';
 import { wakeUpVisibility } from '../lib/visibility';
@@ -191,8 +192,18 @@ export default function PeopleScreen() {
   /* ── Flight detail sheet ── */
   const [selectedFlight, setSelectedFlight] = useState<FlightGroup | null>(null);
 
-  /* ── Detect current city from profile ── */
-  const currentCity = myProfile?.current_city || 'Tel Aviv';
+  /* ── City: read from shared ViewedCityContext ─────────────────
+   * Owner directive 2026-04-27: People tab follows the SAME city
+   * the user is looking at on the map. Pre-fix this screen read
+   * from `myProfile?.current_city` directly, which meant:
+   *   - It only updated when the profile DB row updated (slow,
+   *     fragile, only after GPS sync committed).
+   *   - It couldn't follow a manual map pan to another city
+   *     because pan didn't write to profile.current_city.
+   * The ViewedCityContext exposes the same `viewedCity` HomeScreen
+   * uses, so map + People tab are now in lock-step. */
+  const { viewedCity } = useViewedCity();
+  const currentCity = viewedCity.name;
 
   /* ── Fetch active checkins for current city ── */
   const { checkins, loading: checkinsLoading } = useActiveCheckins(currentCity, userId);

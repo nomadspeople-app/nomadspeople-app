@@ -58,6 +58,7 @@ import BlockedUsersScreen from './screens/BlockedUsersScreen';
 import { useAuth } from './lib/auth';
 import { supabase } from './lib/supabase';
 import { useUnreadTotal } from './lib/hooks';
+import { ViewedCityProvider } from './lib/ViewedCityContext';
 import { s, C, FW, getColors, ThemeContext } from './lib/theme';
 import type { RootTabParamList, RootStackParamList } from './lib/types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -577,6 +578,7 @@ function App() {
           clearSetupFlag: () => setJustFinishedSetup(false),
         }}>
           <UnreadContext.Provider value={{ total: unreadTotal, refetch: refetchUnread }}>
+          <ViewedCityProvider>
           <SafeAreaProvider>
             <NavigationContainer ref={navigationRef}>
               <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -624,6 +626,7 @@ function App() {
               </Stack.Navigator>
             </NavigationContainer>
           </SafeAreaProvider>
+          </ViewedCityProvider>
           </UnreadContext.Provider>
         </AuthContext.Provider>
       </ThemeContext.Provider>
