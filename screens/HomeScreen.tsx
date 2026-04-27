@@ -3209,7 +3209,14 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
 
   /* Emoji badge — sits on top-right of the ring (enlarged: +20%) */
   emojiBadge: {
-    position: 'absolute', top: -s(3.5), right: -s(3.5),
+    // top:0, right:0 (no negative offsets) — Android marker bitmap
+    // snapshot uses parent's measured bounds. Negative offsets push
+    // pixels outside that box → snapshot returns a half-rendered
+    // bubble (Eli screenshot 2026-04-27 15:14: red half-circle, dark
+    // patch on right, no proper avatar/badge). Was: top:-s(3.5),
+    // right:-s(3.5). Now flush with the avatarRing's top-right corner
+    // — slight visual shift inward but the bubble actually renders.
+    position: 'absolute', top: 0, right: 0,
     width: s(17), height: s(17), borderRadius: s(8.5),
     backgroundColor: c.card, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: c.borderSoft,
