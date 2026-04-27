@@ -3019,7 +3019,12 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   markerAvatarCircle: {
     width: s(18),
     height: s(18),
-    borderRadius: s(9),
+    // 9999 forces React Native + Android marker bitmap to clamp to
+    // a perfect circle regardless of when the snapshot fires. Using
+    // s(9) here meant the bitmap captured the literal radius before
+    // overflow:hidden was enforced, leaving avatars as squares on
+    // Samsung One UI / Pixel (Barak report 2026-04-27 "מרובעת").
+    borderRadius: 9999,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -3027,7 +3032,7 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   markerAvatarImg: {
     width: s(18),
     height: s(18),
-    borderRadius: s(9),
+    borderRadius: 9999,
   },
   markerInitials: {
     color: '#FFF',
@@ -3042,7 +3047,7 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     right: -s(3),
     width: s(11),
     height: s(11),
-    borderRadius: s(5.5),
+    borderRadius: 9999, // force perfect circle (Android bitmap clamp)
     backgroundColor: '#FFF',
     alignItems: 'center',
     justifyContent: 'center',
