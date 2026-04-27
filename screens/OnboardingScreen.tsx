@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NomadIcon from '../components/NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { supabase } from '../lib/supabase';
+import { joinFlightGroup } from '../lib/hooks';
 import { COUNTRIES, POPULAR_CITIES } from '../lib/countries';
 import { useI18n, type Locale, SUPPORTED_LOCALES } from '../lib/i18n';
 import AgeRangeControl from '../components/AgeRangeControl';
@@ -350,7 +351,7 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
     const depStr = tripDepartureDate ? formatDate(tripDepartureDate) : null;
     const flag = COUNTRIES.find(c => c.name === tripCountry)?.flag || '';
 
-    // Save trip to profile (upsert so brand-new users never silently no-op)
+    // 1. Save trip to profile (upsert so brand-new users never silently no-op)
     await supabase.from('app_profiles').upsert({
       user_id: userId,
       next_destination: tripCountry,
@@ -358,6 +359,23 @@ export default function OnboardingScreen({ onComplete, userId }: OnboardingScree
       next_destination_flag: flag,
       next_departure_date: depStr,
     }, { onConflict: 'user_id' });
+
+    // 2. ALSO write to flight_groups + flight_members so the trip surfaces in
+    //    PeopleScreen → "Incoming Flights". Without this the profile field was
+    //    set but Incoming Flights stayed empty (tester report 2026-04-27 — Eli
+    //    filled in Thailand, no row in flight_members because onboarding never
+    //    called the joinFlightGroup RPC). TripManagerSheet.tsx already does
+    //    this; onboarding was the missing surface.
+    if (userId) {
+      try {
+        await joinFlightGroup(userId, tripCountry, flag, arrStr, depStr);
+      } catch (e) {
+        // Don't block onboarding completion if the flight group write
+        // fails — the user's profile is still saved and they can retry
+        // via TripManagerSheet later. Log for debugging.
+        console.warn('[onboarding] joinFlightGroup failed:', e);
+      }
+    }
 
     handleFinishOnboarding();
   };
