@@ -251,6 +251,78 @@ When a user taps ANY pin on the map:
 - Full reference: `docs/avatar-cache-system.md`
 - Future option: migrate to expo-image for cleaner approach
 
+### Locked Marker Design (Locked 2026-04-27)
+
+> **The map marker is the face of the product. It MUST render
+> identically on every device — Eli's Samsung, Barak's Galaxy,
+> daka's Xiaomi, the Pixel, the iPhone — pixel-for-pixel the same
+> shape. Inconsistent rendering across devices killed user trust
+> on 2026-04-27 ("האווטאר אצלו עכשיו מרובע עם מסגרת"). This is
+> now a contract.**
+
+**The contract — locked once and for all:**
+
+The marker bubble (`NomadMarker` in `screens/HomeScreen.tsx`) is a
+single rounded white card with a colored border (green = status,
+red = timer), containing a centered avatar circle with an emoji
+badge in its top-right, a name underneath, and (for timers) a
+countdown underneath that. ONE container, ONE shadow, ONE colored
+border. NOT three stacked floating shapes.
+
+**Marker dimensions live in module-scoped constants only:**
+
+```typescript
+// screens/HomeScreen.tsx — DO NOT inline these values anywhere else
+const MARKER_AVATAR_SIZE  = s(18);
+const MARKER_EMOJI_SIZE   = s(11);
+const MARKER_EMOJI_OFFSET = s(3);
+const MARKER_BUBBLE_RADIUS = s(7);
+```
+
+**Rules — DO NOT CHANGE:**
+
+- `borderRadius` for any marker circle MUST be computed as
+  `SIZE / 2`, never as a separate `s()` call. Reason: `s()` rounds
+  each call independently. On certain device widths `s(18)` and
+  `s(9)` drift out of the 1:2 ratio, and Android's marker-bitmap
+  snapshot path on Samsung One UI does NOT clamp `borderRadius` to
+  half-the-dimension — it captures the literal value, producing a
+  square avatar with the colored bubble border on the outside.
+  The `SIZE / 2` form is exact on every device.
+- The avatar circle MUST have `overflow: 'hidden'` AND the inner
+  `<CachedImage/>` MUST use `width: '100%', height: '100%'`. Never
+  a separate `s(N)` for the inner image — sub-pixel drift between
+  wrapper and image is enough to bleed past the rounded mask on
+  Android.
+- The emoji badge MUST also use `SIZE / 2` for its borderRadius
+  AND `overflow: 'hidden'`. Same reasoning.
+- `tracksViewChanges` starts `true`, flips to `false` only AFTER
+  `onLayout` AND (if there's an avatar URL) the image is ready.
+  Belt-and-braces 1.8s timeout fallback. Never hardcode it to
+  `false` again — see CLAUDE.md "tracksViewChanges starts TRUE"
+  note from 2026-04-26.
+- The marker JSX is a single `<View style={st.markerBubble}>` with
+  the avatar+badge nested inside — NOT three sibling Views. The
+  "square with circle on top" look from before came from siblings.
+- **NEVER** add a new MapView. Per "One Map" rule, marker design
+  changes happen in `NomadMarker` only.
+- **NEVER** introduce per-user / per-device variants of the marker
+  ("premium markers", "verified markers", etc.) without an
+  explicit owner sign-off and a CLAUDE.md update.
+
+**When you need to resize / restyle the marker:**
+
+1. Change ONLY the constants. Width, height, radius — all derive
+   from the constants. Do not write a literal `s(N)` for any
+   marker dimension elsewhere.
+2. Test on at least three device widths before shipping (small
+   Samsung A-series ≤ 360pt, Galaxy S22 ~ 384pt, Pixel 9 Pro ≥
+   412pt). Take a screenshot of each. The avatar must be a circle.
+3. If the design must reference the constants from outside the
+   styles object (rare), import them from where they're defined,
+   never re-declare.
+4. Update this CLAUDE.md section in the same commit.
+
 ### i18n — Mandatory Translation Rule (Locked April 2026)
 Every user-facing string in the app MUST use the `t()` function. No hardcoded text in any screen, component, sheet, modal, or Alert.
 
