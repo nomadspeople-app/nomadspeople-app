@@ -371,45 +371,51 @@ function NomadMarker({
       anchor={{ x: 0.5, y: 1 }}
       onPress={() => onPinTap(c)}
     >
-      <View style={[st.pinWrap, isExpired && { opacity: 0.5 }]}>
-        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-          {isHot && <PulseRing heat={heat} size={ringSize} />}
-          <View style={[st.avatarRing, { borderColor }]}>
-            <View style={[st.avatar, { backgroundColor: catStyle.color }]}>
-              {avatarUrl ? (
-                <CachedImage
-                  source={{ uri: avatarUri(avatarUrl) }}
-                  style={st.avatarImg}
-                  recyclingKey={c.id}
-                />
-              ) : (
-                <Text style={st.avatarTxt}>{ini}</Text>
-              )}
-            </View>
-            <View style={st.emojiBadge}>
-              <Text style={st.emojiText}>{pinEmoji}</Text>
-            </View>
+      {/* Unified bubble — one cohesive container, NOT three stacked
+          floating pieces. Tester report 2026-04-27: "זה ריבוע
+          שמעליו יש אייקון עגול / זה תקלה". The previous design
+          had avatar circle + name pill + timer pill as three
+          separate floating shapes; from a distance they read as
+          a "square with a round icon on top" instead of one pin.
+          New design: a single rounded white card with a colored
+          border (green = status, red = timer), avatar circle
+          centered at the top, name underneath, timer countdown
+          underneath that — ALL inside one container with one
+          shadow. Looks like one bubble, behaves like one bubble. */}
+      <View style={[
+        st.markerBubble,
+        { borderColor },
+        isExpired && { opacity: 0.5 },
+      ]}>
+        {isHot && <PulseRing heat={heat} size={s(40)} />}
+        <View>
+          <View style={[st.markerAvatarCircle, { backgroundColor: catStyle.color }]}>
+            {avatarUrl ? (
+              <CachedImage
+                source={{ uri: avatarUri(avatarUrl) }}
+                style={st.markerAvatarImg}
+                recyclingKey={c.id}
+              />
+            ) : (
+              <Text style={st.markerInitials}>{ini}</Text>
+            )}
+          </View>
+          <View style={st.markerEmojiBadge}>
+            <Text style={st.markerEmojiText}>{pinEmoji}</Text>
           </View>
         </View>
-        <View style={st.nameTag}>
-          <Text style={st.nameTxt}>{firstName}</Text>
-        </View>
+        <Text style={st.markerName} numberOfLines={1}>{firstName}</Text>
         {isTimer && minsLeft !== null && (() => {
           const urgent = minsLeft <= 10;
           const soon = minsLeft <= 30 && !urgent;
           return (
-            <View style={[
-              st.timerPill,
-              urgent && st.timerPillUrgent,
-              soon && st.timerPillSoon,
+            <Text style={[
+              st.markerTimer,
+              urgent && { color: '#DC2626' },
+              soon && { color: '#F97316' },
             ]}>
-              <Text style={[
-                st.timerPillText,
-                urgent && st.timerPillTextUrgent,
-              ]}>
-                {timerStr}
-              </Text>
-            </View>
+              {timerStr}
+            </Text>
           );
         })()}
       </View>
@@ -2965,6 +2971,79 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
 
   /* ── Map Pins — nomadspeople bubble design ── */
   pinWrap: { alignItems: 'center' },
+
+  /* ── Unified marker bubble ──
+   * One cohesive container for the whole pin: avatar circle on
+   * top (with emoji badge), name underneath, timer countdown
+   * underneath that. Single shadow, single colored border (green
+   * for status, red for timer). Replaces the previous 3-stacked
+   * floating shapes that read as "square with circle on top".
+   * Per UX skill: looks like ONE thing the eye can land on. */
+  markerBubble: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: s(7),
+    paddingHorizontal: s(4),
+    paddingVertical: s(3),
+    alignItems: 'center',
+    borderWidth: 2.5,
+    minWidth: s(28),
+    maxWidth: s(42),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: s(2) },
+    shadowOpacity: 0.18,
+    shadowRadius: s(4),
+    elevation: 5,
+  },
+  markerAvatarCircle: {
+    width: s(18),
+    height: s(18),
+    borderRadius: s(9),
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  markerAvatarImg: {
+    width: s(18),
+    height: s(18),
+    borderRadius: s(9),
+  },
+  markerInitials: {
+    color: '#FFF',
+    fontSize: s(7),
+    fontWeight: FW.bold as any,
+  },
+  /* Emoji badge sits on the avatar's top-right corner — single
+   * visual cue for the activity category, INSIDE the bubble. */
+  markerEmojiBadge: {
+    position: 'absolute',
+    top: -s(3),
+    right: -s(3),
+    width: s(11),
+    height: s(11),
+    borderRadius: s(5.5),
+    backgroundColor: '#FFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  markerEmojiText: {
+    fontSize: s(7),
+  },
+  markerName: {
+    fontSize: s(5),
+    fontWeight: FW.bold as any,
+    color: '#1A1A1A',
+    marginTop: s(2.5),
+    textAlign: 'center',
+    maxWidth: s(36),
+  },
+  markerTimer: {
+    fontSize: s(4.5),
+    fontWeight: FW.semi as any,
+    color: '#FF6B6B',
+    marginTop: s(0.5),
+  },
 
   /* Outer ring = the colored border around the avatar (compact: -15%) */
   avatarRing: {
