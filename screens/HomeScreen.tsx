@@ -349,14 +349,33 @@ function NomadMarker({
   const ringSize = s(33);
 
   // tracksViewChanges starts TRUE so the first render captures the
-  // fully-painted subtree (avatar, ring, badge, name). After 700ms
-  // we flip to FALSE so map pans don't trigger snapshots and the pin
-  // stays rock-still — the original CLAUDE.md performance invariant.
-  // 700ms is generous: CachedImage cache hits paint in <100ms, even
-  // a cold network avatar usually beats 500ms.
-  const [tracksChanges, setTracksChanges] = useState(true);
+  // fully-painted subtree (avatar, ring, badge, name). We flip to
+  // FALSE only AFTER the layout has had time to apply borderRadius
+  // and the avatar image (if any) has loaded.
+  //
+  // Pre-fix: the flip timeout was 700ms. On Samsung One UI the
+  // bitmap snapshot was firing before borderRadius was computed,
+  // leaving the avatar circle rendered as a SQUARE (with a colored
+  // border, no clipping). Tester report 2026-04-27: "האווטאר אצלו
+  // עכשיו מרובע עם מסגרת / אין לו קשר לעיצוב האווטאר שלנו".
+  //
+  // Two-pronged fix:
+  //   (a) Wait until the marker View reports onLayout (means Yoga
+  //       has computed dimensions AND applied borderRadius styles).
+  //   (b) For markers with an avatar image, ALSO wait for the
+  //       Image's onLoad/onError event before flipping — otherwise
+  //       the snapshot captures a transparent square placeholder.
+  //   (c) Belt-and-braces 1.8s timeout fallback so we never get
+  //       stuck retracking forever even if onLayout/onLoad
+  //       silently never fire.
+  const [layoutReady, setLayoutReady] = useState(false);
+  const [imageReady, setImageReady] = useState(!avatarUrl); // no image to wait for
+  const tracksChanges = !(layoutReady && imageReady);
   useEffect(() => {
-    const t = setTimeout(() => setTracksChanges(false), 700);
+    const t = setTimeout(() => {
+      setLayoutReady(true);
+      setImageReady(true);
+    }, 1800);
     return () => clearTimeout(t);
   }, [c.id]);
 
@@ -382,11 +401,14 @@ function NomadMarker({
           centered at the top, name underneath, timer countdown
           underneath that — ALL inside one container with one
           shadow. Looks like one bubble, behaves like one bubble. */}
-      <View style={[
-        st.markerBubble,
-        { borderColor },
-        isExpired && { opacity: 0.5 },
-      ]}>
+      <View
+        style={[
+          st.markerBubble,
+          { borderColor },
+          isExpired && { opacity: 0.5 },
+        ]}
+        onLayout={() => setLayoutReady(true)}
+      >
         {isHot && <PulseRing heat={heat} size={s(40)} />}
         <View>
           <View style={[st.markerAvatarCircle, { backgroundColor: catStyle.color }]}>
