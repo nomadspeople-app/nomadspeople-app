@@ -3191,16 +3191,27 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
   /* Outer ring = the colored border around the avatar (compact: -15%) */
   avatarRing: {
     // borderRadius: 9999 — RN/Android clamps to half-min-dimension
-    // natively, guaranteeing a perfect circle on every device. The
-    // prior `s(13.5)` rounded independently from `s(27)` and could
-    // drift on certain Samsung One UI render paths, leaving the ring
-    // half-rendered ("avatar split in half" — Eli 2026-04-27 15:47).
+    // natively, guaranteeing a perfect circle on every device.
+    //
+    // 2026-04-27 evening: removed the shadow (shadowColor / shadowOffset
+    // / shadowOpacity / shadowRadius / elevation). Eli kept seeing a
+    // half-rendered avatar even after the borderRadius:9999 fix.
+    // Samsung One UI uses Skia for compositing in newer versions, and
+    // shadows on a custom Marker view extend OUTSIDE the view's
+    // measured bounds. The marker bitmap snapshot path on One UI
+    // intermittently fails when shadows are present — the snapshot
+    // captures only the part of the shape that fits inside the
+    // shadow-extended bounds, leaving the visible content cut.
+    //
+    // Trade-off: marker pins lose their soft drop-shadow on Android.
+    // The colored border (borderColor passed inline) still gives them
+    // visual weight on the map. iOS keeps shadows fine even with
+    // shadowColor removed because of how its compositor handles
+    // unbounded shadows; this style runs the same on both.
     width: s(27), height: s(27), borderRadius: 9999,
     borderWidth: 2.5,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: c.card,
-    shadowColor: '#000', shadowOffset: { width: 0, height: s(1.5) },
-    shadowOpacity: 0.18, shadowRadius: s(4), elevation: 5,
   },
 
   /* Inner avatar circle (compact: -15%) */
@@ -3227,8 +3238,9 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     width: s(17), height: s(17), borderRadius: 9999,
     backgroundColor: c.card, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: c.borderSoft,
-    shadowColor: '#000', shadowOffset: { width: 0, height: s(0.5) },
-    shadowOpacity: 0.12, shadowRadius: s(2), elevation: 3,
+    // Shadow removed 2026-04-27 evening — same reason as avatarRing
+    // (Samsung One UI Skia bitmap snapshot intermittently fails with
+    // shadows on Marker views).
   },
   emojiText: { fontSize: s(9) },
 
