@@ -280,43 +280,6 @@ function PulseRing({ heat, size }: { heat: number; size: number }) {
   );
 }
 
-/* ─── LOCKED MARKER DESIGN — single source of truth ──────────────────
- *
- * THESE CONSTANTS ARE THE CONTRACT. Every device (Eli's Samsung,
- * Barak's Galaxy, daka's Xiaomi, the Pixel 9 Pro, the iPhone) MUST
- * render the marker with these exact dimensions. Do NOT duplicate
- * them inline in the StyleSheet — always reference these names.
- *
- * Why module-scoped constants (computed once per app launch):
- *
- *   The scale helper `s(px)` does `Math.round(px * SCALE)`. If we
- *   write `width: s(18)` and `borderRadius: s(9)` in two separate
- *   places, each `s()` call rounds independently. On certain device
- *   widths the rounded values drift OUT OF the 1:2 ratio — e.g.
- *   SCALE=1.86 gives `s(18)=33` and `s(9)=17`, so width/2=16.5 but
- *   borderRadius=17. Most of the time React Native's renderer clamps
- *   that to a circle, but Android's marker-bitmap snapshot path on
- *   one-UI Samsung does NOT clamp — it captured the literal
- *   borderRadius and rendered the avatar as a near-square with the
- *   colored bubble border on the outside.
- *
- *   Tester report 2026-04-27 ("האווטאר אצלו עכשיו מרובע עם מסגרת").
- *
- * Fix: ONE constant per dimension, borderRadius = SIZE / 2. The
- *   divide happens AFTER the s() rounding, so width and radius are
- *   always in exact 1:2 lock-step on every device. Owner directive
- *   2026-04-27: "תנעל את העיצוב הזה אחת ולתמיד / המערכת חייבת להיות
- *   זהה אצל כולם / זה חייב להיות מערכתי לא פלסטרים".
- *
- * If you need to resize the marker, change ONLY the constant. Never
- * write a literal `s(N)` for width / height / borderRadius of any
- * marker sub-element. Document the reason in the commit message.
- */
-const MARKER_AVATAR_SIZE = s(18);          // outer circle (white-bg) diameter
-const MARKER_EMOJI_SIZE  = s(11);          // emoji badge diameter
-const MARKER_EMOJI_OFFSET = s(3);          // overhang of badge above/right of avatar
-const MARKER_BUBBLE_RADIUS = s(7);         // outer rounded card corner
-
 /* ─── NomadMarker — proper React component (was a bare function) ───
  *
  * Why this is a real component now (2026-04-26):
@@ -3037,14 +3000,10 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
    * underneath that. Single shadow, single colored border (green
    * for status, red for timer). Replaces the previous 3-stacked
    * floating shapes that read as "square with circle on top".
-   * Per UX skill: looks like ONE thing the eye can land on.
-   *
-   * Dimensions reference module-scoped constants — see "LOCKED
-   * MARKER DESIGN" comment block above NomadMarker. Do NOT inline
-   * literal s(N) values for width/height/borderRadius here. */
+   * Per UX skill: looks like ONE thing the eye can land on. */
   markerBubble: {
     backgroundColor: '#FFFFFF',
-    borderRadius: MARKER_BUBBLE_RADIUS,
+    borderRadius: s(7),
     paddingHorizontal: s(4),
     paddingVertical: s(3),
     alignItems: 'center',
@@ -3058,21 +3017,17 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     elevation: 5,
   },
   markerAvatarCircle: {
-    width: MARKER_AVATAR_SIZE,
-    height: MARKER_AVATAR_SIZE,
-    borderRadius: MARKER_AVATAR_SIZE / 2, // ← deterministic 1:2 ratio (locked)
+    width: s(18),
+    height: s(18),
+    borderRadius: s(9),
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   markerAvatarImg: {
-    // Inherit exact wrapper dimensions instead of redoing the s()
-    // math. width:'100%' guarantees the image cannot drift even by
-    // a sub-pixel from the wrapper, eliminating the "image is one
-    // pixel larger than the rounded mask" Android snapshot bug.
-    width: '100%',
-    height: '100%',
-    borderRadius: MARKER_AVATAR_SIZE / 2, // belt-and-braces (Android marker bitmap)
+    width: s(18),
+    height: s(18),
+    borderRadius: s(9),
   },
   markerInitials: {
     color: '#FFF',
@@ -3083,17 +3038,16 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
    * visual cue for the activity category, INSIDE the bubble. */
   markerEmojiBadge: {
     position: 'absolute',
-    top: -MARKER_EMOJI_OFFSET,
-    right: -MARKER_EMOJI_OFFSET,
-    width: MARKER_EMOJI_SIZE,
-    height: MARKER_EMOJI_SIZE,
-    borderRadius: MARKER_EMOJI_SIZE / 2, // ← deterministic 1:2 ratio (locked)
+    top: -s(3),
+    right: -s(3),
+    width: s(11),
+    height: s(11),
+    borderRadius: s(5.5),
     backgroundColor: '#FFF',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    overflow: 'hidden',
   },
   markerEmojiText: {
     fontSize: s(7),
