@@ -81,7 +81,9 @@ export default function AuthScreen({ onSuccess }: Props) {
   const [mode, setMode] = useState<'login' | 'signup' | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
+  // fullName intentionally removed (2026-04-26): the display name
+  // is now collected during onboarding (lib/translations
+  // setup.displayName), not at signup.
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -167,10 +169,10 @@ export default function AuthScreen({ onSuccess }: Props) {
       setError('Please fill in all fields');
       return;
     }
-    if (mode === 'signup' && !fullName.trim()) {
-      setError('Please enter your name');
-      return;
-    }
+    // Display name is collected during onboarding (lib/translations
+    // setup.displayName) — keeping it OUT of the signup form keeps
+    // the first impression to two fields. Tester directive 2026-04-26:
+    // "אין צורך בהרשמה / מייל / סיסמא הם בוחרים".
     if (password.length < 6) {
       setError('Password must be at least 6 characters');
       return;
@@ -207,12 +209,14 @@ export default function AuthScreen({ onSuccess }: Props) {
     try {
       if (mode === 'signup') {
         const cleanedEmail = email.trim().toLowerCase();
+        // No `data: { full_name }` here — name is collected by
+        // OnboardingScreen so the auth form stays minimal (email +
+        // password only). The profile row below uses an empty
+        // string for full_name; OnboardingScreen.handleComplete
+        // overwrites it with the user's chosen display name.
         const { data, error: signUpErr } = await supabase.auth.signUp({
           email: cleanedEmail,
           password,
-          options: {
-            data: { full_name: fullName.trim() },
-          },
         });
 
         if (signUpErr) {
@@ -230,7 +234,7 @@ export default function AuthScreen({ onSuccess }: Props) {
             .from('app_profiles')
             .insert({
               user_id: data.user.id,
-              full_name: fullName.trim(),
+              full_name: '',
               username: email.trim().split('@')[0],
               onboarding_done: false,
               show_on_map: true,
@@ -406,19 +410,12 @@ export default function AuthScreen({ onSuccess }: Props) {
         )}
 
         {/* ─── Form — no card, floating fields ─── */}
+        {/* Two-field signup (email + password). Display name moved
+            entirely into OnboardingScreen per the 2026-04-26
+            tester directive: "אין צורך בהרשמה / מייל / סיסמא הם
+            בוחרים". The auth surface stays minimal so first-time
+            users complete it in seconds. */}
         <View style={styles.form}>
-          {mode === 'signup' && (
-            <TextInput
-              style={styles.input}
-              placeholder="Full name"
-              placeholderTextColor={colors.textFaint}
-              value={fullName}
-              onChangeText={setFullName}
-              autoCapitalize="words"
-              autoComplete="name"
-            />
-          )}
-
           <TextInput
             style={styles.input}
             placeholder="Email"
