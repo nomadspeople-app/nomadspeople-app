@@ -68,20 +68,39 @@ export default function AuthScreen({ onSuccess }: Props) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  /* Mode default — start `null` so the first-paint can be a brief
+   * spinner instead of a flash of "Login" → "Signup" once we read
+   * AsyncStorage. The async useEffect below sets it to either
+   * 'login' (returning user) or 'signup' (first-time on this
+   * device). Pre-fix this defaulted to 'login' for everyone:
+   * brand-new testers landed on the Login form, typed their fresh
+   * credentials, and got "Invalid email or password" because no
+   * such account existed yet — exactly the report from 2026-04-26
+   * ("מייל או סיסמא אינם מזוהים"). The smart default fixes the
+   * 12-tester onboarding flow end-to-end. */
+  const [mode, setMode] = useState<'login' | 'signup' | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  /* Pre-fill email from the last successful login. Runs ONCE on
-   * mount; doesn't overwrite anything the user has already typed.
-   * Silent on read failure — worst case the field is just empty. */
+  /* On mount: read the last-saved email. If we find one, the user
+   * has signed in on this device before — open in Login mode with
+   * the email pre-filled. Otherwise, open in Signup — first-time
+   * users should see the registration form by default, not be
+   * forced to discover the "Sign up" toggle. */
   useEffect(() => {
     AsyncStorage.getItem(LAST_EMAIL_KEY)
-      .then((saved) => { if (saved) setEmail(saved); })
-      .catch(() => {});
+      .then((saved) => {
+        if (saved) {
+          setEmail(saved);
+          setMode('login');
+        } else {
+          setMode('signup');
+        }
+      })
+      .catch(() => setMode('signup')); // safer default on read failure
   }, []);
 
   /* ── Consent state (signup only) ──────────────────────────────
@@ -98,6 +117,49 @@ export default function AuthScreen({ onSuccess }: Props) {
   /* Toggle between dotted password (default) and plain text. We do NOT
      persist this — every time the screen opens, password is masked. */
   const [showPassword, setShowPassword] = useState(false);
+
+  /* ── Forgot password ─────────────────────────────────────────────
+   *
+   * Sends a password-reset email via Supabase. The email contains
+   * a magic link that opens Supabase's hosted recovery page where
+   * the user picks a new password. No native deep-linking required
+   * for v14 — the link works in any browser.
+   *
+   * Tester report 2026-04-26: "אין לנו את האופציה להחלפת סיסמא של
+   * המשתמש במידה וירצה". Critical for a closed test where 12
+   * people are setting passwords for the first time and at least
+   * one will mistype + forget what they wrote.
+   *
+   * Fail mode: if the email isn't registered, Supabase still
+   * returns success (security best practice — don't leak which
+   * emails exist). We just tell the user to check their inbox.
+   */
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const handleForgotPassword = async () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) {
+      Alert.alert('Email needed', 'Type your email above first, then tap "Forgot password?".');
+      return;
+    }
+    setResettingPassword(true);
+    try {
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(trimmed, {
+        redirectTo: 'https://nomadspeople.com/reset-password',
+      });
+      if (resetErr) {
+        Alert.alert('Could not send reset email', friendlyAuthError(resetErr));
+        return;
+      }
+      Alert.alert(
+        'Check your email',
+        `We sent password reset instructions to ${trimmed}.\n\nThe link works in any browser. If you don't see it within a couple of minutes, check your spam folder.`,
+      );
+    } catch (ex) {
+      Alert.alert('Could not send reset email', friendlyAuthError(ex));
+    } finally {
+      setResettingPassword(false);
+    }
+  };
 
   const handleSubmit = async () => {
     setError('');
@@ -257,6 +319,19 @@ export default function AuthScreen({ onSuccess }: Props) {
     setError('');
   };
 
+  // While AsyncStorage is being read for the smart-default mode,
+  // show a tiny spinner instead of flashing Login → Signup. The
+  // read is fast (sub-100ms typically), so this is invisible to
+  // the user — but it removes the "wait, why is the form
+  // rearranging itself" jitter on slow Android cold starts.
+  if (mode === null) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top, alignItems: 'center', justifyContent: 'center' }]}>
+        <ActivityIndicator color={colors.primary} />
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       style={[styles.root, { paddingTop: insets.top }]}
@@ -385,6 +460,27 @@ export default function AuthScreen({ onSuccess }: Props) {
               />
             </TouchableOpacity>
           </View>
+
+          {/* ─── Forgot password? — login mode only ───
+               Tester report 2026-04-26: "אין לנו את האופציה
+               להחלפת סיסמא של המשתמש במידה וירצה". Critical for a
+               closed test where 12 people are setting passwords
+               for the first time and at least one will mistype +
+               forget what they wrote. Wired to handleForgotPassword
+               above, which uses Supabase resetPasswordForEmail. */}
+          {mode === 'login' && (
+            <TouchableOpacity
+              style={styles.forgotBtn}
+              onPress={handleForgotPassword}
+              disabled={resettingPassword}
+              activeOpacity={0.6}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.forgotText}>
+                {resettingPassword ? 'Sending email…' : 'Forgot password?'}
+              </Text>
+            </TouchableOpacity>
+          )}
 
           {/* ─── Consent checkboxes (signup only) ───
                GDPR Article 7 requires explicit, verifiable consent.
@@ -669,6 +765,20 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     padding: s(3),
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  /* "Forgot password?" — login mode only. Right-aligned just under
+   * the password row, soft text so it doesn't compete with the
+   * primary Continue button. */
+  forgotBtn: {
+    alignSelf: 'flex-end',
+    marginTop: s(2),
+    paddingVertical: s(1),
+    paddingHorizontal: s(2),
+  },
+  forgotText: {
+    fontSize: s(5.5),
+    color: c.primary,
+    fontWeight: FW.medium,
   },
 
   /* ── Consent group ── */
