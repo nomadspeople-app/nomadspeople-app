@@ -33,6 +33,7 @@ import { AuthContext } from '../App';
 import * as Haptics from 'expo-haptics';
 import { trackEvent } from '../lib/tracking';
 import Bubble from './Bubble';
+import AvatarTouchable from './AvatarTouchable';
 import NomadIcon from './NomadIcon';
 import { s, FW, useTheme, type ThemeColors } from '../lib/theme';
 import { supabase } from '../lib/supabase';
@@ -478,6 +479,12 @@ export default function TimerBubble({
       avatarUrl={creatorAvatarUrl || null}
       avatarFallback={initials}
       avatarFallbackColor={colors.primary}
+      // Tap the creator's avatar at the top of the bubble → their
+      // profile (UX rule 2026-04-28: every avatar in the app is a
+      // portal). The body of the bubble keeps its own behaviour
+      // (the CTA button below handles its taps).
+      avatarUserId={checkin?.user_id ?? null}
+      avatarUserName={creatorName ?? null}
       // No onPress on the shell — the inner CTA button owns the tap.
       // Backdrop still dismisses via onDismiss.
       onPress={undefined}
@@ -517,11 +524,22 @@ export default function TimerBubble({
           "one on top of the other" like Instagram Stories. */}
       <View style={st.membersRow}>
         <View style={st.avatarStrip}>
-          {shownAvatars.map((p, i) => (
-            <View key={p.user_id} style={i > 0 ? { marginLeft: -14 } : null}>
-              <MemberDot url={p.avatar_url} name={p.full_name} st={st} />
-            </View>
-          ))}
+          {shownAvatars.map((p, i) => {
+            // The synthetic "creator" placeholder uses 'creator' as
+            // its user_id when the real id is missing — never a real
+            // UUID, so AvatarTouchable should NOT navigate on it.
+            const tappableId = p.user_id && p.user_id !== 'creator' ? p.user_id : null;
+            return (
+              <View key={p.user_id} style={i > 0 ? { marginLeft: -14 } : null}>
+                <MemberDot
+                  userId={tappableId}
+                  url={p.avatar_url}
+                  name={p.full_name}
+                  st={st}
+                />
+              </View>
+            );
+          })}
           {overflow > 0 && (
             <View style={[st.memberDot, st.memberDotMore, { marginLeft: -14 }]}>
               <Text style={st.memberMoreText}>+{overflow}</Text>
@@ -614,23 +632,28 @@ export default function TimerBubble({
 
 /* ─── Member avatar dot — uniform 32×32 for every participant.
     No per-user styling differences; the only variation is the
-    image itself (or initials fallback). */
+    image itself (or initials fallback). Wrapped in AvatarTouchable
+    so each face in the participants row → that person's profile
+    (2026-04-28 UX rule). userId may be null for the synthetic "you"
+    placeholder injected client-side before the join roundtrip; in
+    that case the wrapper degrades to a plain View. */
 function MemberDot({
-  url, name, st,
+  userId, url, name, st,
 }: {
+  userId: string | null;
   url: string | null;
   name: string | null;
   st: ReturnType<typeof styles>;
 }) {
   const initials = (name || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   return (
-    <View style={st.memberDot}>
+    <AvatarTouchable userId={userId} userName={name} style={st.memberDot}>
       {url ? (
         <Image source={{ uri: url }} style={st.memberImg} />
       ) : (
         <Text style={st.memberInitials}>{initials}</Text>
       )}
-    </View>
+    </AvatarTouchable>
   );
 }
 

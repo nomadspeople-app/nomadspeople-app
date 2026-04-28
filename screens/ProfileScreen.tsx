@@ -11,6 +11,7 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import NomadIcon from '../components/NomadIcon';
+import AvatarTouchable from '../components/AvatarTouchable';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList } from '../lib/types';
 import { postEventSystemMessage, eventSystemMsg } from '../lib/eventSystemMessages';
@@ -1118,7 +1119,12 @@ export default function ProfileScreen() {
             <View style={styles.followedByRow}>
               <View style={styles.followedByAvatars}>
                 {followerPreviews.slice(0, 3).map((f, i) => (
-                  <View key={f.user_id} style={[styles.followedByAvWrap, { marginLeft: i === 0 ? 0 : -s(3.5), zIndex: 3 - i }]}>
+                  <AvatarTouchable
+                    key={f.user_id}
+                    userId={f.user_id}
+                    userName={f.full_name || f.username || null}
+                    style={[styles.followedByAvWrap, { marginLeft: i === 0 ? 0 : -s(3.5), zIndex: 3 - i }]}
+                  >
                     {f.avatar_url ? (
                       <Image source={{ uri: f.avatar_url }} style={styles.followedByAvImg} />
                     ) : (
@@ -1126,7 +1132,7 @@ export default function ProfileScreen() {
                         <Text style={styles.followedByAvText}>{(f.full_name ?? '?')[0]}</Text>
                       </View>
                     )}
-                  </View>
+                  </AvatarTouchable>
                 ))}
               </View>
               <Text style={[styles.followedByText, { color: colors.textSec }]} numberOfLines={2}>

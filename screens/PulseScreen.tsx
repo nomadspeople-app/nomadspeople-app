@@ -8,6 +8,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import * as Haptics from 'expo-haptics';
 import NomadIcon from '../components/NomadIcon';
+import AvatarTouchable from '../components/AvatarTouchable';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList } from '../lib/types';
 import { useConversations, lockConversation, deleteConversation, leaveGroupChat, hideConversation, unhideConversation, type ConversationWithPreview } from '../lib/hooks';
@@ -280,13 +281,25 @@ function SwipeableConvRow({
             isGroup,
           })}
         >
-          {/* Avatar */}
-          <View style={[
-            st.avatar,
-            { backgroundColor: avatarColor },
-            isGroup && st.avatarGroup,
-            isDead && { opacity: 0.55 },
-          ]}>
+          {/* Avatar — tappable for DMs (→ that user's profile),
+              non-tappable for groups (no single user). The outer
+              row's TouchableOpacity still catches taps OUTSIDE the
+              avatar circle and routes them to the chat, so:
+                - tap face → profile
+                - tap anywhere else on the row → chat
+              The select-mode avatar render below (line ~658) is
+              intentionally NOT wrapped — taps there toggle the
+              checkbox, profile navigation would fight that. */}
+          <AvatarTouchable
+            userId={isGroup ? null : (otherMember?.user_id ?? null)}
+            userName={isGroup ? null : (otherProfile?.display_name || otherProfile?.full_name || null)}
+            style={[
+              st.avatar,
+              { backgroundColor: avatarColor },
+              isGroup && st.avatarGroup,
+              isDead && { opacity: 0.55 },
+            ]}
+          >
             {avatarUrl ? (
               <Image source={{ uri: avatarUrl }} style={st.avatarImg} />
             ) : (
@@ -297,7 +310,7 @@ function SwipeableConvRow({
                 {avatarText}
               </Text>
             )}
-          </View>
+          </AvatarTouchable>
 
           {/* Name + preview */}
           <View style={st.info}>

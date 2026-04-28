@@ -11,6 +11,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 import NomadIcon from '../components/NomadIcon';
+import AvatarTouchable from '../components/AvatarTouchable';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
 import type { RootStackParamList, AppMessage } from '../lib/types';
 import {
@@ -670,17 +671,25 @@ export default function ChatScreen() {
             <View key={msg.id}>
             {dateDivider}
             <View style={[st.msgRow, isMe && st.msgRowMe, sameSenderPrev && { marginTop: s(0.5) }]}>
-              {/* Avatar slot */}
+              {/* Avatar slot — tappable per 2026-04-28 UX rule
+                  ("every avatar in the app is a portal to its
+                  profile"). isMe is excluded above so this only
+                  ever wraps the OTHER party's avatar; tapping
+                  your own face has no useful destination. */}
               {!isMe && (
                 <View style={st.avSlot}>
                   {isLastInGroup ? (
-                    <View style={[st.tinyAv, { backgroundColor: senderCol }]}>
+                    <AvatarTouchable
+                      userId={msg.sender_id}
+                      userName={senderName}
+                      style={[st.tinyAv, { backgroundColor: senderCol }]}
+                    >
                       {senderAvatar ? (
                         <Image source={{ uri: senderAvatar }} style={st.tinyAvImg} />
                       ) : (
                         <Text style={st.tinyAvText}>{senderInit}</Text>
                       )}
-                    </View>
+                    </AvatarTouchable>
                   ) : null}
                 </View>
               )}

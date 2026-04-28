@@ -29,6 +29,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { s, FW, useTheme, type ThemeColors } from '../lib/theme';
+import AvatarTouchable from './AvatarTouchable';
 
 const SCREEN_H = Dimensions.get('window').height;
 
@@ -37,6 +38,14 @@ interface Props {
   avatarUrl?: string | null;
   avatarFallback?: string;
   avatarFallbackColor?: string;
+  /** When provided, the avatar circle at the top of the bubble
+   *  becomes a tap target that opens the user's profile. The
+   *  bubble's own onPress (if defined) still handles taps on the
+   *  card BODY — only the avatar gets this navigation behaviour.
+   *  Pass `undefined` to keep the avatar non-tappable (e.g., when
+   *  the bubble represents an event without a single owner). */
+  avatarUserId?: string | null;
+  avatarUserName?: string | null;
   /** Tap on the speech-bubble body fires this (if defined). */
   onPress?: () => void;
   /** Tap outside (backdrop) fires this. */
@@ -47,6 +56,7 @@ interface Props {
 export default function Bubble({
   visible,
   avatarUrl, avatarFallback, avatarFallbackColor,
+  avatarUserId, avatarUserName,
   onPress, onDismiss, children,
 }: Props) {
   const insets = useSafeAreaInsets();
@@ -164,8 +174,18 @@ export default function Bubble({
         ]}
       >
         {/* Avatar overlapping the top of the card. Same styling as
-            before — 60px circle, 4px white border, soft shadow. */}
-        <View style={st.avatarWrap}>
+            before — 60px circle, 4px white border, soft shadow.
+            Wrapped in AvatarTouchable so the creator's circle is a
+            portal to their profile (UX rule 2026-04-28: every avatar
+            in the app is tappable). When no avatarUserId is passed
+            the wrapper degrades to a non-tappable View — visual is
+            identical, layout is unchanged. */}
+        <AvatarTouchable
+          userId={avatarUserId ?? null}
+          userName={avatarUserName ?? null}
+          style={st.avatarWrap}
+          activeOpacity={0.85}
+        >
           {avatarUrl ? (
             <Image source={{ uri: avatarUrl }} style={st.avatar} />
           ) : (
@@ -173,7 +193,7 @@ export default function Bubble({
               <Text style={st.avatarFallback}>{avatarFallback || '?'}</Text>
             </View>
           )}
-        </View>
+        </AvatarTouchable>
 
         {/* The card itself — white, rounded, shadowed.
              When a parent provides `onPress`, we wrap the surface

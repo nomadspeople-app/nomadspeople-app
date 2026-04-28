@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import NomadIcon from '../components/NomadIcon';
+import AvatarTouchable from '../components/AvatarTouchable';
 import type { RootStackParamList } from '../lib/types';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
@@ -598,15 +599,25 @@ export default function PeopleScreen() {
                   {/* Date range */}
                   {dateRange ? <Text style={st.flightDate}>{dateRange}</Text> : null}
 
-                  {/* Bottom: people dots + count */}
+                  {/* Bottom: people dots + count.
+                      Each dot is its own AvatarTouchable — tap a face
+                      → that flight-member's profile. Outer card tap
+                      still routes to the flight detail sheet (same
+                      pattern as PulseScreen DM rows: inner avatar
+                      → profile, surrounding card → primary action). */}
                   <View style={st.flightBottom}>
                     <View style={st.flightDots}>
                       {memberPreviews.map((m: any, i: number) => (
-                        <View key={m.id} style={[st.flightDot, { marginLeft: i > 0 ? -s(1.5) : 0, backgroundColor: avatarColor(m.user_id) }]}>
+                        <AvatarTouchable
+                          key={m.id}
+                          userId={m.user_id || null}
+                          userName={m.profile?.full_name || null}
+                          style={[st.flightDot, { marginLeft: i > 0 ? -s(1.5) : 0, backgroundColor: avatarColor(m.user_id) }]}
+                        >
                           {m.profile?.avatar_url ? (
                             <Image source={{ uri: m.profile.avatar_url }} style={st.flightDotImg} />
                           ) : null}
-                        </View>
+                        </AvatarTouchable>
                       ))}
                     </View>
                     <Text style={st.flightCount}>{item.member_count} {item.member_count === 1 ? t('people.nomadSingular') : t('people.nomadPlural')}</Text>
