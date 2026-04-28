@@ -425,22 +425,46 @@ function BubbleVisual({
             }}
           />
         )}
-        <View style={[st.avatarRing, { borderColor }]}>
-          <View style={[st.avatar, { backgroundColor: catStyle.color }]}>
+        {/* Bubble redesign 2026-04-28 — owner directive after seeing
+         * the Bangkok-style reference: "the activity icon is the
+         * bubble itself, the photo is a small corner accent". The
+         * structure inverted — emoji moves to the CENTER of the
+         * white avatarRing (was a small badge in the corner), and
+         * the avatar photo becomes a small circle hanging off the
+         * bottom-right of the bubble (~50% inside / 50% outside the
+         * ring's edge). The colored ring (green/red/gray) still
+         * encodes status / timer / expired the same way as before.
+         *
+         * Why a positive-padding wrapper instead of negative offsets:
+         * Rule 7 (CLAUDE.md "Image-Based Markers" / "No Negative
+         * Offsets") forbids negative top/right/bottom/left in any
+         * Marker subtree because view-shot's captureRef uses each
+         * element's measured bounds and crops anything sticking
+         * outside. By giving the wrapper paddingBottom + paddingRight
+         * = s(4) and pinning the avatar at bottom:0/right:0 of the
+         * wrapper, the avatar lands ~50% outside the avatarRing's
+         * visible circle while staying inside the wrapper's measured
+         * bounds — view-shot captures the whole thing intact. */}
+        <View style={{
+          paddingBottom: s(4),
+          paddingRight: s(4),
+          position: 'relative',
+        }}>
+          <View style={[st.avatarRing, { borderColor }]}>
+            <Text style={st.bubbleEmoji}>{pinEmoji}</Text>
+          </View>
+          <View style={[st.bubbleAvatar, { backgroundColor: catStyle.color }]}>
             {avatarUrl ? (
               <CachedImage
                 source={{ uri: avatarUri(avatarUrl) }}
-                style={st.avatarImg}
+                style={st.bubbleAvatarImg}
                 recyclingKey={c.id}
                 onLoad={onAvatarLoad}
                 onError={onAvatarError}
               />
             ) : (
-              <Text style={st.avatarTxt}>{ini}</Text>
+              <Text style={st.bubbleAvatarTxt}>{ini}</Text>
             )}
-          </View>
-          <View style={st.emojiBadge}>
-            <Text style={st.emojiText}>{pinEmoji}</Text>
           </View>
         </View>
       </View>
@@ -3686,30 +3710,83 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     marginTop: s(0.5),
   },
 
-  /* Outer ring = the colored border around the avatar (compact: -15%) */
+  /* Outer ring = the colored border around the bubble (the bubble
+   * proper). 2026-04-28 owner directive — the bubble is now the
+   * Activity, the photo is a corner accent: enlarged to s(33) (was
+   * s(27)) to give the centered emoji enough room to read as the
+   * primary visual at a glance. The colored border (green/red/gray)
+   * still encodes active vs timer vs expired the same way.
+   *
+   * borderRadius: 9999 — RN/Android clamps to half-min-dimension
+   * natively, guaranteeing a perfect circle on every device.
+   *
+   * 2026-04-27 evening: removed the shadow (shadowColor / shadowOffset
+   * / shadowOpacity / shadowRadius / elevation). Eli kept seeing a
+   * half-rendered avatar even after the borderRadius:9999 fix.
+   * Samsung One UI uses Skia for compositing in newer versions, and
+   * shadows on a custom Marker view extend OUTSIDE the view's
+   * measured bounds. The marker bitmap snapshot path on One UI
+   * intermittently fails when shadows are present — the snapshot
+   * captures only the part of the shape that fits inside the
+   * shadow-extended bounds, leaving the visible content cut.
+   *
+   * Trade-off: marker pins lose their soft drop-shadow on Android.
+   * The colored border (borderColor passed inline) still gives them
+   * visual weight on the map. iOS keeps shadows fine even with
+   * shadowColor removed because of how its compositor handles
+   * unbounded shadows; this style runs the same on both. */
   avatarRing: {
-    // borderRadius: 9999 — RN/Android clamps to half-min-dimension
-    // natively, guaranteeing a perfect circle on every device.
-    //
-    // 2026-04-27 evening: removed the shadow (shadowColor / shadowOffset
-    // / shadowOpacity / shadowRadius / elevation). Eli kept seeing a
-    // half-rendered avatar even after the borderRadius:9999 fix.
-    // Samsung One UI uses Skia for compositing in newer versions, and
-    // shadows on a custom Marker view extend OUTSIDE the view's
-    // measured bounds. The marker bitmap snapshot path on One UI
-    // intermittently fails when shadows are present — the snapshot
-    // captures only the part of the shape that fits inside the
-    // shadow-extended bounds, leaving the visible content cut.
-    //
-    // Trade-off: marker pins lose their soft drop-shadow on Android.
-    // The colored border (borderColor passed inline) still gives them
-    // visual weight on the map. iOS keeps shadows fine even with
-    // shadowColor removed because of how its compositor handles
-    // unbounded shadows; this style runs the same on both.
-    width: s(27), height: s(27), borderRadius: 9999,
+    width: s(33), height: s(33), borderRadius: 9999,
     borderWidth: 2.5,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: c.card,
+  },
+
+  /* The activity emoji glyph centered inside the bubble. Replaces the
+   * old "tiny emoji corner badge" pattern entirely. fontSize s(18) is
+   * sized so the emoji visually fills ~60% of the bubble — big enough
+   * to read at the default city-level zoom, small enough that the
+   * colored border ring still defines the bubble's edge. */
+  bubbleEmoji: {
+    fontSize: s(18),
+    textAlign: 'center',
+    // includeFontPadding:false trims the extra vertical leading
+    // Android renders around emoji glyphs. Without it the emoji
+    // sits a couple of pixels above the visual center.
+    includeFontPadding: false as any,
+  },
+
+  /* Small avatar photo circle at bottom-right of the bubble — a
+   * "who created this" credit, ~50% overhanging the bubble's edge.
+   *
+   * Sized at s(15) (was s(13) in the reference image; +15% per owner).
+   * 1.5pt white border separates it visually from the bubble surface
+   * regardless of avatar background color. Position absolute with
+   * bottom:0 / right:0 of the padding-expanded wrapper places its
+   * bottom-right corner at the wrapper's bottom-right, giving the
+   * desired half-overhang without touching negative offsets. */
+  bubbleAvatar: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: s(15), height: s(15), borderRadius: 9999,
+    alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden' as const,
+    borderWidth: 1.5,
+    borderColor: c.white,
+  },
+  /* Photo fills the avatar circle minus the white border. Uses the
+   * same s(15) the parent reserves; the parent's overflow:hidden +
+   * borderRadius:9999 clip it into a perfect circle. */
+  bubbleAvatarImg: {
+    width: s(15), height: s(15), borderRadius: 9999,
+  },
+  /* Initials shown when the user has no avatar_url — sized small so
+   * a 2-letter pair like "BA" still fits comfortably in s(15). */
+  bubbleAvatarTxt: {
+    color: c.white,
+    fontSize: s(5),
+    fontWeight: FW.bold,
   },
 
   /* Inner avatar circle.
