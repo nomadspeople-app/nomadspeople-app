@@ -567,7 +567,7 @@ export default function ChatScreen() {
         <View style={st.reqBanner}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: s(3) }}>
             <NomadIcon name="mail" size={14} color="#F59E0B" strokeWidth={1.4} />
-            <Text style={st.reqText}>message request</Text>
+            <Text style={st.reqText}>{t('chat.messageRequest')}</Text>
           </View>
           <Text style={{ fontSize: s(5.5), color: '#92700C', marginBottom: s(4) }}>
             this person isn't in your contacts. approve to move to direct.
@@ -793,7 +793,7 @@ export default function ChatScreen() {
       {isLocked ? (
         <View style={[st.lockedBar, { paddingBottom: Math.max(insets.bottom, s(6)) }]}>
           <NomadIcon name="lock" size={s(5)} color="#9CA3AF" strokeWidth={1.6} />
-          <Text style={st.lockedText}>this chat was closed by the creator</Text>
+          <Text style={st.lockedText}>{t('chat.closedByCreator')}</Text>
         </View>
       ) : (
         <View style={[st.inputArea, { paddingBottom: Math.max(insets.bottom, s(4)) }]}>
@@ -885,8 +885,8 @@ export default function ChatScreen() {
             <View style={st.safeIcon}>
               <NomadIcon name="shield" size={s(12)} color={colors.primary} strokeWidth={1.8} />
             </View>
-            <Text style={st.safeTitle}>stay safe</Text>
-            <Text style={st.safeSub}>a few things to keep in mind when connecting with new people</Text>
+            <Text style={st.safeTitle}>{t('chat.staySafeTitle')}</Text>
+            <Text style={st.safeSub}>{t('chat.staySafeSub')}</Text>
             <View style={st.safeTips}>
               {[
                 { icon: 'pin' as const, text: 'meet in public, well-lit places' },
@@ -901,7 +901,7 @@ export default function ChatScreen() {
               ))}
             </View>
             <TouchableOpacity style={st.safeBtn} onPress={() => setShowSafety(false)} activeOpacity={0.8}>
-              <Text style={st.safeBtnTxt}>got it</Text>
+              <Text style={st.safeBtnTxt}>{t('chat.staySafeGotIt')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -959,7 +959,7 @@ export default function ChatScreen() {
                 disabled={uploadingImage}
                 activeOpacity={0.7}
               >
-                <Text style={[st.previewCancelTxt, { color: colors.dark }]}>Cancel</Text>
+                <Text style={[st.previewCancelTxt, { color: colors.dark }]}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[st.previewSendBtn, { backgroundColor: colors.primary, opacity: uploadingImage ? 0.7 : 1 }]}
@@ -972,7 +972,7 @@ export default function ChatScreen() {
                 ) : (
                   <>
                     <NomadIcon name="send" size={s(5.5)} color="#fff" strokeWidth={2} />
-                    <Text style={st.previewSendTxt}>Send</Text>
+                    <Text style={st.previewSendTxt}>{t('common.send')}</Text>
                   </>
                 )}
               </TouchableOpacity>

@@ -419,4 +419,48 @@ export const ru: Record<string, string> = {
   'profileCard.peopleInActivity': '{{count}} человек в этой активности',
   'profileCard.alsoInGroups': 'также в {{count}} группе',
   'profileCard.alsoInGroupsPlural': 'также в {{count}} группах',
+
+  /* ── i18n cleanup batch 2026-04-27 ── */
+
+  /* People */
+  'people.relevantActivities': 'актуальные активности',
+  'people.noActivitiesNearby': 'поблизости пока ничего',
+  'people.incomingFlights': 'входящие рейсы',
+  'people.noFlightsYet': 'пока нет рейсов',
+  'people.meetupPeople': 'люди для встреч',
+  'people.completeProfileToMatch': 'заполните профиль, чтобы найти совпадения',
+  'people.nomadSingular': 'кочевник',
+  'people.nomadPlural': 'кочевников',
+  'people.distanceAway': '{{distance}} отсюда',
+  'people.fallbackName': 'Кочевник',
+
+  /* Snooze */
+  'snooze.title': 'вы в режиме сна',
+  'snooze.subtitle': 'люди и активности скрыты\nпока вы отдыхаете',
+  'snooze.wakeUp': 'проснуться',
+
+  /* Chat */
+  'chat.messageRequest': 'запрос на сообщение',
+  'chat.closedByCreator': 'этот чат закрыт создателем',
+  'chat.staySafeTitle': 'будьте осторожны',
+  'chat.staySafeSub': 'несколько вещей, которые стоит помнить при знакомстве с новыми людьми',
+  'chat.staySafeGotIt': 'понятно',
+  'chat.previewSend': 'отправить',
+
+  /* Flight detail */
+  'flightDetail.title': 'входящий рейс',
+
+  /* Group info */
+  'groupInfo.title': 'информация о группе',
+  'groupInfo.editName': 'изменить имя',
+  'groupInfo.endEvent': 'завершить событие',
+  'groupInfo.shareActivity': 'поделиться активностью',
+  'groupInfo.muteNotifications': 'отключить уведомления',
+  'groupInfo.openInMaps': 'открыть в картах',
+  'groupInfo.viewAll': 'показать все',
+  'groupInfo.leaveChat': 'покинуть чат',
+
+  /* Common (additive) */
+  'common.send': 'отправить',
+  'common.gotIt': 'понятно',
 };

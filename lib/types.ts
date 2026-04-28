@@ -1,3 +1,5 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
+
 /* ─── Database row types for Supabase ─── */
 
 export interface VisitedPlace {
@@ -233,14 +235,34 @@ export interface Notification {
 
 /* ─── Navigation types ─── */
 export type RootTabParamList = {
-  Home: { newActivity?: { text: string; emoji: string; category: string } } | undefined;
+  /* `openCreate` is a nonce (Date.now()) — every tap of the global
+   * floating Plus button increments it so HomeScreen's useEffect
+   * always re-fires `openCreation()` even if the user was already
+   * on the Home tab. HomeScreen clears the param right after
+   * consuming it (nav.setParams({ openCreate: undefined })), so a
+   * navigation back to Home without re-tapping Plus does NOT
+   * re-open the creation bubble. */
+  Home:
+    | {
+        newActivity?: { text: string; emoji: string; category: string };
+        openCreate?: number;
+      }
+    | undefined;
   People: undefined;
   Pulse: undefined;
   Profile: undefined;
 };
 
 export type RootStackParamList = {
-  MainTabs: undefined;
+  /* MainTabs accepts nested-navigator params per RN's
+   * "Navigating to a screen in a nested navigator" pattern. Lets
+   * stack-level callers (e.g. App.tsx CreateFab, push notification
+   * deep links) target a specific tab + params:
+   *   navigation.navigate('MainTabs', { screen: 'Home', params: { openCreate: ts } })
+   * Without this typing, calling navigate with that payload
+   * type-checks under <any> but errors at runtime as
+   * "screen Home was not handled by any navigator". */
+  MainTabs: NavigatorScreenParams<RootTabParamList> | undefined;
   Onboarding: undefined;
   Chat: { conversationId: string; title: string; avatarColor?: string; avatarText?: string; isGroup?: boolean };
   GroupInfo: { conversationId: string };

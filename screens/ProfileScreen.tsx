@@ -20,6 +20,7 @@ import { useProfile, useFollow, usePhotoPosts, usePhotoLike, usePhotoComments, c
 import { AuthContext, useAuthContext } from '../App';
 import type { PhotoPost } from '../lib/hooks';
 import { pickAndUploadAvatar, pickAndUploadPostImage } from '../lib/imagePicker';
+import { useAvatar } from '../lib/AvatarContext';
 import { supabase } from '../lib/supabase';
 import { trackProfileView } from '../lib/tracking';
 import FlightRouteStrip from '../components/profile/FlightRouteStrip';
@@ -252,6 +253,12 @@ export default function ProfileScreen() {
   const { toggle: toggleLike } = usePhotoLike();
   const { colors } = useTheme();
   const { t } = useI18n();
+  // bustAvatar() invalidates every cached avatar URL across the app
+  // (map markers, people list, chat headers) so a fresh upload paints
+  // through instead of being shadowed by the stale-URL response in
+  // the expo-image disk cache. See lib/AvatarContext.tsx + the
+  // CLAUDE.md "Avatar Cache System" rule for the contract.
+  const { bustAvatar } = useAvatar();
 
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const feedStyles = useMemo(() => makeFeedStyles(colors), [colors]);
@@ -357,12 +364,17 @@ export default function ProfileScreen() {
    *   3) Surface any DB error via Alert. Pre-fix: silent failure.
    *   4) refetch() on success so the new avatar paints immediately.
    *
-   * NOTE: bustAvatar() (the cache-bust documented in CLAUDE.md
-   * "Avatar Cache System") is NOT yet wired into ProfileScreen —
-   * the rest of the app reads `avatar_url` directly. Adding a
-   * proper AvatarContext + bustAvatar() call here is a follow-up
-   * that needs touching every avatar consumer; not scoped to
-   * this hotfix.
+   * 5) bustAvatar() — bumps the AvatarContext version counter so
+   *    every other surface in the app (HomeScreen markers, People
+   *    list, Chat headers, etc.) re-renders with a fresh
+   *    `?v=<n>` cache-bust query and pulls the new image from
+   *    storage instead of serving the cached old URL response from
+   *    expo-image's disk cache. Without this, the user sees the
+   *    new avatar on the Profile screen but a stale one everywhere
+   *    else until they manually pull-to-refresh — the kind of
+   *    inconsistency that erodes trust in a social product. Wired
+   *    2026-04-27 evening; see CLAUDE.md "Avatar Cache System" rule
+   *    for the full contract.
    */
   const [avatarUploading, setAvatarUploading] = useState(false);
   const handleAvatarPress = async () => {
@@ -386,6 +398,11 @@ export default function ProfileScreen() {
         Alert.alert('Could not save avatar', error.message || 'Please try again.');
         return;
       }
+      // Cache-bust every other surface that already cached the
+      // previous avatar_url. Must fire AFTER the DB upsert succeeds
+      // so we never invalidate caches against a write that rolled
+      // back. See AvatarContext.tsx for the contract.
+      bustAvatar();
       // Background reconciliation — non-blocking; the optimistic
       // update already drove the UI, this just makes sure other
       // server-side fields (e.g., updated_at) stay in sync.

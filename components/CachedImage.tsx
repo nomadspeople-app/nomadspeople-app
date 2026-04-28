@@ -89,6 +89,18 @@ export interface CachedImageProps {
    *  for lists — e.g. the marker id for pin avatars. Ignored
    *  by the fallback. */
   recyclingKey?: string;
+  /** Fired once when the image has fully decoded and is on
+   *  screen. Used by the map-marker capture pipeline to know
+   *  when it's safe to snapshot the View → PNG (otherwise the
+   *  capture happens on a transparent placeholder). Both expo-
+   *  image and React Native's Image expose onLoad with the
+   *  same trigger semantics, so the wrapper just forwards. */
+  onLoad?: () => void;
+  /** Fired if the image fails to decode (404, network error,
+   *  malformed URL, etc.). The marker capture pipeline treats
+   *  this as "stop waiting and capture anyway" so a broken
+   *  avatar URL doesn't block the entire pin from rendering. */
+  onError?: () => void;
 }
 
 export default function CachedImage({
@@ -97,6 +109,8 @@ export default function CachedImage({
   contentFit = 'cover',
   transitionMs = 180,
   recyclingKey,
+  onLoad,
+  onError,
 }: CachedImageProps) {
   // Normalize { uri } → string for expo-image and { uri } for
   // RN. Nullish / empty string → render nothing.
@@ -120,6 +134,8 @@ export default function CachedImage({
         transition={transitionMs}
         recyclingKey={recyclingKey}
         priority="normal"
+        onLoad={onLoad}
+        onError={onError}
       />
     );
   }
@@ -137,6 +153,8 @@ export default function CachedImage({
       source={{ uri: normalizedUri }}
       style={style}
       resizeMode={rnResizeMode}
+      onLoad={onLoad ? () => onLoad() : undefined}
+      onError={onError ? () => onError() : undefined}
     />
   );
 }

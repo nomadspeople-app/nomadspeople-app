@@ -449,4 +449,55 @@ export const en: Record<string, string> = {
   'profileCard.peopleInActivity': '{{count}} people in this activity',
   'profileCard.alsoInGroups': 'also in {{count}} group',
   'profileCard.alsoInGroupsPlural': 'also in {{count}} groups',
+
+  /* ── i18n cleanup batch 2026-04-27 ─────────────────────────────
+   * Strings that previously lived hardcoded in PeopleScreen,
+   * ChatScreen, FlightDetailScreen, and GroupInfoScreen. Each is
+   * additive — no existing key was renamed — so a missing
+   * translation in he.ts/ru.ts falls back to the English string
+   * via the i18n loader's default. Any new screen text added here
+   * MUST be added to all three locale files in the same commit
+   * (CLAUDE.md i18n discipline rule). */
+
+  /* People — empty states + sections */
+  'people.relevantActivities': 'relevant activities',
+  'people.noActivitiesNearby': 'no activities nearby right now',
+  'people.incomingFlights': 'incoming flights',
+  'people.noFlightsYet': 'no flights yet',
+  'people.meetupPeople': 'meetup people',
+  'people.completeProfileToMatch': 'complete your profile to find matches',
+  'people.nomadSingular': 'nomad',
+  'people.nomadPlural': 'nomads',
+  'people.distanceAway': '{{distance}} away',
+  'people.fallbackName': 'Nomad',
+
+  /* Snooze overlay (reused across People/Home) */
+  'snooze.title': "you're snoozed",
+  'snooze.subtitle': "people and activities are hidden\nwhile you rest",
+  'snooze.wakeUp': 'wake up',
+
+  /* Chat */
+  'chat.messageRequest': 'message request',
+  'chat.closedByCreator': 'this chat was closed by the creator',
+  'chat.staySafeTitle': 'stay safe',
+  'chat.staySafeSub': 'a few things to keep in mind when connecting with new people',
+  'chat.staySafeGotIt': 'got it',
+  'chat.previewSend': 'Send',
+
+  /* Flight detail */
+  'flightDetail.title': 'incoming flight',
+
+  /* Group info */
+  'groupInfo.title': 'Group Info',
+  'groupInfo.editName': 'edit name',
+  'groupInfo.endEvent': 'end event',
+  'groupInfo.shareActivity': 'Share Activity',
+  'groupInfo.muteNotifications': 'Mute Notifications',
+  'groupInfo.openInMaps': 'Open in Maps',
+  'groupInfo.viewAll': 'view all',
+  'groupInfo.leaveChat': 'Leave Chat',
+
+  /* Common (additive) */
+  'common.send': 'Send',
+  'common.gotIt': 'got it',
 };

@@ -13,6 +13,8 @@ expo-env.d.ts
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
+keystore.properties
 *.p8
 *.p12
 *.key
@@ -39,3 +41,12 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# private account details (contains PII — legal addresses, phone
+# numbers, personal identifiers) — kept locally but never pushed to
+# GitHub. If you see this file staged for commit, STOP and unstage.
+docs/accounts-private.md
+
+# Marketing/research (case-conflict on macOS)
+*visual-identity-research.html
+*Visual-Identity-Research.html

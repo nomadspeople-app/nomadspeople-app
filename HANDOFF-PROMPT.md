@@ -16,7 +16,7 @@
 
 **4 טאבים ראשיים:** Home (מפה), People (רשימת אנשים עם פילטרים), Pulse (Messages — שיחות DM + קבוצות עם swipe actions, mute, leave, lock), Profile.
 
-**פיצ'רים מרכזיים:** check-in למפה עם neighborhood detection, timers לפעילויות, push notifications עם deep-linking, avatar cache system, 8 שפות, light/dark mode, visibility reciprocal rule.
+**פיצ'רים מרכזיים:** check-in למפה עם neighborhood detection, timers לפעילויות, push notifications עם deep-linking, avatar cache system, 3 שפות (en/he/ru), light/dark mode, visibility reciprocal rule.
 
 ---
 
@@ -159,7 +159,7 @@ npm run build  # ל-production
 ## מה נעשה עד כה
 
 **אפליקציה:**
-- 14 מסכים בנויים (~16,744 שורות), 23 קומפוננטות, 8 שפות מלאות.
+- 14 מסכים בנויים (~16,744 שורות), 23 קומפוננטות, 3 שפות מלאות (en/he/ru).
 - Auth email/password עובד, טריגר יצירת פרופיל אוטומטי ב-Supabase, safety net ב-App.tsx.
 - Reset onboarding מתוקן (שומר ל-DB, לא דורס שדות קיימים).
 - הוסר כל קוד dev-mode, user IDs מזויפים, shortcuts מסוכנים.

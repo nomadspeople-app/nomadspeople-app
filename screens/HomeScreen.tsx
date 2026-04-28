@@ -9,6 +9,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import NomadIcon from '../components/NomadIcon';
 import type { NomadIconName } from '../components/NomadIcon';
 import MapView, { Marker } from 'react-native-maps';
+import { captureRef } from 'react-native-view-shot';
 import * as Location from 'expo-location';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -65,10 +66,18 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 /* ─── Tel Aviv center ─── */
 const TLV = { latitude: 32.0853, longitude: 34.7818 };
+/* INITIAL_REGION is what the map shows BEFORE the first GPS fix
+ * lands. Tightened from 0.08 → 0.04 (2026-04-27 evening) so the
+ * cold-start view already reads as "city center" — bubbles are
+ * legible at landing instead of dots-on-a-region. The first GPS
+ * fix (HomeScreen `gpsInitDone`) and the search-bar flow already
+ * use ≤0.04 deltas; this brings cold-start in line with them so
+ * regardless of HOW the user lands on a city, they see the same
+ * frame. */
 const INITIAL_REGION = {
   ...TLV,
-  latitudeDelta: 0.08,
-  longitudeDelta: 0.08,
+  latitudeDelta: 0.04,
+  longitudeDelta: 0.04,
 };
 
 /* ─── Dim map style for dark mode (matches app palette) ─── */
@@ -281,53 +290,95 @@ function PulseRing({ heat, size }: { heat: number; size: number }) {
   );
 }
 
-/* ─── NomadMarker — proper React component (was a bare function) ───
+/* ─── Marker rendering pipeline — IMAGE-BASED (2026-04-27 evening) ───
  *
- * Why this is a real component now (2026-04-26):
+ * The story so far (and why we ended up here):
  *
- *   `react-native-maps` snapshots a custom-view Marker into a native
- *   bitmap exactly ONCE when `tracksViewChanges={false}`. The original
- *   buildNomadMarker hardcoded that to false (CLAUDE.md rule, added
- *   to stop pin-jitter on map pans). Side effect: the snapshot fires
- *   on the very first render, BEFORE the avatar `<CachedImage/>`
- *   resolves and BEFORE Yoga lays out the rounded ring + emoji
- *   badge. The native bitmap captured an empty subtree, the marker
- *   stayed touchable (its hit-rect is fine) but rendered as
- *   completely invisible pixels.
+ *   The "Marker as a custom React subtree" approach worked on iOS and
+ *   Pixel/most stock Android, but failed badly on Samsung One UI. The
+ *   failure modes ran the full menu over a single morning of testing:
+ *   square avatars instead of circles, half-rendered bubbles, default
+ *   red Google pins (snapshot returned null), markers that disappeared
+ *   after a second, markers that only appeared after the user zoomed.
  *
- *   Tester report 2026-04-26: "אין בועות על המפה - לחצתי סתם על המפה
- *   וקפץ לי חלונית של באבל - זה אומר שהן שם רק לא רואים אותם". The
- *   pin-tap callback fired correctly because the Marker was real;
- *   only the bitmap was blank.
+ *   Root cause: react-native-maps on Android relies on Skia to capture
+ *   a custom-view Marker into a native bitmap. Samsung's One UI Skia
+ *   compositor is more sensitive to layout/snapshot timing than
+ *   stock AOSP. By the time the snapshot fires, the avatar Image may
+ *   not have decoded; Yoga may not have applied borderRadius:9999;
+ *   shadows may extend outside the measured bounds. Any of those
+ *   produces a malformed bitmap that ships to the user.
  *
- *   Standard react-native-maps fix: start with tracksViewChanges=true
- *   so the engine re-snapshots on every render, then flip to false
- *   AFTER the content has stabilised. The marker draws correctly,
- *   subsequent map pans don't redraw it, no jitter, no invisible
- *   pin. Both invariants of the original CLAUDE.md rule are kept.
+ *   We tried four band-aids over 2026-04-26 → 2026-04-27 (negative-
+ *   offset removal, hard-clamped borderRadius, shadow removal,
+ *   tracksViewChanges lifecycle tuning). Each fixed one device and
+ *   broke another. Per Rule Zero, that's the cue to extract the
+ *   shared core instead of patching a fifth time.
  *
- *   We flip after a short timer (700ms = 1 image load + layout).
- *   Avatar load events would be more precise but add complexity for
- *   no visible improvement — the 700ms snapshot includes the avatar
- *   in the overwhelming majority of cases (CachedImage hits its
- *   disk cache on warm starts).
+ *   The structural fix is image-based markers:
+ *
+ *     1. Render the bubble JSX OFFSCREEN (position:absolute, far off
+ *        the visible area) once per checkin in a dedicated stage
+ *        outside the MapView.
+ *     2. Wait for the avatar Image to fire onLoad (or onError, or a
+ *        belt-and-braces 1.5s timeout) so we know the subtree is
+ *        fully painted.
+ *     3. Capture the View → PNG via react-native-view-shot.
+ *     4. Pass the PNG URI to <Marker image={...}>. Native renders
+ *        the PNG directly as the marker icon — no bitmap snapshot
+ *        path, no Skia compositor quirks, identical pixels on every
+ *        device.
+ *
+ *   While capture is in flight (~50–300ms after avatar load), the
+ *   Marker still renders the same JSX as a child. That subtree is
+ *   the same content that's about to become the PNG, so the user
+ *   sees the bubble immediately on platforms where the snapshot
+ *   path works; on Samsung they see whatever broken visual the
+ *   snapshot path produces, then it gets replaced by the PNG when
+ *   capture completes (typically <300ms — invisible flicker).
+ *
+ *   Pulse animation for "hot" markers is currently dropped. The
+ *   PNG is static, so the breathing halo is now a static halo
+ *   (rendered into the PNG when isHot). Re-introducing the
+ *   animation would require a parallel Animated <Marker> per hot
+ *   pin — defer until we have evidence the static halo is
+ *   insufficient.
+ *
+ *   `react-native-view-shot ^4.0.3` is already a runtime dep
+ *   (shipped in AAB v14), so this refactor is JS-only. No native
+ *   module added, no `expo prebuild`, no new AAB needed — fully
+ *   compatible with Rule Minus-One while Closed Testing is open.
+ *   This change ships via EAS Update on the production channel.
  */
-function NomadMarker({
+
+/* ── BubbleVisual — the marker visual, extracted as a shared component.
+ *    Used by:
+ *     (a) the offscreen capture stage (MarkerCaptureCell), where it's
+ *         snapshot to PNG via captureRef;
+ *     (b) the Marker fallback child render, kept as a skeleton so the
+ *         native bitmap path has SOMETHING to draw during the brief
+ *         window between marker mount and PNG ready.
+ *    The two callsites pass byte-identical props so the captured
+ *    PNG matches the fallback view exactly — no visual jump when
+ *    react-native-maps switches from child-bitmap to image. */
+function BubbleVisual({
   c,
-  cityLat,
-  cityLng,
-  onPinTap,
-  avatarUri,
   st,
+  avatarUri,
   hotMap,
+  onAvatarLoad,
+  onAvatarError,
 }: {
   c: CheckinWithProfile;
-  cityLat: number;
-  cityLng: number;
-  onPinTap: (c: CheckinWithProfile) => void;
-  avatarUri: (url: string | null | undefined) => string | undefined;
   st: ReturnType<typeof makeStyles>;
+  avatarUri: (url: string | null | undefined) => string | undefined;
   hotMap?: Map<string, number>;
+  /** Capture pipeline only — fired when the avatar image finishes
+   *  decoding so the offscreen capture knows it's safe to snapshot.
+   *  The fallback render path inside Marker passes `undefined` so
+   *  no spurious capture is triggered for the on-map subtree. */
+  onAvatarLoad?: () => void;
+  onAvatarError?: () => void;
 }) {
   const catStyle = getCatStyle(c.category);
   const nameForDisplay = (c.profile as any)?.display_name || c.profile?.full_name || '';
@@ -349,97 +400,325 @@ function NomadMarker({
   const isHot = heat > 0 && !isExpired;
   const ringSize = s(33);
 
-  // tracksViewChanges starts TRUE so the first render captures the
-  // fully-painted subtree (avatar, ring, badge, name). We flip to
-  // FALSE only AFTER the layout has had time to apply borderRadius
-  // and the avatar image (if any) has loaded.
-  //
-  // Pre-fix: the flip timeout was 700ms. On Samsung One UI the
-  // bitmap snapshot was firing before borderRadius was computed,
-  // leaving the avatar circle rendered as a SQUARE (with a colored
-  // border, no clipping). Tester report 2026-04-27: "האווטאר אצלו
-  // עכשיו מרובע עם מסגרת / אין לו קשר לעיצוב האווטאר שלנו".
-  //
-  // Two-pronged fix:
-  //   (a) Wait until the marker View reports onLayout (means Yoga
-  //       has computed dimensions AND applied borderRadius styles).
-  //   (b) For markers with an avatar image, ALSO wait for the
-  //       Image's onLoad/onError event before flipping — otherwise
-  //       the snapshot captures a transparent square placeholder.
-  //   (c) Belt-and-braces 1.8s timeout fallback so we never get
-  //       stuck retracking forever even if onLayout/onLoad
-  //       silently never fire.
-  // Restored to the simple 700ms single-state pattern from before
-  // 2026-04-27 — the 1.8s + dual-state version (commit 0c4ad31) kept
-  // tracksViewChanges=true for almost 2 seconds, causing the marker
-  // to re-snapshot on every parent re-render during that window =
-  // flickering ("העיגולים מרצדים" — Barak 2026-04-27).
-  const [tracksChanges, setTracksChanges] = useState(true);
-  useEffect(() => {
-    const t = setTimeout(() => setTracksChanges(false), 700);
-    return () => clearTimeout(t);
-  }, [c.id]);
+  return (
+    <View style={[st.pinWrap, isExpired && { opacity: 0.5 }]}>
+      <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+        {isHot && (
+          /* Static halo replacement for the previously-animated
+           * PulseRing. captureRef can't snapshot an Animated value
+           * mid-cycle, so we render a fixed-state halo at roughly
+           * the brightest point of the breathing animation. The
+           * heat tier still drives the visible scale (3 = biggest,
+           * 1 = subtlest) so a "hot" pin still reads as more
+           * alive than a cold one — just no longer pulsing. */
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              width: ringSize,
+              height: ringSize,
+              borderRadius: ringSize / 2,
+              backgroundColor: heat >= 3 ? 'rgba(42,157,143,0.40)'
+                : heat >= 2 ? 'rgba(42,157,143,0.30)'
+                : 'rgba(42,157,143,0.22)',
+              transform: [{ scale: heat >= 3 ? 1.35 : heat >= 2 ? 1.25 : 1.15 }],
+            }}
+          />
+        )}
+        <View style={[st.avatarRing, { borderColor }]}>
+          <View style={[st.avatar, { backgroundColor: catStyle.color }]}>
+            {avatarUrl ? (
+              <CachedImage
+                source={{ uri: avatarUri(avatarUrl) }}
+                style={st.avatarImg}
+                recyclingKey={c.id}
+                onLoad={onAvatarLoad}
+                onError={onAvatarError}
+              />
+            ) : (
+              <Text style={st.avatarTxt}>{ini}</Text>
+            )}
+          </View>
+          <View style={st.emojiBadge}>
+            <Text style={st.emojiText}>{pinEmoji}</Text>
+          </View>
+        </View>
+      </View>
+      <View style={st.nameTag}>
+        <Text style={st.nameTxt}>{firstName}</Text>
+      </View>
+      {isTimer && minsLeft !== null && (() => {
+        const urgent = minsLeft <= 10;
+        const soon = minsLeft <= 30 && !urgent;
+        return (
+          <View style={[
+            st.timerPill,
+            urgent && st.timerPillUrgent,
+            soon && st.timerPillSoon,
+          ]}>
+            <Text style={[
+              st.timerPillText,
+              urgent && st.timerPillTextUrgent,
+            ]}>
+              {timerStr}
+            </Text>
+          </View>
+        );
+      })()}
+    </View>
+  );
+}
 
+/* ── Visual fingerprint — the inputs that affect what BubbleVisual
+ *    paints. When this string changes for a given checkin, the
+ *    cached PNG is stale and the capture stage must re-snapshot.
+ *
+ *    Deliberately includes minsLeft so timer markers re-capture
+ *    every minute — yes, this means ~50 ms of capture work per
+ *    timer per minute, but it keeps the displayed countdown
+ *    correct without a parallel animated overlay. With ~50 active
+ *    timers in a city that's <2.5 s of JS work per minute spread
+ *    across 60 s — well under any noticeable cost. If we ever
+ *    profile this as a hot path, switch to "drop the timer text
+ *    from the marker, show only in the popup" or "re-capture on
+ *    tier change only".
+ *
+ *    isHot is bucketed by heat level (the static halo's scale and
+ *    opacity differ per tier) so a heat 1→2 transition triggers a
+ *    re-capture but heat staying at 2 across re-renders does not. */
+function computeMarkerVisualKey(c: CheckinWithProfile, hotMap?: Map<string, number>): string {
+  const avatarUrl = (c.profile as any)?.avatar_url || '';
+  const isTimer = (c as any).checkin_type === 'timer';
+  const expiresAt = (c as any).expires_at;
+  const minsLeft = expiresAt ? Math.max(0, Math.round((new Date(expiresAt).getTime() - Date.now()) / 60000)) : null;
+  const isExpired = expiresAt ? new Date(expiresAt).getTime() <= Date.now() : false;
+  const nameForDisplay = (c.profile as any)?.display_name || c.profile?.full_name || '';
+  const heat = hotMap?.get(c.id) ?? 0;
+  return [
+    c.id,
+    avatarUrl,
+    c.category ?? '',
+    c.status_emoji ?? '',
+    nameForDisplay,
+    isTimer ? 't' : 's',
+    isExpired ? 'x' : 'a',
+    minsLeft ?? 'n',
+    heat,
+  ].join('|');
+}
+
+/* ── MarkerCaptureCell — one offscreen capture per checkin.
+ *
+ *    Mounts the BubbleVisual via a wrapper View whose ref is fed
+ *    to captureRef. Waits for the avatar's onLoad (or onError, or
+ *    a 1.5s timeout) before capturing so the snapshot includes
+ *    the fully decoded image. On capture success, calls onCaptured
+ *    with the resulting tmpfile URI; on failure, logs and gives up
+ *    (the fallback child render inside Marker still shows the
+ *    bubble, just via the broken-on-Samsung native snapshot path —
+ *    same as before this refactor).
+ *
+ *    `collapsable={false}` is critical on Android — without it,
+ *    React would optimize away the wrapper View (it has no native
+ *    backing of its own), and view-shot would have nothing to
+ *    capture. */
+function MarkerCaptureCell({
+  c,
+  st,
+  avatarUri,
+  hotMap,
+  onCaptured,
+}: {
+  c: CheckinWithProfile;
+  st: ReturnType<typeof makeStyles>;
+  avatarUri: (url: string | null | undefined) => string | undefined;
+  hotMap?: Map<string, number>;
+  onCaptured: (uri: string) => void;
+}) {
+  const viewRef = useRef<View>(null);
+  const hasAvatar = !!((c.profile as any)?.avatar_url);
+  const [imgReady, setImgReady] = useState(!hasAvatar); // initials-only = ready immediately
+
+  useEffect(() => {
+    if (!imgReady) return;
+    let mounted = true;
+
+    // Small layout-settle delay before capture. Without it, on slower
+    // devices the View is mounted but Yoga may not have applied the
+    // final borderRadius / overflow:hidden yet, leading to the same
+    // square-avatar bug we just escaped. 80 ms is enough on every
+    // device tested without being noticeable to the user.
+    const t = setTimeout(async () => {
+      if (!mounted || !viewRef.current) return;
+      try {
+        const uri = await captureRef(viewRef.current, {
+          format: 'png',
+          quality: 1,
+          result: 'tmpfile',
+        });
+        if (mounted && uri) onCaptured(uri);
+      } catch (e) {
+        // Capture failed — keep silent in production. The Marker's
+        // fallback child render still shows something on devices
+        // where the native snapshot path works.
+        console.warn('[MarkerCapture] failed for', c.id, e);
+      }
+    }, 80);
+
+    // Belt-and-braces: if onLoad never fires (Image pool stalled,
+    // network never resolves, etc.) we still want to ship SOMETHING.
+    // imgReady stays true once flipped, so this fallback only kicks
+    // in for the rare case where neither onLoad nor onError ever
+    // fired in 1.5 s — at which point the snapshot will capture
+    // whatever's painted (typically the colored placeholder).
+    return () => {
+      mounted = false;
+      clearTimeout(t);
+    };
+  }, [imgReady, c.id]);
+
+  // Hard fallback: if the avatar Image never reports load OR error
+  // (network stuck, very rare), force imgReady after 1.5 s so the
+  // marker doesn't sit in a "captured nothing" state forever.
+  useEffect(() => {
+    if (imgReady) return;
+    const t = setTimeout(() => setImgReady(true), 1500);
+    return () => clearTimeout(t);
+  }, [imgReady]);
+
+  return (
+    <View ref={viewRef} collapsable={false}>
+      <BubbleVisual
+        c={c}
+        st={st}
+        avatarUri={avatarUri}
+        hotMap={hotMap}
+        onAvatarLoad={() => setImgReady(true)}
+        onAvatarError={() => setImgReady(true)}
+      />
+    </View>
+  );
+}
+
+/* ── MarkerCaptureStage — offscreen container that owns one cell
+ *    per checkin whose visual fingerprint hasn't been captured yet.
+ *
+ *    Rendered as a sibling of <MapView> at HomeScreen level — NOT
+ *    inside it. <MapView> only accepts Marker-family children;
+ *    nesting plain Views inside it can render unpredictably across
+ *    iOS/Android. Keeping the stage outside the map keeps the
+ *    capture pipeline cleanly separated from the on-screen markers.
+ *
+ *    Position-absolute / -10000 px keeps the stage out of the user's
+ *    view while leaving its layout fully resolved (so view-shot can
+ *    measure and capture). pointerEvents="none" means the stage can't
+ *    accidentally absorb a tap that was meant for the map. */
+function MarkerCaptureStage({
+  checkins,
+  capturedKeys,
+  st,
+  avatarUri,
+  hotMap,
+  onCaptured,
+}: {
+  checkins: CheckinWithProfile[];
+  capturedKeys: Map<string, string>;
+  st: ReturnType<typeof makeStyles>;
+  avatarUri: (url: string | null | undefined) => string | undefined;
+  hotMap?: Map<string, number>;
+  onCaptured: (id: string, key: string, uri: string) => void;
+}) {
+  return (
+    <View
+      style={{
+        position: 'absolute',
+        left: -10000,
+        top: -10000,
+        width: 0,
+        height: 0,
+        opacity: 0,
+      }}
+      pointerEvents="none"
+    >
+      {checkins.map((c) => {
+        const key = computeMarkerVisualKey(c, hotMap);
+        // Skip checkins whose current visual key is already captured.
+        // The cell unmounts → its tmpfile stays on disk (OS will GC),
+        // and we re-render only when something actually changed.
+        if (capturedKeys.get(c.id) === key) return null;
+        return (
+          <MarkerCaptureCell
+            // Re-mount on key change so the capture useEffect fires
+            // with a fresh imgReady cycle for the new visual.
+            key={`${c.id}::${key}`}
+            c={c}
+            st={st}
+            avatarUri={avatarUri}
+            hotMap={hotMap}
+            onCaptured={(uri) => onCaptured(c.id, key, uri)}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
+/* ── NomadMarker — thin wrapper around <Marker>. Receives the
+ *    captured PNG URI from HomeScreen state (via prop) and feeds
+ *    it to the Marker `image` prop. Falls back to rendering the
+ *    same BubbleVisual as a child while the URI is still pending,
+ *    so platforms with a working native snapshot path show the
+ *    bubble immediately on mount. */
+function NomadMarker({
+  c,
+  cityLat,
+  cityLng,
+  onPinTap,
+  avatarUri,
+  st,
+  hotMap,
+  pngUri,
+}: {
+  c: CheckinWithProfile;
+  cityLat: number;
+  cityLng: number;
+  onPinTap: (c: CheckinWithProfile) => void;
+  avatarUri: (url: string | null | undefined) => string | undefined;
+  st: ReturnType<typeof makeStyles>;
+  hotMap?: Map<string, number>;
+  pngUri?: string;
+}) {
   return (
     <Marker
       key={c.id}
-      tracksViewChanges={tracksChanges}
+      // tracksViewChanges only matters while we're rendering the
+      // child fallback (i.e. before pngUri arrives). Once the image
+      // prop is set, react-native-maps uses the PNG directly and
+      // ignores the child subtree — so re-snapshotting becomes
+      // moot. Setting this to false during the image phase also
+      // collapses the "pin dancing" issue from the old approach.
+      tracksViewChanges={!pngUri}
       coordinate={{
         latitude: c.latitude ? c.latitude : scatter(cityLat, hashCode(c.id)),
         longitude: c.longitude ? c.longitude : scatter(cityLng, hashCode(c.id + '_lng')),
       }}
       anchor={{ x: 0.5, y: 1 }}
       onPress={() => onPinTap(c)}
+      image={pngUri ? { uri: pngUri } : undefined}
     >
-      {/* RESTORED original 3-piece marker (2026-04-27, after unified
-       * bubble redesign rendered as a square white rectangle on
-       * Samsung). Just a colored ring around the avatar circle, an
-       * emoji badge on the corner, name pill underneath, optional
-       * timer pill — exactly as it was before commit 7cb694f. The
-       * old style classes (avatarRing, avatar, emojiBadge, nameTag,
-       * timerPill) were never deleted from makeStyles. */}
-      <View style={[st.pinWrap, isExpired && { opacity: 0.5 }]}>
-        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-          {isHot && <PulseRing heat={heat} size={ringSize} />}
-          <View style={[st.avatarRing, { borderColor }]}>
-            <View style={[st.avatar, { backgroundColor: catStyle.color }]}>
-              {avatarUrl ? (
-                <CachedImage
-                  source={{ uri: avatarUri(avatarUrl) }}
-                  style={st.avatarImg}
-                  recyclingKey={c.id}
-                />
-              ) : (
-                <Text style={st.avatarTxt}>{ini}</Text>
-              )}
-            </View>
-            <View style={st.emojiBadge}>
-              <Text style={st.emojiText}>{pinEmoji}</Text>
-            </View>
-          </View>
-        </View>
-        <View style={st.nameTag}>
-          <Text style={st.nameTxt}>{firstName}</Text>
-        </View>
-        {isTimer && minsLeft !== null && (() => {
-          const urgent = minsLeft <= 10;
-          const soon = minsLeft <= 30 && !urgent;
-          return (
-            <View style={[
-              st.timerPill,
-              urgent && st.timerPillUrgent,
-              soon && st.timerPillSoon,
-            ]}>
-              <Text style={[
-                st.timerPillText,
-                urgent && st.timerPillTextUrgent,
-              ]}>
-                {timerStr}
-              </Text>
-            </View>
-          );
-        })()}
-      </View>
+      {/* Fallback child render — ignored natively once `image` is
+       * set. Until then, on platforms where the native snapshot
+       * path works, this is what the user sees. On Samsung One UI
+       * this may render half/squarely, but that window only lasts
+       * until the offscreen capture finishes (~80–300 ms). */}
+      {!pngUri && (
+        <BubbleVisual
+          c={c}
+          st={st}
+          avatarUri={avatarUri}
+          hotMap={hotMap}
+        />
+      )}
     </Marker>
   );
 }
@@ -497,6 +776,50 @@ export default function HomeScreen() {
   const [joined, setJoined] = useState(false);
   const [visibleNomadCount, setVisibleNomadCount] = useState<number | null>(null);
   const [visibleNomadIds, setVisibleNomadIds] = useState<Set<string>>(new Set());
+
+  /* ── Captured marker PNG URIs — image-based marker pipeline ──
+   *
+   * Map<checkinId, { key, uri }>. The key is the visual fingerprint
+   * (computeMarkerVisualKey) at capture time; if the live key for
+   * this checkin diverges, the entry is stale and the capture stage
+   * will re-snapshot. The Map is held behind a ref so per-marker
+   * progress doesn't trigger HomeScreen-wide re-renders for every
+   * single capture; we bump `markerImagesVersion` once per captured
+   * entry to invalidate the nomadMarkers memo, which causes only
+   * the markers whose URIs changed to actually re-render (their
+   * pngUri prop changed; everyone else's didn't).
+   *
+   * For PeopleScreen/PulseScreen-equivalent surfaces this Map is
+   * irrelevant — those screens don't render markers. Only HomeScreen
+   * cares about it. */
+  const markerImagesRef = useRef<Map<string, { key: string; uri: string }>>(new Map());
+  const [markerImagesVersion, setMarkerImagesVersion] = useState(0);
+  const markerCapturedKeysSnapshot = useMemo(() => {
+    // Plain Map<id, key> derived from the ref — handed to
+    // MarkerCaptureStage so it can decide which checkins still
+    // need (re-)capture. Recomputed per render but cheap (it's
+    // just a copy of a small map). forEach is used (rather than
+    // for...of on Map.entries()) to dodge the TS downlevelIteration
+    // tooling warning while keeping identical runtime behaviour.
+    const m = new Map<string, string>();
+    markerImagesRef.current.forEach((entry, id) => { m.set(id, entry.key); });
+    return m;
+    // markerImagesVersion is in deps so the snapshot tracks the
+    // ref. capturedKeys is read by MarkerCaptureStage which is
+    // the only consumer that needs reactivity here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markerImagesVersion]);
+  const handleMarkerCaptured = useCallback((id: string, key: string, uri: string) => {
+    const existing = markerImagesRef.current.get(id);
+    if (existing && existing.key === key && existing.uri === uri) return;
+    markerImagesRef.current.set(id, { key, uri });
+    setMarkerImagesVersion((v) => v + 1);
+  }, []);
+  // Note: the prune-stale-entries useEffect lives further down in the
+  // body (right after useActiveCheckins() declares `checkins`) because
+  // it has to read that hook's output. Defining it here would hit a
+  // "used before declaration" TS error — the ref and callback above
+  // can stand alone, but the cleanup specifically needs `checkins`.
 
   // ── Welcome celebration overlay ──
   const [showWelcome, setShowWelcome] = useState(false);
@@ -960,11 +1283,59 @@ export default function HomeScreen() {
    *      users see this nomad in the correct city's nomad list.
    *
    * Guarded by lastSyncedCityName ref so we don't spam Supabase
-   * with identical UPDATEs on every 30s GPS refresh.
+   * with identical city UPDATEs on every 30s GPS refresh.
+   *
+   * 2026-04-27 evening — split write fix:
+   *
+   *   The previous implementation short-circuited the ENTIRE function
+   *   when the resolved city hadn't changed since the last fix. That
+   *   meant a user who stays in one city (e.g., Eli — Tel Aviv all
+   *   day) NEVER had their `last_active_at` re-stamped after the first
+   *   call, even if the app was actively in use. After the 2026-04-26
+   *   `useNomadsInCity` 24-hour active-presence filter shipped (commit
+   *   c9b3d64), those users started "disappearing" from PeopleScreen
+   *   and the map's "nomads here" count even though they were online.
+   *
+   *   The fix splits the write into two:
+   *     (a) `last_active_at` + last_location_* — the presence ping —
+   *         ALWAYS fires on every call. Cheap UPDATE, single row.
+   *         This keeps the user inside the 24-hour visibility window.
+   *     (b) `current_city` + Context.setGpsCity — the city change —
+   *         ONLY when the resolved cityName has actually moved. Same
+   *         ref-guard pattern as before, just gating the smaller write.
+   *
+   *   Net: a stationary user's row gets re-stamped every ~30 s (cheap),
+   *   and other-city users still pay the full reverse-geocode + city
+   *   write only when they truly moved.
    */
   const lastSyncedCityName = useRef<string | null>(null);
   const syncLiveCityFromGPS = useCallback(async (lat: number, lng: number) => {
     if (!userId) return;
+
+    // (a) Presence ping — fires every call, regardless of whether the
+    // city changed. Stationary users stay visible inside the 24-hour
+    // active filter; the cost is one UPDATE on a single row indexed
+    // by user_id (the table's PK in practice). No-op fallback: errors
+    // get logged, never surfaced — a temporary network hiccup
+    // shouldn't crash the screen, and the next GPS tick (30 s away)
+    // will retry.
+    const nowIso = new Date().toISOString();
+    void supabase.from('app_profiles').update({
+      last_location_latitude: lat,
+      last_location_longitude: lng,
+      last_location_timestamp: nowIso,
+      last_active_at: nowIso,
+    }).eq('user_id', userId).then(({ error }) => {
+      if (error) console.warn('[HomeScreen] presence ping failed:', error.message);
+    });
+
+    // (b) City change — reverse-geocode + city write + Context update,
+    // but only when the resolved city is actually different from the
+    // last one we synced. Reverse-geocode is the expensive call here
+    // (network round-trip to the geocoder), so the ref-guard avoids
+    // even doing the lookup when we already know we're in the same
+    // city as the last tick. Wrap in try/catch so a geocode failure
+    // doesn't shadow the presence ping above (which already fired).
     try {
       const { cityName, country, countryCode } = await reverseGeocodeCityFull(lat, lng);
       if (!cityName) return; // reverse-geocode failed — keep previous city
@@ -991,14 +1362,12 @@ export default function HomeScreen() {
       // If GPS city changed → user moved → also update viewedCity.
       setGpsCity(liveCity);
 
-      // Persist — fire and forget, errors logged not surfaced (silent
-      // failure here just means OTHER users see stale "nomad in X"
-      // for this user; the local map still works correctly).
+      // Persist the city change. last_active_at is updated again here
+      // so that "user just moved cities" surfaces a fresh timestamp at
+      // the same moment as the city flip — no race window where the
+      // city is new but the activity is stale.
       const { error } = await supabase.from('app_profiles').update({
         current_city: cityName,
-        last_location_latitude: lat,
-        last_location_longitude: lng,
-        last_location_timestamp: new Date().toISOString(),
         last_active_at: new Date().toISOString(),
       }).eq('user_id', userId);
       if (error) console.warn('[HomeScreen] Profile city sync failed:', error.message);
@@ -1150,8 +1519,42 @@ export default function HomeScreen() {
   // useNomadsInCity moved further down — it now depends on myProfile
   // for the viewer's age range, and myProfile is declared below.
 
-  // Real data from Supabase
-  const { checkins, count: activeCount, loading: checkinsLoading, refetch: refetchCheckins, addOptimistic } = useActiveCheckins(currentCity.name, userId);
+  // Real data from Supabase.
+  //
+  // GLOBAL fetch (city = null) so the map can render multiple cities
+  // at once. The owner directive 2026-04-28: "even when several cities
+  // are visible on the map I want the bubbles in density across all
+  // of them — that's the beauty". Fetching globally + filtering
+  // city_only checkins client-side against the viewer's GPS city
+  // gives us exactly that: every public checkin worldwide is on the
+  // map, city_only checkins are limited to their city's residents.
+  // PeopleScreen continues to call useActiveCheckins(currentCity.name)
+  // for its city-bound list and is unaffected.
+  const { checkins, count: activeCount, loading: checkinsLoading, refetch: refetchCheckins, addOptimistic } = useActiveCheckins(null, userId, currentCity.name);
+
+  /* Prune captured-marker PNG entries when their underlying checkin
+   * disappears (expired, deleted, owner went show_on_map=false, etc.).
+   * Without this the Map grows unbounded over a long session and the
+   * tmpfile URIs hold references the OS hasn't yet GC'd.
+   *
+   * Pruning is keyed on the unfiltered `checkins` (not
+   * `filteredCheckins`) so that toggling the category vibe chip
+   * doesn't throw away — and re-capture — every PNG every time the
+   * user flicks between "All" and "Food". */
+  useEffect(() => {
+    const liveIds = new Set<string>();
+    for (let i = 0; i < checkins.length; i++) liveIds.add(checkins[i].id);
+    let pruned = false;
+    const ids: string[] = [];
+    markerImagesRef.current.forEach((_, id) => ids.push(id));
+    for (const id of ids) {
+      if (!liveIds.has(id)) {
+        markerImagesRef.current.delete(id);
+        pruned = true;
+      }
+    }
+    if (pruned) setMarkerImagesVersion((v) => v + 1);
+  }, [checkins]);
 
   // Hot checkins — for pulse animation on pins with active conversations
   const hotCheckins = useHotCheckins(currentCity.name);
@@ -1415,11 +1818,15 @@ export default function HomeScreen() {
   const handleCitySelect = (city: City) => {
     trackEvent(userId, 'search_city', 'city', undefined, { city: city.name });
     setCurrentCity(city);
+    // Tightened from 0.08 → 0.04 (2026-04-27 evening) — at 0.08 the
+    // user lands on a region-level view where bubbles read as tiny
+    // dots. 0.04 matches INITIAL_REGION and the first-GPS-fix zoom
+    // so every "land on a city" entry point sees the same frame.
     mapRef.current?.animateToRegion({
       latitude: city.lat,
       longitude: city.lng,
-      latitudeDelta: 0.08,
-      longitudeDelta: 0.08,
+      latitudeDelta: 0.04,
+      longitudeDelta: 0.04,
     }, 800);
   };
 
@@ -1473,10 +1880,12 @@ export default function HomeScreen() {
    *  add a plain arrow function or inline object as a dep. */
   const nomadMarkers = useMemo(() => {
     if (isSnoozed) return null;
-    // NomadMarker is now a real React component (was a plain
-    // function until 2026-04-26) so it can own its own
-    // tracksViewChanges state — see the component header for the
-    // invisible-marker bug it fixes.
+    // pngUri reads from the ref directly — markerImagesVersion is in
+    // the dep list so the memo re-runs whenever a new capture lands,
+    // at which point the relevant marker picks up its URI and the
+    // others render as identical JSX (React reconciler skips the
+    // native re-prop). For checkins not yet captured, pngUri is
+    // undefined → Marker renders the BubbleVisual fallback child.
     return filteredCheckins.map((c) => (
       <NomadMarker
         key={c.id}
@@ -1487,9 +1896,11 @@ export default function HomeScreen() {
         avatarUri={avatarUri}
         st={st}
         hotMap={hotCheckins}
+        pngUri={markerImagesRef.current.get(c.id)?.uri}
       />
     ));
-  }, [isSnoozed, filteredCheckins, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSnoozed, filteredCheckins, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins, markerImagesVersion]);
 
   const handleViewProfile = (userId: string) => {
     nav.navigate('UserProfile', { userId, name: selectedNomad?.name });
@@ -2045,6 +2456,21 @@ export default function HomeScreen() {
   return (
     <View style={st.container}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+
+      {/* Offscreen capture stage for the image-based marker pipeline.
+       * Rendered OUTSIDE <MapView> on purpose — see MarkerCaptureStage
+       * docstring. Kept high in the JSX tree (right after StatusBar)
+       * so it mounts as early as possible relative to MapView, giving
+       * captures a head start and minimizing the window during which
+       * the user sees the fallback child render on Samsung One UI. */}
+      <MarkerCaptureStage
+        checkins={filteredCheckins}
+        capturedKeys={markerCapturedKeysSnapshot}
+        st={st}
+        avatarUri={avatarUri}
+        hotMap={hotCheckins}
+        onCaptured={handleMarkerCaptured}
+      />
 
       {/* ── REAL MAP ── */}
       <MapView

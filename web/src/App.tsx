@@ -6,13 +6,21 @@ import PrivacyPage from './pages/PrivacyPage'
 import TermsPage from './pages/TermsPage'
 import DeleteAccountPage from './pages/DeleteAccountPage'
 import SupportPage from './pages/SupportPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
 
 /* Routes wiring — the landing footer links to /privacy, /terms,
  * /delete-account, and /support. Before the April 2026 pre-launch
  * audit, only /, /admin, and /admin/login were registered — meaning
  * every legal link in the footer returned a 404. Apple rejects any
  * submission where the Privacy Policy URL 404s, so this was a hard
- * launch blocker discovered while preparing the submission kit. */
+ * launch blocker discovered while preparing the submission kit.
+ *
+ * `/reset-password` was added 2026-04-28 after the password-reset
+ * email link was redirecting users to a blank SPA shell — the SPA
+ * router had no match, nothing rendered, every tester who hit
+ * "Forgot password?" got stuck. Mobile AuthScreen passes that path
+ * as the `redirectTo` for `supabase.auth.resetPasswordForEmail`, so
+ * the route MUST exist or the entire reset flow is broken end-to-end. */
 export default function App() {
   return (
     <Routes>
@@ -21,6 +29,7 @@ export default function App() {
       <Route path="/terms" element={<TermsPage />} />
       <Route path="/delete-account" element={<DeleteAccountPage />} />
       <Route path="/support" element={<SupportPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/admin" element={<AdminDashboard />} />
       <Route path="/admin/login" element={<AdminLogin />} />
     </Routes>

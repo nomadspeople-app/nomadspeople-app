@@ -63,7 +63,7 @@ FEATURES
 • Direct messaging and group chats
 • Profile with your story, profession, and travel style
 • Nomad count by neighborhood — see where the community is
-• 8 languages: English, Hebrew, Spanish, Portuguese, Italian, French, German, Russian
+• 3 languages at launch: English, Hebrew, Russian (more coming)
 • Works worldwide — wherever digital nomads go
 
 BUILT FOR NOMADS, BY NOMADS
@@ -91,20 +91,31 @@ Find digital nomads near you. See who's in your neighborhood and connect.
 
 ## CONTENT RATING
 
-### Expected Ratings
-- **Apple:** 12+ (user interaction, location sharing)
-- **Google:** Teen (user interaction, shares location)
+> **2026 UPDATE:** Apple rolled out a new granular age rating system
+> (4+, 9+, 13+, 16+, 18+). The deadline for answering the new
+> questions was **January 31, 2026** — past that, new submissions
+> are blocked until we answer. We'll answer at App Store Connect
+> record creation. Google Play uses IARC questionnaire (same answers
+> map to Teen on Play Store).
 
-### Rating Questionnaire Answers
+### Expected Ratings (under new 2026 system)
+- **Apple:** **17+** (user-generated content, unrestricted communication, shared user location)
+  - Prior system said 12+; new 13+/16+/18+ options changed the math — we must choose 17+ under the new rating questions because UGC + location sharing + 1:1 private messaging combined pushes us above 16+
+- **Google Play:** **Teen** (same underlying behavior, different label system — IARC questionnaire)
+- **Self-declared minimum age (in Terms + signup consent):** 18
+
+### Rating Questionnaire Answers (unchanged — same truthful answers, both stores)
 - Violence: None
 - Sexual content: None
-- Profanity: None
+- Profanity: None — but "unrestricted web access / user-to-user communication" = Yes (bumps the rating up)
 - Drugs/alcohol: None
 - Gambling: None
 - User-generated content: Yes
-- Users can communicate: Yes
-- Location sharing: Yes
-- Account required: Yes (18+)
+- Users can communicate (1:1 and groups): Yes
+- Location sharing: Yes (opt-in via "show me on map" toggle)
+- Account required: Yes (18+ enforced at signup)
+- Contests/prizes/sweepstakes: No
+- Unrestricted web access: No (there are no open web browser views inside the app)
 
 ---
 

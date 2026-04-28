@@ -447,7 +447,7 @@ export default function GroupInfoScreen() {
           <TouchableOpacity style={st.backBtn} onPress={() => nav.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <NomadIcon name="back" size={s(9)} color="#1A1A1A" strokeWidth={1.8} />
           </TouchableOpacity>
-          <Text style={st.hdrTitle}>Group Info</Text>
+          <Text style={st.hdrTitle}>{t('groupInfo.title')}</Text>
           <View style={st.backBtn} />
         </View>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -536,7 +536,7 @@ export default function GroupInfoScreen() {
                 onPress={() => { setEditName(group?.name || ''); setEditing(true); }}
               >
                 <NomadIcon name="edit" size={s(4.5)} color={colors.dark} strokeWidth={1.5} />
-                <Text style={st.creatorPillText}>edit name</Text>
+                <Text style={st.creatorPillText}>{t('groupInfo.editName')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[st.creatorPill, st.creatorPillDanger]}
@@ -544,7 +544,7 @@ export default function GroupInfoScreen() {
                 onPress={handleEndEvent}
               >
                 <NomadIcon name="close" size={s(4.5)} color={colors.danger} strokeWidth={1.5} />
-                <Text style={[st.creatorPillText, { color: colors.danger }]}>end event</Text>
+                <Text style={[st.creatorPillText, { color: colors.danger }]}>{t('groupInfo.endEvent')}</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -557,7 +557,7 @@ export default function GroupInfoScreen() {
             <View style={[st.actionIcon, { backgroundColor: 'rgba(255,90,95,0.1)' }]}>
               <NomadIcon name="share" size={s(6)} color={colors.primary} strokeWidth={1.4} />
             </View>
-            <Text style={st.actionLabel}>Share Activity</Text>
+            <Text style={st.actionLabel}>{t('groupInfo.shareActivity')}</Text>
             <NomadIcon name="forward" size={s(6)} color="#1A1A1A" strokeWidth={1.4} />
           </TouchableOpacity>
 
@@ -567,7 +567,7 @@ export default function GroupInfoScreen() {
             <View style={[st.actionIcon, { backgroundColor: 'rgba(255,90,95,0.1)' }]}>
               <NomadIcon name="bell" size={s(6)} color={colors.primary} strokeWidth={1.4} />
             </View>
-            <Text style={[st.actionLabel, { flex: 1 }]}>Mute Notifications</Text>
+            <Text style={[st.actionLabel, { flex: 1 }]}>{t('groupInfo.muteNotifications')}</Text>
             <Switch
               value={muteNotifs}
               onValueChange={async (val) => {
@@ -624,7 +624,7 @@ export default function GroupInfoScreen() {
               </MapView>
               {/* Open in Maps overlay label */}
               <View style={st.openMapsOverlay}>
-                <Text style={st.openMapsOverlayText}>Open in Maps</Text>
+                <Text style={st.openMapsOverlayText}>{t('groupInfo.openInMaps')}</Text>
                 <NomadIcon name="external-link" size={s(4)} color={colors.accent} strokeWidth={1.4} />
               </View>
             </View>
@@ -645,7 +645,7 @@ export default function GroupInfoScreen() {
           >
             <Text style={st.sectionTitle}>Members ({memberCount})</Text>
             <View style={st.membersHeaderRight}>
-              <Text style={st.membersHeaderCta}>view all</Text>
+              <Text style={st.membersHeaderCta}>{t('groupInfo.viewAll')}</Text>
               <NomadIcon name="forward" size={s(5)} color="#1A1A1A" strokeWidth={1.4} />
             </View>
           </TouchableOpacity>
@@ -717,7 +717,7 @@ export default function GroupInfoScreen() {
             onPress={() => setShowLeaveConfirm(true)}
           >
             <NomadIcon name="logout" size={s(6)} color="white" strokeWidth={1.4} />
-            <Text style={st.leaveBtnText}>Leave Chat</Text>
+            <Text style={st.leaveBtnText}>{t('groupInfo.leaveChat')}</Text>
           </TouchableOpacity>
         )}
 
@@ -735,7 +735,7 @@ export default function GroupInfoScreen() {
             onPress={() => setShowLeaveConfirm(false)}
           >
             <View style={st.modalBox}>
-              <Text style={st.modalTitle}>Leave Chat</Text>
+              <Text style={st.modalTitle}>{t('groupInfo.leaveChat')}</Text>
               <Text style={st.modalMsg}>Are you sure you want to leave this activity?</Text>
               <View style={st.modalBtns}>
                 <TouchableOpacity

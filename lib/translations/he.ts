@@ -419,4 +419,48 @@ export const he: Record<string, string> = {
   'profileCard.peopleInActivity': '{{count}} אנשים בפעילות הזו',
   'profileCard.alsoInGroups': 'גם ב-{{count}} קבוצה',
   'profileCard.alsoInGroupsPlural': 'גם ב-{{count}} קבוצות',
+
+  /* ── i18n cleanup batch 2026-04-27 ── */
+
+  /* People */
+  'people.relevantActivities': 'פעילויות רלוונטיות',
+  'people.noActivitiesNearby': 'אין פעילויות בסביבה כרגע',
+  'people.incomingFlights': 'טיסות נכנסות',
+  'people.noFlightsYet': 'אין טיסות עדיין',
+  'people.meetupPeople': 'אנשים להיפגש איתם',
+  'people.completeProfileToMatch': 'השלם את הפרופיל כדי למצוא התאמות',
+  'people.nomadSingular': 'נווד',
+  'people.nomadPlural': 'נוודים',
+  'people.distanceAway': '{{distance}} מכאן',
+  'people.fallbackName': 'נווד',
+
+  /* Snooze */
+  'snooze.title': 'אתה במצב שינה',
+  'snooze.subtitle': 'אנשים ופעילויות מוסתרים\nבזמן שאתה נח',
+  'snooze.wakeUp': 'התעורר',
+
+  /* Chat */
+  'chat.messageRequest': 'בקשת הודעה',
+  'chat.closedByCreator': 'הצ׳אט נסגר על ידי היוצר',
+  'chat.staySafeTitle': 'שמור על עצמך',
+  'chat.staySafeSub': 'כמה דברים לזכור כשמתחברים לאנשים חדשים',
+  'chat.staySafeGotIt': 'הבנתי',
+  'chat.previewSend': 'שלח',
+
+  /* Flight detail */
+  'flightDetail.title': 'טיסה נכנסת',
+
+  /* Group info */
+  'groupInfo.title': 'פרטי הקבוצה',
+  'groupInfo.editName': 'ערוך שם',
+  'groupInfo.endEvent': 'סיים אירוע',
+  'groupInfo.shareActivity': 'שתף פעילות',
+  'groupInfo.muteNotifications': 'השתק התראות',
+  'groupInfo.openInMaps': 'פתח במפות',
+  'groupInfo.viewAll': 'הצג הכל',
+  'groupInfo.leaveChat': 'עזוב צ׳אט',
+
+  /* Common (additive) */
+  'common.send': 'שלח',
+  'common.gotIt': 'הבנתי',
 };

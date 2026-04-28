@@ -103,7 +103,22 @@ export function bustViewerAgeCache() { _cachedViewer = null; }
 const FETCH_TIME_GUARD_MS = 30_000;
 const REALTIME_DEBOUNCE_MS = 300;
 
-export function useActiveCheckins(city: string, viewerUserId?: string | null) {
+/* Pass `null` for `city` to fetch globally — every active checkin
+ * regardless of city. HomeScreen uses this so the map can show
+ * bubbles across multiple cities in a single zoomed-out view
+ * (Tel Aviv + Rehovot + Jerusalem in the same frame, etc.) per the
+ * 2026-04-28 owner directive: "density across cities is the beauty".
+ *
+ * `city_only` checkins are still scoped to a city — when fetching
+ * globally we apply that filter on the client by comparing each
+ * checkin's `city` to the viewer's `viewerCity` (passed by HomeScreen
+ * as the user's GPS-resolved city). PeopleScreen continues to pass a
+ * concrete city string for its city-bound list and is unchanged. */
+export function useActiveCheckins(
+  city: string | null,
+  viewerUserId?: string | null,
+  viewerCity?: string | null,
+) {
   const [checkins, setCheckins] = useState<CheckinWithProfile[]>([]);
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -158,17 +173,24 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
       }
     }
 
-    // 2. Fetch all active checkins (include visibility fields from profile)
+    // 2. Fetch active checkins (include visibility fields from profile).
+    //    `city === null` means GLOBAL mode: don't apply the .ilike('city')
+    //    filter, return every active checkin regardless of city. That
+    //    request is what HomeScreen uses so the map can render multiple
+    //    cities at once. PeopleScreen still passes a concrete city
+    //    string and gets the city-bound list it always did.
     let data: any[] | null = null;
     let error: any = null;
     try {
-      const res = await supabase
+      let q = supabase
         .from('app_checkins')
         .select('*, profile:app_profiles!user_id(full_name, display_name, username, avatar_url, job_type, bio, interests, show_on_map, hide_distance, birth_date)')
         .eq('is_active', true)
-        .ilike('city', city)
-        .in('visibility', ['public', 'city_only'])
-        .limit(200);
+        .in('visibility', ['public', 'city_only']);
+      if (city) {
+        q = q.ilike('city', city);
+      }
+      const res = await q.limit(200);
       data = res.data;
       error = res.error;
     } finally {
@@ -191,10 +213,25 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
       //       • Scheduled flexible → = 23:59:59 of scheduled_for's date
       //     The cron also uses expires_at, so client + cron agree.
       const now = new Date();
+      const viewerCityLower = (viewerCity || '').toLowerCase();
       const visible = (data as any[]).filter((c: any) => {
         if (c.profile?.show_on_map === false) return false;
         const expiresTs = c.expires_at ? new Date(c.expires_at).getTime() : null;
         if (expiresTs && expiresTs < now.getTime()) return false;
+        // Global mode (city === null) — `city_only` visibility means
+        // "show only to people in the same city as the checkin", so
+        // we drop those whose city doesn't match the viewer's GPS-
+        // resolved city. `public` checkins remain visible globally.
+        // Without this guard, a Berlin nomad's `city_only` checkin
+        // would show on the Tel Aviv viewer's map — exactly the
+        // privacy expectation we promised. PeopleScreen's city-bound
+        // mode (`city` truthy) is unaffected: the SQL .ilike('city')
+        // already restricted the data to one city.
+        if (city === null && c.visibility === 'city_only') {
+          const cCity = (c.city || '').toLowerCase();
+          if (!cCity || !viewerCityLower) return false;
+          if (cCity !== viewerCityLower) return false;
+        }
         return true;
       });
 
@@ -290,8 +327,14 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
         schema: 'public',
         table: 'app_checkins',
       }, (payload) => {
-        const changedCity = (payload.new as any)?.city || (payload.old as any)?.city || '';
-        if (changedCity.toLowerCase() !== city.toLowerCase()) return;
+        // Global mode (city === null) reacts to EVERY checkin change
+        // worldwide — that's the whole point of multi-city density.
+        // City-bound mode keeps the existing client-side filter so
+        // PeopleScreen doesn't refetch on every Berlin event.
+        if (city) {
+          const changedCity = (payload.new as any)?.city || (payload.old as any)?.city || '';
+          if (changedCity.toLowerCase() !== city.toLowerCase()) return;
+        }
         // Debounce: reset timer on each event, fetch only after
         // the burst subsides.
         if (realtimeDebounceRef.current) {
@@ -315,7 +358,12 @@ export function useActiveCheckins(city: string, viewerUserId?: string | null) {
       console.log(`[Realtime] Unsubscribing checkins channel: ${channelName}`);
       supabase.removeChannel(channel);
     };
-  }, [city]);
+    // viewerCity is in deps so a city-only filter re-evaluates the
+    // moment the viewer's GPS-resolved city updates — otherwise a
+    // user who moved from Tel Aviv to Rehovot would keep seeing
+    // Tel Aviv's city_only checkins until the next manual refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [city, viewerCity]);
 
   // Optimistic add — inject a new checkin into state instantly (before DB roundtrip)
   const addOptimistic = (checkin: CheckinWithProfile) => {

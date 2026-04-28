@@ -20,6 +20,7 @@ import { supabase } from '../lib/supabase';
 import { AuthContext } from '../App';
 import NomadIcon from '../components/NomadIcon';
 import { s, C, FW, useTheme, type ThemeColors } from '../lib/theme';
+import { useI18n } from '../lib/i18n';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, 'FlightDetail'>;
@@ -37,6 +38,7 @@ export default function FlightDetailScreen() {
   const { colors } = useTheme();
   const st = useMemo(() => makeStyles(colors), [colors]);
   const { userId } = useContext(AuthContext);
+  const { t } = useI18n();
 
   const { detail, loading, refetch } = useFlightGroupDetail(params.flightGroupId, userId);
   const [joiningMain, setJoiningMain] = useState(false);
@@ -117,7 +119,7 @@ export default function FlightDetailScreen() {
         <TouchableOpacity onPress={() => nav.goBack()} style={st.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <NomadIcon name="back" size={s(9)} color={colors.text} strokeWidth={1.8} />
         </TouchableOpacity>
-        <Text style={[st.headerTitle, { color: colors.text }]}>incoming flight</Text>
+        <Text style={[st.headerTitle, { color: colors.text }]}>{t('flightDetail.title')}</Text>
         <View style={{ width: s(10) }} />
       </View>
 

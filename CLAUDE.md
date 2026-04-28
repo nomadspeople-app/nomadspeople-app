@@ -354,11 +354,15 @@ filtering has a 1-line risk of breaking this — hence the lock.
 - Expo SDK 54, React Native, TypeScript
 - Supabase backend (project: apzpxnkmuhcwmvmgisms)
 - react-native-maps 1.14 (NO clustering library in use)
-- tracksViewChanges starts TRUE, flips to FALSE after content paints
-  (was hardcoded false — caused invisible markers per 2026-04-26
-  tester report. Marker hit-targets existed but the bitmap snapshot
-  was empty because it captured pre-image-load layout. Pattern owned
-  by NomadMarker component in screens/HomeScreen.tsx.)
+- Markers are IMAGE-BASED. The visual is rendered offscreen by
+  `MarkerCaptureStage`, snapshot to PNG via `react-native-view-shot
+  ^4.0.3` (already in v14 AAB), and passed to `<Marker image={...}>`.
+  See "Image-Based Markers" rule above for the full architecture and
+  the four-band-aid history that drove this refactor. The fallback
+  child render (BubbleVisual inside NomadMarker) only ships for the
+  ~80–300 ms capture window; everything after is the PNG. Pattern
+  owned by NomadMarker / MarkerCaptureCell / MarkerCaptureStage in
+  screens/HomeScreen.tsx.
 
 ### One Map — Locked April 2026
 
@@ -383,29 +387,83 @@ Rules:
 - If a new feature needs location picking, extend pickMode —
   do NOT add a new MapView instance anywhere.
 
-### No Negative Offsets in Marker Subtree (Locked 2026-04-27)
+### Image-Based Markers (Locked 2026-04-27 evening)
 
-> **NEVER use a negative `top`, `right`, `bottom`, or `left` value
-> on any element inside a `<Marker>` subtree. Period.**
+> **The Marker visual ships to native as a pre-rendered PNG, not as
+> a custom React subtree. Never re-introduce a child-View Marker as
+> the primary rendering path.**
 
-#### What this rule prevents
+#### Why this is now the rule
 
-Android marker bitmap snapshot (the path that turns a custom React
-view into a native `Marker`) uses the parent View's measured bounds.
-Any pixel positioned outside those bounds via a negative offset:
-- On Pixel / most Xiaomi → cropped silently (you don't see the
-  overhanging part).
-- On Samsung One UI → snapshot path partially fails. The marker
-  renders as a half-bitmap — random fragments of the intended
-  visual. Tester reports show this as a "cut" or "broken" bubble.
-- On Galaxy A series with low-RAM Android → snapshot returns null,
-  react-native-maps falls back to its built-in default colored pin.
+Between 2026-04-26 and the evening of 2026-04-27 we shipped four
+band-aid fixes to the custom-View Marker — negative offset removal,
+hard-clamped `borderRadius:9999`, shadow removal, and
+`tracksViewChanges` lifecycle tuning. Each fixed ONE device and
+broke another. Tester reports across the same morning ranged from
+square avatars to half-cut bubbles to the default red Google pin.
+Per Rule Zero, that's the cue to extract the shared core instead
+of patching a fifth time.
 
-The same JSX produces three different visuals depending on device.
-There is no way to "test it on my Galaxy and call it done" — every
-Samsung sub-model is its own bitmap implementation.
+The structural fix:
 
-#### Concrete cases that already shipped this bug
+1. The same JSX (now `BubbleVisual` in `screens/HomeScreen.tsx`)
+   is rendered OFFSCREEN by `MarkerCaptureStage` — a sibling of
+   `<MapView>`, position-absolute at `-10000px`, `pointerEvents:
+   none`. One `MarkerCaptureCell` per checkin.
+2. The cell waits for the avatar Image's `onLoad` (or `onError`,
+   or a 1.5 s belt-and-braces timeout) so the View is fully
+   painted, then calls `captureRef` from `react-native-view-shot`
+   to snapshot the View → PNG (`result: 'tmpfile'`).
+3. The resulting URI is fed to `<Marker image={{ uri }} />` via
+   `pngUri` prop. Native renders the PNG directly. No bitmap
+   snapshot path, no Skia compositor quirks, identical pixels on
+   every device.
+4. While the capture is in flight (~80–300 ms after avatar load),
+   the Marker still renders `BubbleVisual` as a child. On Samsung
+   One UI this child render path is exactly the broken one we're
+   replacing — but the window is small enough that the user sees
+   the PNG appear well before they react.
+
+`react-native-view-shot ^4.0.3` is already in the v14 AAB, so this
+refactor is JS-only — no `expo prebuild`, no new AAB, fully
+compatible with Rule Minus-One while Closed Testing is open.
+
+#### The forbidden pattern
+
+> **Do not turn the BubbleVisual child render into the primary
+> path. The PNG pipeline IS the primary path.**
+
+If you find yourself:
+
+- Removing the `MarkerCaptureStage` to "simplify"
+- Reading `pngUri` from somewhere other than HomeScreen state
+- Switching the Marker back to `tracksViewChanges` always-true /
+  always-false without going through the capture pipeline
+- Adding a new MapView with its own marker-rendering scheme
+
+stop. Those are reverts to the pre-2026-04-27 state. The structural
+fix exists because every device-specific patch we tried failed.
+
+#### What carries over from the old "no negative offsets" rule
+
+The old "No Negative Offsets in Marker Subtree" rule (2026-04-27
+afternoon, two band-aid attempts deep) is folded into this section.
+Its enforcement scope is reduced but not gone:
+
+- Negative `top` / `right` / `bottom` / `left` / `translateX/Y` /
+  margins are still forbidden inside `BubbleVisual`. Reason: the
+  fallback child render path still ships to Samsung One UI for the
+  brief 80–300 ms window before the PNG lands. Negative offsets
+  there still produce half-bitmaps for that window.
+- `view-shot` itself uses the View's measured bounds for capture,
+  so a negative offset would also be cropped from the PNG. Same
+  root cause, different mechanism.
+
+Net: the rule survives, but its consequences are now bounded —
+Samsung users see a broken visual for ~200 ms instead of forever.
+Don't take that as license to relax the rule.
+
+#### Concrete incident history (do not repeat)
 
 - 2026-04-27 morning, Eli (Samsung One UI X): emoji badge had
   `top: -s(3.5), right: -s(3.5)`. Bubble rendered as a square with
@@ -415,41 +473,36 @@ Samsung sub-model is its own bitmap implementation.
   badge, same negative offsets. Bubble rendered as a half-circle red
   curve with a dark patch on the right. Tester screenshot shows
   ~40% of the intended pixels.
-- The exact same bubble at the same moment on Barak's different
-  Samsung model: rendered correctly.
+- 2026-04-27 evening, Eli + Denis (Samsung): bubbles disappeared
+  after a second / appeared only after zoom / creators couldn't
+  see their own bubble. ALL three traced to the same Skia bitmap
+  snapshot timing issue. Triggered the image-based refactor.
+- 2026-04-27 evening, four band-aid attempts (commits `51f6c04`,
+  `abdc222`, `b10190e`, plus one more) — each fixed one device and
+  broke another. Net cost: a full day of tester churn.
 
-#### The rule
+#### Visual fingerprint = capture cache key
 
-Inside `screens/HomeScreen.tsx` `NomadMarker` (and any future custom
-marker view):
+`computeMarkerVisualKey(c, hotMap)` produces the cache key for a
+checkin's PNG. Anything that changes the rendered visual MUST be
+in this fingerprint, or the cached PNG will go stale. Today the
+key includes: `c.id`, `avatar_url`, `category`, `status_emoji`,
+`display_name/full_name`, `is_timer`, `is_expired`, `minsLeft`,
+`heat`. If you add a new visual element (e.g., a verified
+checkmark, a "speaks Hebrew" tag), add the corresponding field to
+the fingerprint at the same time. Otherwise visual updates won't
+re-capture and you'll ship stale-looking pins.
 
-- `top`, `right`, `bottom`, `left` MUST be `>= 0`.
-- If a child needs to visually overhang its parent (e.g., emoji
-  badge in the top-right corner of an avatar circle), expand the
-  parent with positive padding to make room. The badge then sits at
-  `top: 0, right: 0` inside the padded parent, all pixels within
-  bounds, visually identical.
-- `transform: [{ translateX/Y: ... }]` with negative values is also
-  forbidden — same root cause, same failure modes.
-- `marginTop`, `marginRight`, etc. with negative values are also
-  forbidden.
+#### Pulse animation — known regression
 
-#### When you add or move any element inside a Marker
-
-1. Re-read this section before writing any style for a Marker child.
-2. If you find yourself writing `top: -s(...)` or `right: -s(...)`
-   STOP. The visual you want needs a wrapper with padding instead.
-3. Test on at least three Samsung sub-models if possible. If not
-   possible, assume the worst-case (One UI snapshot failure) and
-   refuse to ship overhanging pixels.
-
-#### Why we tolerate one-time visual shifts to enforce this
-
-A 3-pixel inward shift on the emoji badge looks *slightly* different
-from the original "overhanging" design. Compared to a Samsung user
-who sees a half-rendered bubble and abandons the app, the trade-off
-is obvious. Visual consistency across every device beats a designer's
-preferred subtle overhang every time.
+The Animated `PulseRing` for hot pins (heat > 0) cannot be captured
+mid-animation, so the captured PNG includes a STATIC halo at
+roughly the brightest point of the breathing cycle, scaled by heat
+tier. Hot pins still read as more "alive" than cold ones, just no
+longer pulsing. If we ever decide the static halo is insufficient,
+the path forward is a parallel non-image `<Marker>` (with the
+animated PulseRing as a child) at the same coordinate, layered
+behind the PNG marker — defer until evidence demands it.
 
 ### Map Pin Flow Perf Rule — Locked April 2026
 

@@ -28,15 +28,47 @@ interface Props {
 }
 
 /** Turn a Supabase auth error into a single short human sentence.
+ *
  *  The Supabase SDK sometimes stuffs the entire non-JSON response body
  *  (Cloudflare 522/503 HTML, etc.) into `.message`, which would render
  *  as a wall of JSON on our form. This maps the common cases to clean
- *  copy and swallows everything else into a generic retry message. */
+ *  copy and swallows everything else into a generic retry message.
+ *
+ *  Coverage expanded 2026-04-27 evening after diagnosing repeated 422
+ *  signups with no `auth_event` log and a generic "Something went
+ *  wrong" UI message — Refael, Shahar and at least 4 other testers
+ *  abandoned the signup flow because the form gave them no actionable
+ *  hint. The new branches recognise:
+ *    - `user_already_exists` (the "I forgot I had an account" path)
+ *    - `over_email_send_rate_limit` (Supabase default of 2 confirmation
+ *      emails per email address per hour — currently the #1 cause of
+ *      mystery 422s during tester onboarding)
+ *    - `over_request_rate_limit` (per-IP throttle)
+ *    - `signup_disabled` (admin shut signup off in dashboard)
+ *    - `weak_password` (Supabase server-side strength check)
+ *    - `email_address_invalid` (malformed address rejected pre-DB)
+ *    - `email_address_not_authorized` (allowlist mode rejecting domain)
+ *
+ *  The raw error is also `console.warn`-ed so that when a tester
+ *  reports a generic message the dev console still has the full
+ *  Supabase code for debugging. */
 function friendlyAuthError(err: any): string {
   // Pull what we can from the object without trusting any single field.
   const raw = typeof err === 'string' ? err : (err?.message || '');
   const status: number | undefined = err?.status;
+  // Modern Supabase auth errors carry an `error_code` (`code` in some
+  // SDK versions) string identifier. Prefer that over message parsing
+  // when present — it's the stable identifier across SDK versions.
+  const code: string = String(
+    err?.error_code ?? err?.code ?? ''
+  ).toLowerCase();
   const text = String(raw).toLowerCase();
+
+  // Always log the raw error for debugging — friendly text goes to UI,
+  // raw shape goes to console for the dev to inspect after a tester
+  // report. NEVER include user-typed credentials in this log.
+  // eslint-disable-next-line no-console
+  console.warn('[Auth] error', { status, code, message: raw });
 
   // Cloudflare / gateway / any 5xx → server-side hiccup, come back later.
   if (
@@ -47,6 +79,28 @@ function friendlyAuthError(err: any): string {
   ) {
     return 'Server is busy right now. Please try again in a minute.';
   }
+
+  // Rate limiting — the #1 cause of mystery 422s during tester
+  // onboarding. Supabase sends a confirmation email on every signup
+  // attempt; the default cap is 2 per email per hour. Tester opens
+  // the app, types the wrong password once, retries with a fresh
+  // password, hits the cap, sees "Something went wrong". Now they
+  // see what's actually happening.
+  if (
+    code === 'over_email_send_rate_limit' ||
+    text.includes('email rate limit') ||
+    text.includes('over_email_send_rate_limit')
+  ) {
+    return 'Too many sign-up attempts for this email. Please wait an hour and try again, or use Continue with Google.';
+  }
+  if (
+    code === 'over_request_rate_limit' ||
+    text.includes('over_request_rate_limit') ||
+    text.includes('too many requests')
+  ) {
+    return 'Too many requests from this device. Please wait a few minutes and try again.';
+  }
+
   // Explicit bad-credential messages Supabase returns
   if (text.includes('invalid login') || text.includes('invalid credentials')) {
     return 'Wrong email or password.';
@@ -54,14 +108,48 @@ function friendlyAuthError(err: any): string {
   if (text.includes('email not confirmed')) {
     return 'Please confirm your email before signing in.';
   }
-  if (text.includes('user already registered')) {
-    return 'This email already has an account. Try logging in instead.';
+  // user_already_exists — handled both via code path AND legacy text
+  // path so SDK upgrades don't silently drop the branch.
+  if (
+    code === 'user_already_exists' ||
+    text.includes('user already registered') ||
+    text.includes('user already exists')
+  ) {
+    return 'This email already has an account. Tap "Already have an account? Log In" below.';
+  }
+  if (
+    code === 'signup_disabled' ||
+    text.includes('signup is disabled') ||
+    text.includes('signups not allowed')
+  ) {
+    return 'Sign-up is temporarily disabled. Please try again later or contact support.';
+  }
+  if (
+    code === 'weak_password' ||
+    text.includes('weak password') ||
+    text.includes('password should be')
+  ) {
+    return 'Password is too weak. Use at least 6 characters with letters and numbers.';
+  }
+  if (
+    code === 'email_address_invalid' ||
+    text.includes('email_address_invalid') ||
+    text.includes('invalid email')
+  ) {
+    return 'That email address looks invalid. Please double-check it.';
+  }
+  if (
+    code === 'email_address_not_authorized' ||
+    text.includes('email_address_not_authorized') ||
+    text.includes('email domain not allowed')
+  ) {
+    return 'This email domain is not allowed during the closed test. Try a Gmail or Outlook address.';
   }
   if (text.includes('network') || text.includes('failed to fetch') || text.includes('abort')) {
     return 'No connection. Check your internet and try again.';
   }
   // Anything else — a short, safe default. Never leak raw error objects.
-  return 'Something went wrong. Please try again.';
+  return 'Something went wrong. Please try again, or use Continue with Google.';
 }
 
 export default function AuthScreen({ onSuccess }: Props) {
@@ -406,6 +494,18 @@ export default function AuthScreen({ onSuccess }: Props) {
               <Text style={styles.orText}>or</Text>
               <View style={styles.orLine} />
             </View>
+
+            {/* Reassurance line — testers reported they didn't know
+             *  whether to use Google or email and assumed something
+             *  was wrong with the app when one of them failed. This
+             *  one-line hint says: both paths land you on the same
+             *  account, pick whichever works. Keeps the signup
+             *  surface honest without explaining every edge case. */}
+            {mode === 'signup' && (
+              <Text style={styles.fallbackHint}>
+                Either way creates the same account — use whichever works on your device.
+              </Text>
+            )}
           </View>
         )}
 
@@ -705,6 +805,18 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     fontSize: s(5.5),
     color: c.textMuted,
     fontWeight: FW.regular,
+  },
+  /* Reassurance line under the "or" divider — explains that the two
+   * paths converge to the same account. Visual: muted, italic-ish,
+   * one line. Sized smaller than the form labels so it reads as a
+   * sublabel rather than a competing CTA. */
+  fallbackHint: {
+    marginTop: s(2),
+    fontSize: s(4.5),
+    lineHeight: s(7),
+    color: c.textFaint,
+    textAlign: 'center',
+    paddingHorizontal: s(6),
   },
 
   /* ── Form — clean, no border card ── */

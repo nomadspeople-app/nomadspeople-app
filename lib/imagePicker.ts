@@ -295,6 +295,13 @@ export async function uploadImage(
 
 /**
  * Pick & upload avatar — returns public URL.
+ *
+ * In v14 the picker is disabled (expo-image-picker@55 native crash —
+ * see V14_PICKER_DISABLED comment block above). Tapping the avatar
+ * shows a polite "coming in next update" Alert instead of opening
+ * the broken picker. v15 will lift V14_PICKER_DISABLED and this
+ * function reverts to the working picker path automatically — no
+ * caller change required.
  */
 export async function pickAndUploadAvatar(userId: string): Promise<string | null> {
   const uri = await pickImage([1, 1]);

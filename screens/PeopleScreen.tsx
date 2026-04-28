@@ -424,7 +424,7 @@ export default function PeopleScreen() {
 
       {/* ─── Header ─── */}
       <View style={[st.header, { backgroundColor: colors.bg }]}>
-        <Text style={[st.headerTitle, { color: colors.dark }]}>people</Text>
+        <Text style={[st.headerTitle, { color: colors.dark }]}>{t('people.title')}</Text>
         <Text style={[st.headerCity, { color: colors.textMuted }]}>{countryFlag(myProfile?.home_country || '')} {currentCity}</Text>
       </View>
 
@@ -451,10 +451,10 @@ export default function PeopleScreen() {
           {/* Center card */}
           <Animated.View style={[st.snoozeCard, { transform: [{ scale: cardScale }] }]}>
             <Text style={st.snoozeCardEmoji}>😴</Text>
-            <Text style={st.snoozeCardTitle}>you're snoozed</Text>
-            <Text style={st.snoozeCardSub}>people and activities are hidden{'\n'}while you rest</Text>
+            <Text style={st.snoozeCardTitle}>{t('snooze.title')}</Text>
+            <Text style={st.snoozeCardSub}>{t('snooze.subtitle')}</Text>
             <TouchableOpacity style={st.wakeUpBtn} onPress={handleWakeUp} activeOpacity={0.75}>
-              <Text style={st.wakeUpBtnText}>wake up</Text>
+              <Text style={st.wakeUpBtnText}>{t('snooze.wakeUp')}</Text>
             </TouchableOpacity>
           </Animated.View>
         </Animated.View>
@@ -462,13 +462,13 @@ export default function PeopleScreen() {
 
       {/* ═══ SECTION 1 — RELEVANT ACTIVITIES ═══ */}
       <View style={[st.section, { height: SECTION_H }]}>
-        <SectionTitle icon="zap" color="#F97316" title="relevant activities" count={checkins.length} />
+        <SectionTitle icon="zap" color="#F97316" title={t('people.relevantActivities')} count={checkins.length} />
         {checkinsLoading ? (
           <View style={st.loadingRow}><ActivityIndicator color="#F97316" /></View>
         ) : checkins.length === 0 ? (
           <View style={st.emptyRow}>
             <NomadIcon name="calendar" size={s(12)} color={colors.textFaint} strokeWidth={1.4} />
-            <Text style={st.emptyText}>no activities nearby right now</Text>
+            <Text style={st.emptyText}>{t('people.noActivitiesNearby')}</Text>
           </View>
         ) : (
           <FlatList
@@ -541,7 +541,7 @@ export default function PeopleScreen() {
 
                   {/* Bottom: name + time (no avatar — card opens event, not profile) */}
                   <View style={st.actBottom}>
-                    <Text style={st.actName} numberOfLines={1}>{profile?.full_name || 'Nomad'}</Text>
+                    <Text style={st.actName} numberOfLines={1}>{profile?.full_name || t('people.fallbackName')}</Text>
                     <Text style={st.actTime}>{isTimer && countdown ? countdown : timeAgo(item.checked_in_at)}</Text>
                   </View>
                 </TouchableOpacity>
@@ -556,13 +556,13 @@ export default function PeopleScreen() {
 
       {/* ═══ SECTION 2 — INCOMING FLIGHTS ═══ */}
       <View style={[st.section, { height: SECTION_H }]}>
-        <SectionTitle icon="airplane" color={colors.accent} title="incoming flights" count={flightGroups.length} />
+        <SectionTitle icon="airplane" color={colors.accent} title={t('people.incomingFlights')} count={flightGroups.length} />
         {flightsLoading ? (
           <View style={st.loadingRow}><ActivityIndicator color={colors.accent} /></View>
         ) : flightGroups.length === 0 ? (
           <View style={st.emptyRow}>
             <NomadIcon name="airplane" size={s(12)} color={colors.textFaint} strokeWidth={1.4} />
-            <Text style={st.emptyText}>no flights yet</Text>
+            <Text style={st.emptyText}>{t('people.noFlightsYet')}</Text>
           </View>
         ) : (
           <FlatList
@@ -609,7 +609,7 @@ export default function PeopleScreen() {
                         </View>
                       ))}
                     </View>
-                    <Text style={st.flightCount}>{item.member_count} {item.member_count === 1 ? 'nomad' : 'nomads'}</Text>
+                    <Text style={st.flightCount}>{item.member_count} {item.member_count === 1 ? t('people.nomadSingular') : t('people.nomadPlural')}</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -631,13 +631,13 @@ export default function PeopleScreen() {
        * confusion. The internal score still drives the SORT order
        * (best matches first) but is no longer surfaced to the user. */}
       <View style={[st.section, { height: SECTION_H }]}>
-        <SectionTitle icon="heart" color="#EC4899" title="meetup people" count={matches.length} />
+        <SectionTitle icon="heart" color="#EC4899" title={t('people.meetupPeople')} count={matches.length} />
         {matchesLoading ? (
           <View style={st.loadingRow}><ActivityIndicator color="#EC4899" /></View>
         ) : matches.length === 0 ? (
           <View style={st.emptyRow}>
             <NomadIcon name="heart" size={s(12)} color={colors.textFaint} strokeWidth={1.4} />
-            <Text style={st.emptyText}>complete your profile to find matches</Text>
+            <Text style={st.emptyText}>{t('people.completeProfileToMatch')}</Text>
           </View>
         ) : (
           <FlatList

@@ -88,7 +88,7 @@
         "com.google.android.gms.permission.AD_ID"
       ],
       "predictiveBackGestureEnabled": false,
-      "versionCode": 12
+      "versionCode": 14
     },
     "web": {
       "favicon": "./assets/favicon.png"

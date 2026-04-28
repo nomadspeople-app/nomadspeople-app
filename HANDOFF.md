@@ -1,29 +1,28 @@
-# nomadspeople — Cowork Handoff Prompt
+# HANDOFF — redirect
 
-## Project Details
-- Folder: ~/nomadspeople-app
-- Platform: Expo React Native (TypeScript)
-- Supabase URL: https://irzwgbnssfxtqmldtbbv.supabase.co
-- Supabase Anon Key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlyendnbnpzc2Z4dHFtbGR0YmJ2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUwMzkxNzgsImV4cCI6MjA5MDYxNTE3OH0.mn-WFWEF5112O59r5XN6tCp4y-LrcTwqT-YzVNoQRkU
-
-## Run Command
-source ~/.nvm/nvm.sh && nvm use default && cd ~/nomadspeople-app && npx expo start --lan
-
-## Design
-- Style: Airbnb style — clean, premium
-- Primary: #FF5A5F
-- Accent: #00A699
-- Background: #FAFAF9
-- Map bg: #F2F1EC
-
-## Status
-1. ✅ City search fixes (live search + zoom 0.08)
-2. ➡️ Supabase connection (Auth + all screens)
-3. Post Feed Screen
-4. Create Event Flow
-5. Notifications
-6. DM privacy
-7. App Store Prep
-
-## DB Tables
-profiles, checkins, events, event_members, follows, conversations, conversation_members, messages, message_reactions, posts, post_likes, comments, notifications, subscriptions
+> This file used to carry a short "what to run next" blurb with a
+> stale Supabase URL (the `irzwgbnssfxtqmldtbbv` project from early
+> 2026). That project was retired and the current backend is
+> `apzpxnkmuhcwmvmgisms`. Leaving the old URL here was a silent
+> footgun — the kind of ambient wrong-info that costs a day when a
+> new contributor trusts it.
+>
+> As of 2026-04-23, **the single source of truth for everything
+> non-code about this project is `PROJECT_DOSSIER.md`** at the root
+> of the repo. That's where the real Supabase project, the email
+> forwarding, the plans, the accounts, and the Apple/Google
+> submission state all live — and it's the only document anyone
+> should update when a fact changes.
+>
+> See also:
+> - `CLAUDE.md` — architectural invariants (map pin flow, avatar
+>   cache, RLS boundary, i18n rule) that every code change must
+>   respect.
+> - `docs/launch/MASTER-PLAN.md` + `docs/launch/PART-2-DEEP-DIVE.md`
+>   — the launch playbook and compliance deep-dive.
+> - `docs/2026-04-22-apple-google-signin.md` — the step-by-step
+>   runbook for the Apple + Google OAuth setup.
+>
+> If you landed here looking for a "how do I boot this app" blurb,
+> use `docs/launch/COMMANDS-TO-RUN.md` and `PROJECT_DOSSIER.md`
+> together.
