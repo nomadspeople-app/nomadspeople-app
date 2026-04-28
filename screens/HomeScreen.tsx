@@ -634,8 +634,15 @@ function MarkerCaptureStage({
         position: 'absolute',
         left: -10000,
         top: -10000,
-        width: 0,
-        height: 0,
+        // No width/height clamp here. Earlier we set width:0, height:0
+        // thinking it would just keep the stage hidden, but on Android
+        // a zero-sized parent clips its children to zero size BEFORE
+        // they paint — view-shot then captured an empty PNG and the
+        // Marker stayed at the default red pin (Pixel + Samsung
+        // tester reports 2026-04-29 morning). Letting the stage
+        // measure intrinsically lets every BubbleVisual render at
+        // its natural dimensions, captureRef gets real pixels, and
+        // the Marker finally renders the branded bubble.
         opacity: 0,
       }}
       pointerEvents="none"
@@ -693,38 +700,51 @@ function NomadMarker({
   return (
     <Marker
       key={c.id}
-      // No `tracksViewChanges` here. Without a child subtree there's
-      // nothing for react-native-maps to bitmap-snapshot, so the
-      // prop is moot — and the default lifecycle (don't track)
-      // matches what we want for a static `image` marker anyway.
+      // tracksViewChanges only matters while we're rendering the
+      // child fallback (i.e. before pngUri arrives). Once the image
+      // prop is set, react-native-maps uses the PNG directly and
+      // ignores the child subtree.
+      tracksViewChanges={!pngUri}
       coordinate={coord}
       anchor={{ x: 0.5, y: 1 }}
       onPress={() => onPinTap(c)}
       image={pngUri ? { uri: pngUri } : undefined}
     >
-      {/* No fallback child render.
+      {/* Branded BubbleVisual fallback during the brief PNG-capture
+       * window (~80–1500 ms after first paint).
        *
-       * Pre-2026-04-29 morning we rendered BubbleVisual as a child
-       * during the ~80–1500 ms capture window. The intent was to
-       * "show something" immediately while the offscreen capture
-       * worked. Reality on Samsung One UI: that "something" went
-       * through the broken native bitmap-snapshot path and shipped
-       * to the user as a half-rendered or quarter-cut bubble — the
-       * exact UI failure the image-based refactor was supposed to
-       * eliminate. The owner saw it again ("Shahar's first launch,
-       * unacceptable, bubbles must be whole") and pulled the plug.
+       * Why this child is back, after we removed it earlier today:
        *
-       * By rendering NO child at all, the Marker shows
-       * react-native-maps' default native pin (red teardrop on
-       * Android, blue dot on iOS) for the brief capture window.
-       * Visually plain but ALWAYS correct on every device — no
-       * half-circles, no quartered bubbles, no Samsung Skia drama.
-       * As soon as the PNG capture lands and `pngUri` flips in,
-       * the default pin is replaced by the proper bubble image.
+       *   The 2026-04-29 morning revert (ship default red pin while
+       *   waiting for capture) traded "broken bubble briefly" for
+       *   "default red pin permanently if capture fails". On
+       *   Pixel 9 Pro the offscreen capture stage was rendering
+       *   inside a 0×0 parent — children clipped to zero — so the
+       *   captured PNG came back empty, the Marker never received
+       *   `pngUri`, and the user saw RED TEARDROPS instead of our
+       *   bubbles. Owner screenshot 09:18: "this isn't our bubble".
        *
-       * Net: user sees a default pin → bubble. Never a broken
-       * bubble. Slightly less branded for ~300 ms, infinitely more
-       * trustworthy. */}
+       *   With the offscreen stage now uncapped (parent intrinsic
+       *   size, see MarkerCaptureStage), captures actually produce
+       *   real PNGs. Restoring this child gives every device an
+       *   immediate branded bubble while the capture works in the
+       *   background. On working snapshot devices (iPhone, Pixel,
+       *   most Android) the child render IS already the right
+       *   bubble — the PNG just locks it in place going forward.
+       *   On Samsung One UI the child briefly shows the broken
+       *   bitmap, then the PNG corrects it (~200 ms window).
+       *
+       *   This puts us back to "Pixel + iPhone always show the
+       *   right bubble" behaviour while keeping the structural
+       *   PNG fix that protects Samsung. Both worlds covered. */}
+      {!pngUri && (
+        <BubbleVisual
+          c={c}
+          st={st}
+          avatarUri={avatarUri}
+          hotMap={hotMap}
+        />
+      )}
     </Marker>
   );
 }
