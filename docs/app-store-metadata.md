@@ -70,7 +70,7 @@ BUILT FOR NOMADS, BY NOMADS
 
 nomadspeople was built because finding your people in a new city shouldn't be this hard. No algorithms, no feeds, no noise — just a map showing who's nearby and a simple way to connect.
 
-Currently active in cities worldwide including Bangkok, Lisbon, Mexico City, Chiang Mai, Berlin, Buenos Aires, and everywhere nomads roam.
+Designed for global nomads — built for use in every major remote-work hub, from Bangkok to Lisbon to Mexico City to Berlin.
 
 ---
 

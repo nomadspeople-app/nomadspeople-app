@@ -289,7 +289,7 @@ Once you have **12+ testers opted-in for 14 continuous days:**
    - Summarize the feedback collected and how you collected it
 
    **Section B: About your app/game**
-   - Intended audience (draft: "Digital nomads aged 25-45, remote workers, long-term travelers. Global — active users in Bangkok, Lisbon, Mexico City, Tel Aviv, Bali, Berlin, Buenos Aires.")
+   - Intended audience (draft: "Digital nomads aged 25-45, remote workers, long-term travelers. Global audience — designed for every major remote-work hub including Bangkok, Lisbon, Mexico City, Tel Aviv, Bali, Berlin, Buenos Aires.")
    - How your app provides value (draft: "nomadspeople solves the #1 problem of remote workers: finding their people in a new city. Existing apps show city-level data; we show neighborhood-level, real-time. A nomad in Bangkok can see who's in Sukhumvit at 4pm and join a co-working session in 2 taps.")
    - First-year install estimate (choose range — start with 10,000-50,000)
 

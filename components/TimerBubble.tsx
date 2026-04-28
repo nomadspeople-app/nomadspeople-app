@@ -370,14 +370,77 @@ export default function TimerBubble({
     }
   };
 
-  /* ── Chat (already-member visitor) ── */
-  const handleChat = () => {
-    if (!checkin || !conversationId) return;
+  /* ── Chat (already-member visitor) ──
+   *
+   * 2026-04-28 race-condition fix:
+   *
+   *   The "iAmMember" gate that shows the Chat button uses
+   *   `optimisticallyJoined`, which flips to true the INSTANT the
+   *   user taps Join — long before the createOrJoinStatusChat
+   *   network round-trip resolves and `setConversationId(cid)` is
+   *   called. The original handleChat early-returned with
+   *   `if (!conversationId) return` — silent no-op, no haptic,
+   *   no error. Tester report: "I had to tap chat 4-5 times for
+   *   it to actually open." Each tap during the ~1-2 second join
+   *   window did nothing; only after the await resolved did the
+   *   conversationId state catch up and the next tap finally
+   *   navigate.
+   *
+   *   New flow:
+   *
+   *     1. If we have conversationId in local state → use it.
+   *     2. Else, fetch it on-demand by checkin_id. Today's RLS
+   *        policy `conversations_active_checkin_select` (migration
+   *        2026-04-28) means this query works for any authenticated
+   *        user when the checkin is active — no member gate. So a
+   *        tap that arrives mid-join still resolves the right
+   *        conversation and navigates the user into the chat.
+   *     3. If even the fetch returns nothing (truly no conv yet —
+   *        e.g., the user joined a checkin whose creator-side
+   *        bootstrap failed), surface a friendly Alert instead of
+   *        silent no-op so the user knows to try again.
+   *
+   *   The function is async now; TouchableOpacity's onPress
+   *   accepts that without a wrapper. */
+  const handleChat = async () => {
+    if (!checkin) return;
     Haptics.selectionAsync().catch(() => {});
     const title = checkin.activity_text || checkin.status_text || firstName;
+
+    // Resolve the conversation id — local state first, on-demand fetch as fallback.
+    let cid: string | null = conversationId;
+    if (!cid) {
+      try {
+        const { data: conv } = await supabase
+          .from('app_conversations')
+          .select('id')
+          .eq('checkin_id', checkin.id)
+          .eq('type', 'group')
+          .maybeSingle();
+        cid = conv?.id ?? null;
+        // Cache locally so the next render uses state without
+        // another network round-trip.
+        if (cid) setConversationId(cid);
+      } catch (e) {
+        console.warn('[TimerBubble] handleChat conversation lookup failed:', e);
+      }
+    }
+
+    if (!cid) {
+      // Truly nothing on the server side. Friendly retry message
+      // beats silent failure — the user knows the tap registered
+      // and the system isn't broken.
+      Alert.alert(
+        t('event.chat.notReadyTitle') || 'Chat is starting up',
+        t('event.chat.notReadyBody') || 'Give it a couple of seconds and try again.',
+      );
+      return;
+    }
+
+    const cidString = cid;
     onClose();
     setTimeout(() => {
-      nav.navigate('Chat', { conversationId, title, isGroup: true });
+      nav.navigate('Chat', { conversationId: cidString, title, isGroup: true });
     }, 80);
   };
 

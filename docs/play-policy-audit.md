@@ -153,21 +153,21 @@ If we add subscriptions post-launch, we'll need to (1) add Play Billing, (2) upd
 
 ---
 
-## 11. 🟡 Store Listing Metadata — Soften ONE phrase
+## 11. ✅ Store Listing Metadata — Phrase softened (2026-04-28)
 
-**Source:** `docs/google-play-submission.md` §2 Full Description, last paragraph:
+**Source:** `docs/google-play-submission.md` §2 Full Description + `docs/app-store-metadata.md` line 73 + `docs/google-play-submission.md` Production Access intended-audience draft.
 
-> *"Active in cities worldwide including Bangkok, Lisbon, Mexico City, Chiang Mai, Berlin, Buenos Aires, and wherever nomads roam."*
+**Old wording (factual claim, risk of substantiation request):**
 
-**Risk:** Google may flag this if we don't have demonstrated users in those cities at launch. The phrase "active in" is a factual claim. Review teams sometimes ask for substantiation.
+> *"Currently active in cities worldwide including Bangkok, Lisbon, Mexico City, Chiang Mai, Berlin, Buenos Aires, and everywhere nomads roam."*
 
-**Recommended rewrite (same feel, safer):**
+**New wording (design/intent claim, no substantiation risk):**
 
-> *"Designed for global nomads — built for use in every major remote-work hub, from Bangkok to Lisbon to Mexico City."*
+> *"Designed for global nomads — built for use in every major remote-work hub, from Bangkok to Lisbon to Mexico City to Berlin."*
 
-This shifts from a factual claim ("we have users there NOW") to a design/intent statement ("we built it for that").
+The Production Access intended-audience answer was updated in parallel: "Global audience — designed for every major remote-work hub" replaces "Global — active users in [cities]".
 
-**Action:** update `docs/google-play-submission.md` §2 + actual Play Store listing when filling. Trivial fix.
+**Status:** ✅ Fixed in docs. Will paste the corrected wording into Play Store listing when filling out the Production listing form (after Production Access approval).
 
 ---
 

@@ -39,6 +39,47 @@ time (subject to Rule Zero discipline).
 
 ## 1) MUST be in v15 — native code, requires `expo prebuild` + new AAB
 
+### Push notifications — FCM + APNs not configured
+
+- **Discovered:** 2026-04-28 morning, after the owner reported "no
+  one is getting notifications, and I'm sure no users do".
+- **DB confirms:** 8 of 9 active users have `push_token = NULL`. The
+  one with a token (`barakperez`, the legacy account) got it from
+  an earlier build that's no longer in production.
+- **Root cause:** `app.json` has the `expo-notifications` plugin but
+  is missing `android.config.googleServicesFile` (FCM) and any iOS
+  push entitlement / `.p8` reference. `getExpoPushTokenAsync` fails
+  silently (caught by the try/catch in `lib/notifications.ts`
+  `registerForPushNotifications`) → no token saved → no
+  notifications can be delivered to anyone.
+- **Fix in v15:**
+  1. Create Firebase project at console.firebase.google.com under
+     `shospeople@gmail.com`.
+  2. Add Android app: package `com.nomadspeople.app`, paste the App
+     Signing Key SHA-1 from Play Console (already known —
+     `F7:76:6B:EC:5D:13:7C:6A:87:66:CD:9E:48:5E:90:BD:E7:D0:8E:24`).
+  3. Download `google-services.json` → commit to repo root (file is
+     already in `.gitignore` if not, add it).
+  4. Add to `app.json` → `expo.android.config.googleServicesFile:
+     "./google-services.json"`.
+  5. Run `eas credentials -p android` and select FCM v1 service
+     account JSON for Cloud Messaging.
+  6. iOS: depends on Apple Developer account (uncle gate). Once the
+     `.p8` for APNs is generated, run `eas credentials -p ios` and
+     upload the APNs auth key.
+  7. Native rebuild via `eas build` — both platforms.
+- **Trade-off until v15 ships:** Closed Testing testers do NOT
+  receive push notifications. The unread badge + Realtime list
+  refresh on app open still work, so chat is functional — just
+  no "you have a new message" buzz on lock screen.
+- **Optional JS-only follow-up before v15:** add an in-app banner
+  on PulseScreen when `getPermissionsAsync` returns `granted` but
+  the DB still has `push_token IS NULL` after 30 seconds —
+  effectively detects the FCM-not-configured case and tells the
+  user "notifications coming in the next update". Keeps testers
+  from suspecting their device is broken.
+- **Status:** ⏳ Critical for v15
+
 ### Image picker — broken native module
 
 - **What:** `expo-image-picker@^55.0.14` calls `AppContext.getServices()`
