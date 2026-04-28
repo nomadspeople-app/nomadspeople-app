@@ -671,8 +671,7 @@ function MarkerCaptureStage({
  *    bubble immediately on mount. */
 function NomadMarker({
   c,
-  cityLat,
-  cityLng,
+  coord,
   onPinTap,
   avatarUri,
   st,
@@ -680,8 +679,11 @@ function NomadMarker({
   pngUri,
 }: {
   c: CheckinWithProfile;
-  cityLat: number;
-  cityLng: number;
+  /* Stable `{ latitude, longitude }` reference owned by HomeScreen's
+   * markerCoordsRef. Reusing the same object across renders prevents
+   * react-native-maps from animating the native pin on every parent
+   * re-render even when the coordinates haven't actually changed. */
+  coord: { latitude: number; longitude: number };
   onPinTap: (c: CheckinWithProfile) => void;
   avatarUri: (url: string | null | undefined) => string | undefined;
   st: ReturnType<typeof makeStyles>;
@@ -698,10 +700,7 @@ function NomadMarker({
       // moot. Setting this to false during the image phase also
       // collapses the "pin dancing" issue from the old approach.
       tracksViewChanges={!pngUri}
-      coordinate={{
-        latitude: c.latitude ? c.latitude : scatter(cityLat, hashCode(c.id)),
-        longitude: c.longitude ? c.longitude : scatter(cityLng, hashCode(c.id + '_lng')),
-      }}
+      coordinate={coord}
       anchor={{ x: 0.5, y: 1 }}
       onPress={() => onPinTap(c)}
       image={pngUri ? { uri: pngUri } : undefined}
@@ -815,6 +814,41 @@ export default function HomeScreen() {
     markerImagesRef.current.set(id, { key, uri });
     setMarkerImagesVersion((v) => v + 1);
   }, []);
+  /* Stable Marker coordinates — keyed by checkin id, refreshed only
+   * when a checkin's coords actually move.
+   *
+   * Why: every time `markerImagesVersion` bumps (i.e. once per
+   * capture, once per minute for timers, etc.) the nomadMarkers
+   * useMemo re-runs and used to recreate `coordinate={{ latitude,
+   * longitude }}` as a fresh inline object literal — same numbers,
+   * new reference. react-native-maps treats a new coordinate ref as
+   * a position change and animates the native pin to its (identical)
+   * destination. With ~6+ markers and frequent capture bumps you
+   * see them all "dance" briefly several times a minute. The owner
+   * called this out 2026-04-28 evening: "still flickering, jumping
+   * weirdly, no stability".
+   *
+   * Fix: cache one `{ latitude, longitude }` object per checkin id
+   * and reuse the SAME REFERENCE on every memo run unless the
+   * checkin's lat/lng actually changed. React reconciler sees the
+   * Marker's coord prop as the same object, no native update fires,
+   * pins stay rock-still even while the capture pipeline progresses
+   * underneath. */
+  const markerCoordsRef = useRef<Map<string, { latitude: number; longitude: number }>>(new Map());
+  const getStableCoord = useCallback(
+    (c: CheckinWithProfile, cityLat: number, cityLng: number): { latitude: number; longitude: number } => {
+      const lat = c.latitude ? c.latitude : scatter(cityLat, hashCode(c.id));
+      const lng = c.longitude ? c.longitude : scatter(cityLng, hashCode(c.id + '_lng'));
+      const cached = markerCoordsRef.current.get(c.id);
+      if (cached && cached.latitude === lat && cached.longitude === lng) {
+        return cached;
+      }
+      const fresh = { latitude: lat, longitude: lng };
+      markerCoordsRef.current.set(c.id, fresh);
+      return fresh;
+    },
+    [],
+  );
   // Note: the prune-stale-entries useEffect lives further down in the
   // body (right after useActiveCheckins() declares `checkins`) because
   // it has to read that hook's output. Defining it here would hit a
@@ -1890,8 +1924,7 @@ export default function HomeScreen() {
       <NomadMarker
         key={c.id}
         c={c}
-        cityLat={currentCity.lat}
-        cityLng={currentCity.lng}
+        coord={getStableCoord(c, currentCity.lat, currentCity.lng)}
         onPinTap={handlePinTap}
         avatarUri={avatarUri}
         st={st}
@@ -1900,7 +1933,7 @@ export default function HomeScreen() {
       />
     ));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSnoozed, filteredCheckins, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins, markerImagesVersion]);
+  }, [isSnoozed, filteredCheckins, currentCity.lat, currentCity.lng, handlePinTap, avatarUri, st, hotCheckins, markerImagesVersion, getStableCoord]);
 
   const handleViewProfile = (userId: string) => {
     nav.navigate('UserProfile', { userId, name: selectedNomad?.name });
@@ -2491,7 +2524,19 @@ export default function HomeScreen() {
         mapLanguage="en"
         customMapStyle={isDark ? DIM_MAP_STYLE : []}
         userInterfaceStyle={isDark ? 'dark' : 'light'}
-        mapPadding={{ top: (headerH > 0 ? headerH : insets.top + s(36)) + s(30), left: 0, right: 0, bottom: s(40) }}
+        mapPadding={{
+          top: (headerH > 0 ? headerH : insets.top + s(36)) + s(30),
+          left: 0,
+          right: 0,
+          // Bottom padding controls where Google's native UI (logo,
+          // location button, compass) sits relative to the visible map
+          // area. Was s(40) — that left a ~40pt empty gap between the
+          // logo and the bottom tab bar that the owner flagged 2026-04-28
+          // as "too high". The bottom tab bar height (App.tsx) is
+          // s(30) + insets.bottom, so a small s(8) here pulls the logo
+          // close to the tab bar without it disappearing behind it.
+          bottom: s(8),
+        }}
         onRegionChangeComplete={(region) => {
           // Bubble is bottom-docked now (no anchor), so map pan/zoom
           // doesn't affect it. The user can freely explore the map
