@@ -693,31 +693,38 @@ function NomadMarker({
   return (
     <Marker
       key={c.id}
-      // tracksViewChanges only matters while we're rendering the
-      // child fallback (i.e. before pngUri arrives). Once the image
-      // prop is set, react-native-maps uses the PNG directly and
-      // ignores the child subtree — so re-snapshotting becomes
-      // moot. Setting this to false during the image phase also
-      // collapses the "pin dancing" issue from the old approach.
-      tracksViewChanges={!pngUri}
+      // No `tracksViewChanges` here. Without a child subtree there's
+      // nothing for react-native-maps to bitmap-snapshot, so the
+      // prop is moot — and the default lifecycle (don't track)
+      // matches what we want for a static `image` marker anyway.
       coordinate={coord}
       anchor={{ x: 0.5, y: 1 }}
       onPress={() => onPinTap(c)}
       image={pngUri ? { uri: pngUri } : undefined}
     >
-      {/* Fallback child render — ignored natively once `image` is
-       * set. Until then, on platforms where the native snapshot
-       * path works, this is what the user sees. On Samsung One UI
-       * this may render half/squarely, but that window only lasts
-       * until the offscreen capture finishes (~80–300 ms). */}
-      {!pngUri && (
-        <BubbleVisual
-          c={c}
-          st={st}
-          avatarUri={avatarUri}
-          hotMap={hotMap}
-        />
-      )}
+      {/* No fallback child render.
+       *
+       * Pre-2026-04-29 morning we rendered BubbleVisual as a child
+       * during the ~80–1500 ms capture window. The intent was to
+       * "show something" immediately while the offscreen capture
+       * worked. Reality on Samsung One UI: that "something" went
+       * through the broken native bitmap-snapshot path and shipped
+       * to the user as a half-rendered or quarter-cut bubble — the
+       * exact UI failure the image-based refactor was supposed to
+       * eliminate. The owner saw it again ("Shahar's first launch,
+       * unacceptable, bubbles must be whole") and pulled the plug.
+       *
+       * By rendering NO child at all, the Marker shows
+       * react-native-maps' default native pin (red teardrop on
+       * Android, blue dot on iOS) for the brief capture window.
+       * Visually plain but ALWAYS correct on every device — no
+       * half-circles, no quartered bubbles, no Samsung Skia drama.
+       * As soon as the PNG capture lands and `pngUri` flips in,
+       * the default pin is replaced by the proper bubble image.
+       *
+       * Net: user sees a default pin → bubble. Never a broken
+       * bubble. Slightly less branded for ~300 ms, infinitely more
+       * trustworthy. */}
     </Marker>
   );
 }

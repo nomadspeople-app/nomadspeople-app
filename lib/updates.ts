@@ -51,7 +51,36 @@ export interface UpdateCheckOutcome {
 
 /** Fire-and-forget. Call this ONCE on app cold launch after
  *  auth resolves. Do NOT call on every navigation — the
- *  server-side check is rate-limited by Expo. */
+ *  server-side check is rate-limited by Expo.
+ *
+ *  Behavior change 2026-04-29 morning: when an update is
+ *  available we now FETCH AND APPLY it inside the same cold
+ *  launch — `reloadAsync()` reboots the JS bundle with the
+ *  new code BEFORE the user reaches the home screen. The
+ *  brief reload flash is invisible (mostly indistinguishable
+ *  from normal app boot), and it eliminates the "first
+ *  launch shows old bug, second launch shows fix" gap.
+ *
+ *  Why this matters: testers who install the app from Play
+ *  Store get the v14-bundled JS on first run. If a critical
+ *  visual fix shipped via OTA after that build (e.g., the
+ *  Pixel/Samsung broken-bubble fix from 2026-04-29), the
+ *  PREVIOUS implementation made them see the broken behavior
+ *  for an entire session before the next cold launch picked
+ *  up the new bundle. That gave new users a permanently bad
+ *  first impression. Auto-reloading on download closes that
+ *  gap to ~3 seconds.
+ *
+ *  Cost: a one-time ~3 s pause on the very first launch
+ *  after install (or after we ship a new OTA), during which
+ *  the JS bundle is downloaded and the app reloads. On every
+ *  subsequent launch where there's no update, the check
+ *  returns instantly.
+ *
+ *  This is JS-only — `Updates.fetchUpdateAsync()` and
+ *  `Updates.reloadAsync()` are part of the existing
+ *  expo-updates native module that's already in v14 AAB. No
+ *  Rule Minus-One impact, no new build needed. */
 export async function checkForOtaUpdate(): Promise<UpdateCheckOutcome> {
   try {
     const Updates = await import('expo-updates');
@@ -68,10 +97,17 @@ export async function checkForOtaUpdate(): Promise<UpdateCheckOutcome> {
       return { state: 'no-update' };
     }
 
-    // Download the new bundle in the background. The user
-    // keeps using the current build in the meantime. Next
-    // cold launch applies the new bundle automatically.
+    // Download the new bundle and apply IMMEDIATELY by
+    // reloading the JS context. Safe to call from cold-launch
+    // because the user hasn't interacted yet — the reload
+    // looks like the tail end of normal startup. Anything
+    // that needed to survive a reload (auth tokens) is in
+    // AsyncStorage and the new bundle re-reads it on boot.
     await Updates.fetchUpdateAsync();
+    await Updates.reloadAsync();
+    // reloadAsync() doesn't actually return — the JS context
+    // is replaced. The line below is a defensive return for
+    // the unreachable code path where reload silently fails.
     return { state: 'downloaded' };
   } catch (err: any) {
     // Most common cause pre-launch: `expo-updates` not
