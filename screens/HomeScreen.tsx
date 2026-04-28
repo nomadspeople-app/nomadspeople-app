@@ -3712,18 +3712,35 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     backgroundColor: c.card,
   },
 
-  /* Inner avatar circle (compact: -15%) */
+  /* Inner avatar circle.
+   *
+   * 2026-04-28 — sized to s(15) (down from s(22), -30%) and emoji
+   * badge sized up correspondingly (+30% to s(22)) per owner directive:
+   * "the activity is what matters, the photo is secondary". The outer
+   * avatarRing keeps its original s(27) so the bubble's overall
+   * footprint on the map stays the same — only the proportions inside
+   * the ring change. The avatarRing's c.card background fills the
+   * extra whitespace around the smaller avatar, which reads as a
+   * clean "halo" around the photo. */
   avatar: {
     // borderRadius: 9999 — same reason as avatarRing above. Hard-clamp
     // to perfect circle regardless of how s() rounds.
-    width: s(22), height: s(22), borderRadius: 9999,
+    width: s(15), height: s(15), borderRadius: 9999,
     alignItems: 'center', justifyContent: 'center',
     overflow: 'hidden' as const,
   },
-  avatarTxt: { color: c.white, fontSize: s(6.5), fontWeight: FW.bold },
-  avatarImg: { width: s(22), height: s(22), borderRadius: 9999 },
+  // Initials font shrunk proportionally so they still fit cleanly
+  // inside the smaller circle without overflowing or wrapping.
+  avatarTxt: { color: c.white, fontSize: s(4.5), fontWeight: FW.bold },
+  avatarImg: { width: s(15), height: s(15), borderRadius: 9999 },
 
-  /* Emoji badge — sits on top-right of the ring (enlarged: +20%) */
+  /* Emoji badge — sits on top-right of the ring.
+   *
+   * Sized to s(22) (up from s(17), +30%) on 2026-04-28 per owner
+   * directive: "the activity icon is the most important thing on the
+   * bubble, make it bigger". This pairs with the s(22) → s(15)
+   * shrink on the inner avatar — net result is the activity emoji
+   * is now the eye-catcher, the photo is supporting context. */
   emojiBadge: {
     // top:0, right:0 (no negative offsets) — Android marker bitmap
     // snapshot uses parent's measured bounds. Negative offsets push
@@ -3733,14 +3750,16 @@ const makeStyles = (c: ThemeColors) => StyleSheet.create({
     // right:-s(3.5). Now flush with the avatarRing's top-right corner
     // — slight visual shift inward but the bubble actually renders.
     position: 'absolute', top: 0, right: 0,
-    width: s(17), height: s(17), borderRadius: 9999,
+    width: s(22), height: s(22), borderRadius: 9999,
     backgroundColor: c.card, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: c.borderSoft,
     // Shadow removed 2026-04-27 evening — same reason as avatarRing
     // (Samsung One UI Skia bitmap snapshot intermittently fails with
     // shadows on Marker views).
   },
-  emojiText: { fontSize: s(9) },
+  // Emoji glyph scales with the badge: s(9) → s(12) (+30%) so the
+  // icon fills the new larger badge instead of looking lonely.
+  emojiText: { fontSize: s(12) },
 
   /* Name label under bubble */
   nameTag: {
